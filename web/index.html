@@ -1,0 +1,3913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StallionUSSY — Premium Equine Genetics Exchange</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   STALLIONUSSY — HACKER-STABLE TERMINAL THEME v3.0
+   Full rewrite: training, pedigree, tournaments, trading, achievements,
+   weather, traits — all new gameplay systems
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@font-face {
+  font-family: 'Terminal';
+  src: local('Fira Code'), local('Courier New'), local('Consolas');
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #0a0a0a;
+  --fg: #00ff41;
+  --fg-dim: #00aa2a;
+  --fg-bright: #33ff66;
+  --amber: #ffb000;
+  --amber-dim: #aa7500;
+  --red: #ff0040;
+  --purple: #bf40ff;
+  --cyan: #00e5ff;
+  --gold: #ffd700;
+  --blue: #00bfff;
+  --border: #1a3a1a;
+  --bg-light: #0f1a0f;
+  --bg-input: #0a120a;
+  --glow-green: 0 0 10px rgba(0,255,65,0.3), 0 0 20px rgba(0,255,65,0.1);
+  --glow-amber: 0 0 10px rgba(255,176,0,0.3);
+  --glow-gold: 0 0 10px rgba(255,215,0,0.4);
+  --glow-purple: 0 0 10px rgba(191,64,255,0.4);
+  --glow-cyan: 0 0 10px rgba(0,191,255,0.3);
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Fira Code', 'Courier New', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ─── CRT SCANLINES ─────────────────────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.15) 0px,
+    rgba(0,0,0,0.15) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%);
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ─── GLOW EFFECTS ──────────────────────────────────────────────────────── */
+.glow { text-shadow: var(--glow-green); }
+.glow-amber { text-shadow: var(--glow-amber); color: var(--amber); }
+.glow-gold { text-shadow: var(--glow-gold); color: var(--gold); }
+.glow-purple { text-shadow: var(--glow-purple); color: var(--purple); }
+
+/* ─── GLITCH EFFECTS ────────────────────────────────────────────────────── */
+@keyframes glitch {
+  0% { transform: translate(0); opacity: 1; }
+  20% { transform: translate(-2px, 1px); opacity: 0.8; }
+  40% { transform: translate(2px, -1px); opacity: 1; }
+  60% { transform: translate(-1px, -2px); opacity: 0.9; }
+  80% { transform: translate(1px, 2px); opacity: 1; }
+  100% { transform: translate(0); opacity: 1; }
+}
+
+@keyframes glitch-hard {
+  0% { transform: translate(0) skewX(0deg); filter: hue-rotate(0deg); }
+  10% { transform: translate(-3px,2px) skewX(-5deg); filter: hue-rotate(90deg); }
+  20% { transform: translate(3px,-1px) skewX(3deg); }
+  30% { transform: translate(0); filter: hue-rotate(0deg); }
+  100% { transform: translate(0); }
+}
+
+@keyframes anomalous-glitch {
+  0%, 85% { opacity: 1; transform: none; text-shadow: 0 0 4px var(--purple); }
+  86% { opacity: 0.7; transform: translate(-1px, 1px) skewX(-2deg); }
+  88% { opacity: 1; transform: translate(1px, -1px); text-shadow: 2px 0 var(--red), -2px 0 var(--cyan); }
+  90% { opacity: 0.9; transform: none; text-shadow: 0 0 4px var(--purple); }
+  92% { opacity: 1; transform: translate(0, 2px); }
+  94% { transform: none; }
+  100% { opacity: 1; transform: none; text-shadow: 0 0 4px var(--purple); }
+}
+
+.glitch-e008 {
+  animation: glitch 0.3s ease-in-out infinite;
+  color: var(--purple) !important;
+}
+
+.glitch-flicker {
+  animation: glitch-hard 0.15s ease-in-out;
+}
+
+/* ─── TICKER BAR ─────────────────────────────────────────────────────────── */
+#ticker-bar {
+  background: #0a0f0a;
+  border-bottom: 1px solid var(--border);
+  padding: 4px 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--amber);
+  position: relative;
+}
+
+#ticker-bar .ticker-content {
+  display: inline-block;
+  animation: ticker-scroll 45s linear infinite;
+  padding-left: 100%;
+}
+
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-100%); }
+}
+
+#ticker-bar .ticker-content span {
+  margin-right: 40px;
+}
+
+.ticker-up { color: var(--fg); }
+.ticker-down { color: var(--red); }
+
+/* ─── HEADER ─────────────────────────────────────────────────────────────── */
+#header {
+  border-bottom: 1px solid var(--border);
+  padding: 6px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-light);
+}
+
+#header .logo {
+  font-size: 14px;
+  font-weight: bold;
+  text-shadow: var(--glow-green);
+}
+
+#header .logo .sub {
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-weight: normal;
+}
+
+#header .status {
+  font-size: 11px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg);
+  box-shadow: 0 0 6px var(--fg);
+  margin-right: 4px;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* ─── NAVIGATION ─────────────────────────────────────────────────────────── */
+#nav {
+  background: var(--bg-light);
+  border-bottom: 1px solid var(--border);
+  padding: 0 16px;
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+}
+
+#nav a {
+  color: var(--fg-dim);
+  text-decoration: none;
+  padding: 8px 12px;
+  font-size: 11px;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+#nav a:hover {
+  color: var(--fg);
+  background: rgba(0,255,65,0.05);
+}
+
+#nav a.active {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+  text-shadow: var(--glow-green);
+}
+
+/* ─── WARNING BANNER ─────────────────────────────────────────────────────── */
+#warning-banner {
+  background: rgba(255,0,64,0.1);
+  border-bottom: 1px solid rgba(255,0,64,0.3);
+  padding: 4px 16px;
+  font-size: 11px;
+  color: var(--red);
+  text-align: center;
+  display: none;
+}
+
+#warning-banner.visible {
+  display: block;
+  animation: flicker-banner 3s ease-in-out infinite;
+}
+
+@keyframes flicker-banner {
+  0%, 90%, 100% { opacity: 1; }
+  92% { opacity: 0.1; }
+  94% { opacity: 0.9; }
+  96% { opacity: 0.2; }
+}
+
+/* ─── MAIN CONTENT ───────────────────────────────────────────────────────── */
+#main {
+  padding: 16px;
+  max-width: 1200px;
+  margin: 0 auto;
+  min-height: calc(100vh - 200px);
+}
+
+.page { display: none; }
+.page.active { display: block; }
+
+/* ─── SECTION HEADER ─────────────────────────────────────────────────────── */
+.section-hdr {
+  color: var(--fg-dim);
+  font-size: 11px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+h2 {
+  color: var(--fg);
+  font-size: 16px;
+  margin-bottom: 12px;
+  text-shadow: var(--glow-green);
+}
+
+h3 {
+  color: var(--fg);
+  font-size: 13px;
+  margin: 16px 0 8px 0;
+}
+
+/* ─── TERMINAL TABLE ─────────────────────────────────────────────────────── */
+.term-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 8px 0 16px 0;
+}
+
+.term-table thead th {
+  color: var(--fg-dim);
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-weight: normal;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+.term-table tbody td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(26,58,26,0.3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.term-table tbody tr:hover {
+  background: rgba(0,255,65,0.05);
+}
+
+.term-table tbody tr.legendary {
+  color: var(--amber);
+  text-shadow: var(--glow-amber);
+}
+
+.term-table tbody tr.legendary td:first-child::before {
+  content: '★ ';
+}
+
+.term-table tbody tr.retired {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.term-table tbody tr.clickable { cursor: pointer; }
+.term-table tbody tr.clickable:hover { background: rgba(0,255,65,0.08); }
+
+/* ─── TERMINAL INPUTS ────────────────────────────────────────────────────── */
+.term-input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+  width: 100%;
+  max-width: 400px;
+}
+
+.term-input:focus {
+  border-color: var(--fg-dim);
+  box-shadow: 0 0 5px rgba(0,255,65,0.2);
+}
+
+.term-input::placeholder {
+  color: var(--fg-dim);
+  opacity: 0.5;
+}
+
+select.term-input {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2300aa2a'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+
+select.term-input option {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.term-checkbox {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  cursor: pointer;
+  position: relative;
+  vertical-align: middle;
+}
+
+.term-checkbox:checked {
+  background: var(--fg-dim);
+  border-color: var(--fg);
+}
+
+.term-checkbox:checked::after {
+  content: 'X';
+  position: absolute;
+  top: -1px;
+  left: 2px;
+  font-size: 11px;
+  color: var(--bg);
+  font-weight: bold;
+}
+
+/* ─── BUTTONS ────────────────────────────────────────────────────────────── */
+.term-btn {
+  background: transparent;
+  border: 1px solid var(--fg-dim);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 16px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.15s;
+}
+
+.term-btn:hover {
+  background: rgba(0,255,65,0.1);
+  border-color: var(--fg);
+  text-shadow: var(--glow-green);
+}
+
+.term-btn:active {
+  background: rgba(0,255,65,0.2);
+}
+
+.term-btn.danger {
+  border-color: rgba(255,0,64,0.5);
+  color: var(--red);
+}
+
+.term-btn.danger:hover {
+  background: rgba(255,0,64,0.1);
+  border-color: var(--red);
+}
+
+.term-btn.amber {
+  border-color: var(--amber-dim);
+  color: var(--amber);
+}
+
+.term-btn.amber:hover {
+  background: rgba(255,176,0,0.1);
+  border-color: var(--amber);
+  text-shadow: var(--glow-amber);
+}
+
+.term-btn.purple {
+  border-color: rgba(191,64,255,0.5);
+  color: var(--purple);
+}
+
+.term-btn.purple:hover {
+  background: rgba(191,64,255,0.1);
+  border-color: var(--purple);
+  text-shadow: var(--glow-purple);
+}
+
+.term-btn.cyan {
+  border-color: rgba(0,229,255,0.5);
+  color: var(--cyan);
+}
+
+.term-btn.cyan:hover {
+  background: rgba(0,229,255,0.1);
+  border-color: var(--cyan);
+}
+
+.term-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.term-btn.sm { padding: 3px 10px; font-size: 11px; }
+
+/* ─── FORM ROWS ──────────────────────────────────────────────────────────── */
+.form-row {
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.form-row label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  min-width: 120px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.form-row .prompt {
+  color: var(--fg);
+  margin-right: 4px;
+}
+
+/* ─── STAT BLOCKS ────────────────────────────────────────────────────────── */
+.stats-row {
+  display: flex;
+  gap: 12px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.stat-block {
+  border: 1px solid var(--border);
+  padding: 10px 16px;
+  min-width: 140px;
+  background: var(--bg-light);
+  flex: 1;
+}
+
+.stat-block .stat-label {
+  color: var(--fg-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.stat-block .stat-val {
+  font-size: 20px;
+  font-weight: bold;
+  text-shadow: var(--glow-green);
+  margin-top: 2px;
+}
+
+.stat-block .stat-val.amber {
+  color: var(--amber);
+  text-shadow: var(--glow-amber);
+}
+
+/* ─── PROGRESS BAR ───────────────────────────────────────────────────────── */
+.progress-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 12px;
+}
+
+.progress-bar .bar-label {
+  min-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-bar .bar-track {
+  flex: 1;
+  height: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-bar .bar-fill {
+  height: 100%;
+  background: var(--fg-dim);
+  transition: width 0.3s linear;
+  position: relative;
+}
+
+.progress-bar .bar-fill.finished {
+  background: var(--amber);
+}
+
+.progress-bar .bar-pct {
+  min-width: 50px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* ─── FATIGUE GAUGE ──────────────────────────────────────────────────────── */
+.fatigue-gauge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.fatigue-gauge .gauge-track {
+  width: 120px;
+  height: 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.fatigue-gauge .gauge-fill {
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.fatigue-low .gauge-fill { background: var(--fg); }
+.fatigue-med .gauge-fill { background: var(--amber); }
+.fatigue-high .gauge-fill { background: #ff6600; }
+.fatigue-crit .gauge-fill { background: var(--red); animation: pulse-fatigue 0.8s infinite; }
+
+@keyframes pulse-fatigue {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ─── TRAIT BADGES ───────────────────────────────────────────────────────── */
+.trait-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 2px 8px;
+  margin: 2px 3px;
+  border: 1px solid;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+  cursor: default;
+}
+
+.trait-common {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+.trait-rare {
+  border-color: var(--blue);
+  color: var(--blue);
+  text-shadow: var(--glow-cyan);
+}
+
+.trait-legendary {
+  border-color: var(--gold);
+  color: var(--gold);
+  text-shadow: var(--glow-gold);
+}
+
+.trait-anomalous {
+  border-color: var(--purple);
+  color: var(--purple);
+  text-shadow: var(--glow-purple);
+  animation: anomalous-glitch 4s infinite;
+}
+
+/* ─── ACHIEVEMENT CARDS ──────────────────────────────────────────────────── */
+.ach-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.ach-card {
+  border: 1px solid var(--border);
+  padding: 10px;
+  background: var(--bg-light);
+  transition: all 0.2s;
+}
+
+.ach-card:hover {
+  border-color: var(--fg-dim);
+}
+
+.ach-card.unlocked {
+  border-color: var(--fg);
+}
+
+.ach-card.locked {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+.ach-card .ach-icon {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+.ach-card .ach-name {
+  font-size: 12px;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+.ach-card .ach-desc {
+  font-size: 10px;
+  color: var(--fg-dim);
+  line-height: 1.4;
+}
+
+.ach-card .ach-rarity {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.ach-rarity-common { color: var(--fg); }
+.ach-rarity-rare { color: var(--blue); }
+.ach-rarity-epic { color: var(--purple); }
+.ach-rarity-legendary { color: var(--gold); text-shadow: var(--glow-gold); }
+
+/* ─── SAPPHO SCORE ───────────────────────────────────────────────────────── */
+.sappho-bar { display: inline-block; font-size: 12px; }
+
+/* ─── WEATHER DISPLAY ────────────────────────────────────────────────────── */
+.weather-box {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  background: var(--bg-light);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.weather-icon { font-size: 20px; }
+.weather-name { font-weight: bold; }
+.weather-effect { color: var(--fg-dim); font-size: 10px; }
+
+/* ─── RACE NARRATIVE LOG ─────────────────────────────────────────────────── */
+.narrative-log {
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  padding: 8px;
+  height: 180px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+
+.narrative-log .event-panic { color: var(--red); font-weight: bold; }
+.narrative-log .event-e008 { color: var(--purple); }
+.narrative-log .event-burst { color: var(--cyan); }
+.narrative-log .event-weather { color: var(--amber); }
+.narrative-log .event-trait { color: var(--gold); }
+.narrative-log .event-ghost { color: var(--purple); font-style: italic; }
+.narrative-log .event-normal { color: var(--fg-dim); }
+
+/* ─── ASCII ART CONTAINER ────────────────────────────────────────────────── */
+.ascii-art {
+  color: var(--fg);
+  text-shadow: var(--glow-green);
+  white-space: pre;
+  font-size: 10px;
+  line-height: 1.2;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+.ascii-art.small { font-size: 8px; }
+
+/* ─── PEDIGREE TREE ──────────────────────────────────────────────────────── */
+.pedigree-tree {
+  white-space: pre;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  padding: 10px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+/* ─── DNA HELIX ANIMATION ────────────────────────────────────────────────── */
+.dna-helix {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--fg-dim);
+  white-space: pre;
+  margin: 8px 0;
+}
+
+/* ─── GENOME DISPLAY ─────────────────────────────────────────────────────── */
+.genome-display { font-size: 12px; margin: 8px 0; }
+
+.genome-display .gene {
+  display: inline-block;
+  margin-right: 12px;
+  margin-bottom: 4px;
+}
+
+.gene .gene-type {
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.gene .gene-val { font-weight: bold; }
+.gene .gene-val.aa { color: var(--fg-bright); }
+.gene .gene-val.ab { color: var(--amber); }
+.gene .gene-val.bb { color: var(--red); }
+
+/* ─── STATUS BADGES ──────────────────────────────────────────────────────── */
+.status-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 8px;
+  border: 1px solid;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-open { border-color: var(--fg); color: var(--fg); }
+.badge-inprogress { border-color: var(--amber); color: var(--amber); }
+.badge-finished { border-color: #888; color: #888; }
+.badge-pending { border-color: var(--amber); color: var(--amber); }
+.badge-accepted { border-color: var(--fg); color: var(--fg); }
+.badge-rejected { border-color: var(--red); color: var(--red); }
+.badge-cancelled { border-color: #555; color: #555; }
+
+/* ─── INJURY ALERT ───────────────────────────────────────────────────────── */
+@keyframes injury-flash {
+  0%, 100% { background: rgba(255,0,64,0.15); }
+  50% { background: rgba(255,0,64,0.35); }
+}
+
+.injury-alert {
+  border: 1px solid var(--red);
+  background: rgba(255,0,64,0.15);
+  color: var(--red);
+  padding: 8px 12px;
+  margin: 8px 0;
+  animation: injury-flash 0.6s ease-in-out 3;
+  font-size: 12px;
+}
+
+/* ─── INBREEDING WARNING ─────────────────────────────────────────────────── */
+.inbreed-warn {
+  padding: 6px 10px;
+  margin: 6px 0;
+  border: 1px solid;
+  font-size: 11px;
+}
+
+.inbreed-warn.yellow { border-color: var(--amber); color: var(--amber); background: rgba(255,176,0,0.08); }
+.inbreed-warn.red { border-color: var(--red); color: var(--red); background: rgba(255,0,64,0.08); }
+
+/* ─── SEASON RESULT ──────────────────────────────────────────────────────── */
+.season-result {
+  border: 1px solid var(--amber);
+  background: rgba(255,176,0,0.05);
+  padding: 10px;
+  margin: 10px 0;
+  font-size: 12px;
+}
+
+/* ─── TOOLTIP ────────────────────────────────────────────────────────────── */
+.has-tooltip {
+  position: relative;
+  cursor: help;
+}
+
+.has-tooltip .tooltip-text {
+  visibility: hidden;
+  position: absolute;
+  z-index: 100;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #111;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.has-tooltip:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* ─── LOADING ────────────────────────────────────────────────────────────── */
+.loading {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink::after {
+  content: '█';
+  animation: blink-cursor 1s step-end infinite;
+}
+
+/* ─── BOOT SCREEN ────────────────────────────────────────────────────────── */
+#boot-screen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg);
+  z-index: 10000;
+  padding: 40px;
+  font-size: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+#boot-screen.hidden { display: none; }
+
+#boot-text {
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+/* ─── FIRE ANIMATION ─────────────────────────────────────────────────────── */
+@keyframes fire {
+  0% { color: var(--red); }
+  25% { color: var(--amber); }
+  50% { color: #ff6600; }
+  75% { color: var(--amber); }
+  100% { color: var(--red); }
+}
+
+.fire-text { animation: fire 1.5s ease-in-out infinite; }
+
+/* ─── HIDDEN ─────────────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ─── MISC ───────────────────────────────────────────────────────────────── */
+.mb-4 { margin-bottom: 4px; }
+.mb-8 { margin-bottom: 8px; }
+.mb-16 { margin-bottom: 16px; }
+.mt-4 { margin-top: 4px; }
+.mt-8 { margin-top: 8px; }
+.mt-16 { margin-top: 16px; }
+.text-dim { color: var(--fg-dim); }
+.text-amber { color: var(--amber); }
+.text-red { color: var(--red); }
+.text-purple { color: var(--purple); }
+.text-cyan { color: var(--cyan); }
+.text-gold { color: var(--gold); }
+.text-blue { color: var(--blue); }
+a { color: var(--fg); text-decoration: underline; cursor: pointer; }
+a:hover { color: var(--fg-bright); text-shadow: var(--glow-green); }
+hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+.inline-flex { display: inline-flex; gap: 8px; align-items: center; }
+.flex-gap { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.flex-col { display: flex; flex-direction: column; }
+
+.panel {
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: var(--bg-light);
+  margin: 8px 0;
+}
+
+.filter-bar {
+  margin: 8px 0;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.filter-bar button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.filter-bar button:hover,
+.filter-bar button.active {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-dim); }
+
+/* ─── RESULTS ────────────────────────────────────────────────────────────── */
+.result-place { min-width: 30px; font-weight: bold; }
+.result-place.gold { color: var(--amber); text-shadow: var(--glow-amber); }
+.result-place.silver { color: #c0c0c0; }
+.result-place.bronze { color: #cd7f32; }
+
+/* ─── TWO COLUMN LAYOUT ─────────────────────────────────────────────────── */
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .stats-row { flex-direction: column; }
+  .stat-block { min-width: auto; }
+  #nav { flex-wrap: wrap; }
+  #nav a { padding: 6px 8px; font-size: 10px; }
+  #main { padding: 10px; }
+  .term-table { font-size: 11px; }
+  .two-col { grid-template-columns: 1fr; }
+  .fatigue-gauge .gauge-track { width: 80px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     BOOT SCREEN
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="boot-screen">
+<div id="boot-text"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     MARKET TICKER BAR
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="ticker-bar">
+  <div class="ticker-content" id="ticker-content"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     E-008 WARNING BANNER
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="warning-banner">
+  ⚠ WARNING: E-008 CONTAINMENT BREACH DETECTED — YOGURT LEVELS CRITICAL — DR. MITTENS PROTOCOL ENGAGED ⚠
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     HEADER
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="header">
+  <div class="logo">
+    <a href="#home" style="text-decoration:none;color:inherit">STALLIONUSSY v3.0.26</a>
+    <div class="sub">Premium Equine Genetics Exchange — Training ∙ Tournaments ∙ Trading ∙ Pedigree ∙ Achievements</div>
+  </div>
+  <div class="status">
+    <span><span class="status-dot"></span>SYSTEM: OPERATIONAL</span>
+    <span class="text-dim" id="ws-status">WS: DISCONNECTED</span>
+    <span class="text-dim" id="clock"></span>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     NAVIGATION
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="nav">
+  <a href="#home" data-page="home">[HOME]</a>
+  <a href="#stable" data-page="stable">[STABLE]</a>
+  <a href="#breed" data-page="breed">[BREED]</a>
+  <a href="#race" data-page="race">[RACE]</a>
+  <a href="#market" data-page="market">[MARKET]</a>
+  <a href="#tournament" data-page="tournament">[TOURNEY]</a>
+  <a href="#trades" data-page="trades">[TRADE]</a>
+  <a href="#leaderboard" data-page="leaderboard">[RANKS]</a>
+  <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     MAIN CONTENT AREA
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="main">
+
+<!-- ═══ HOME PAGE ═══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-home">
+  <div class="ascii-art" id="ascii-logo"></div>
+  <div class="section-hdr">// SYSTEM DASHBOARD — <span id="dash-date"></span> | <span id="dash-weather" class="text-amber">Weather: Loading...</span></div>
+
+  <div class="stats-row" id="dash-stats">
+    <div class="stat-block">
+      <div class="stat-label">Total Horses</div>
+      <div class="stat-val" id="stat-horses">—</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Active Stables</div>
+      <div class="stat-val" id="stat-stables">—</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Cummies Burned</div>
+      <div class="stat-val amber fire-text" id="stat-burned">—</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Races Completed</div>
+      <div class="stat-val" id="stat-races">—</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Current Season</div>
+      <div class="stat-val" id="stat-season">—</div>
+    </div>
+  </div>
+
+  <div class="flex-gap">
+    <div style="flex:2;min-width:300px;">
+      <h3>// TOP 5 PERFORMERS</h3>
+      <div id="top-performers">
+        <span class="loading cursor-blink">Loading top performers...</span>
+      </div>
+
+      <h3>// RECENT RACE RESULTS</h3>
+      <div id="recent-races">
+        <span class="loading cursor-blink">Loading race data...</span>
+      </div>
+
+      <h3>// ACHIEVEMENT FEED</h3>
+      <div id="achievement-feed" class="panel" style="max-height:140px;overflow-y:auto;font-size:11px;">
+        <span class="text-dim">No achievements unlocked yet.</span>
+      </div>
+    </div>
+
+    <div style="flex:1;min-width:250px;">
+      <h3>// SYSTEM MESSAGES</h3>
+      <div id="system-messages" class="narrative-log" style="height:200px;"></div>
+
+      <h3>// SEASON CONTROL</h3>
+      <div style="margin:8px 0;">
+        <button class="term-btn amber" id="btn-advance-season">⏩ ADVANCE SEASON</button>
+        <div id="season-result" class="hidden"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STABLE PAGE ═════════════════════════════════════════════════════════ -->
+<div class="page" id="page-stable">
+  <div class="section-hdr">// STABLE MANAGEMENT — ls -la /stables/</div>
+
+  <h3>CREATE NEW STABLE</h3>
+  <div class="form-row">
+    <span class="prompt">$</span>
+    <label>mkdir</label>
+    <input class="term-input" id="new-stable-name" placeholder="stable_name" maxlength="32">
+    <button class="term-btn" id="btn-create-stable">EXECUTE</button>
+  </div>
+  <div id="stable-create-msg" class="mb-16 text-dim" style="font-size:11px;"></div>
+
+  <h3>// STABLE DIRECTORY LISTING</h3>
+  <div id="stable-list">
+    <span class="loading cursor-blink">Scanning stables...</span>
+  </div>
+
+  <div id="stable-detail" class="hidden">
+    <hr>
+    <h3 id="stable-detail-name">// STABLE CONTENTS</h3>
+    <div class="section-hdr">
+      drwxr-xr-x  owner  <span id="stable-detail-cummies" class="text-amber">0</span> cummies
+      | earnings: <span id="stable-detail-earnings" class="text-amber">0</span>
+    </div>
+
+    <div id="stable-horses">
+      <span class="loading cursor-blink">Loading horses...</span>
+    </div>
+
+    <h3>// STABLE ACHIEVEMENTS</h3>
+    <div id="stable-achievements" class="text-dim" style="font-size:11px;">No achievements yet.</div>
+  </div>
+</div>
+
+<!-- ═══ HORSE DETAIL PAGE ════════════════════════════════════════════════════ -->
+<div class="page" id="page-horse">
+  <div class="section-hdr">// HORSE DOSSIER — <span id="horse-detail-subtitle">Loading...</span></div>
+  <div id="horse-detail-content">
+    <span class="loading cursor-blink">Loading horse data...</span>
+  </div>
+</div>
+
+<!-- ═══ BREED PAGE ══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-breed">
+  <div class="section-hdr">// BREEDING LAB — GENETIC COMPILATION UNIT</div>
+  <div class="text-dim" style="font-size:10px;margin-bottom:8px;">
+    "Every foal is a miracle of science, hubris, and questionable funding." — Dr. Mittens
+  </div>
+
+  <div class="dna-helix" id="dna-art"></div>
+
+  <h3>COMPILE NEW FOAL</h3>
+
+  <div class="form-row">
+    <label>SIRE (♂):</label>
+    <select class="term-input" id="breed-sire"><option value="">-- SELECT SIRE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>MARE (♀):</label>
+    <select class="term-input" id="breed-mare"><option value="">-- SELECT MARE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>DEST STABLE:</label>
+    <select class="term-input" id="breed-stable"><option value="">-- SELECT STABLE --</option></select>
+  </div>
+
+  <div id="breed-warnings" class="hidden"></div>
+
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn amber" id="btn-breed">⚡ COMPILE FOAL ⚡</button>
+  </div>
+
+  <div id="breed-result" class="hidden mt-16">
+    <hr>
+    <h3>// COMPILATION SUCCESSFUL</h3>
+    <div id="breed-foal-info"></div>
+  </div>
+
+  <div id="breed-error" class="hidden mt-8 text-red"></div>
+</div>
+
+<!-- ═══ RACE PAGE ═══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-race">
+  <div class="section-hdr">// RACE TRACK — EQUINE VELOCITY ANALYSIS</div>
+
+  <div id="race-weather-display" class="mb-8"></div>
+
+  <div class="flex-gap mb-16">
+    <div style="flex:1;min-width:320px;">
+      <h3>SELECT HORSES</h3>
+      <div id="race-horse-list">
+        <span class="loading cursor-blink">Scanning horses...</span>
+      </div>
+    </div>
+    <div style="min-width:250px;">
+      <h3>TRACK SELECT</h3>
+      <div class="form-row">
+        <select class="term-input" id="race-track">
+          <option value="Sprintussy">Sprintussy (800m) — Raw Speed</option>
+          <option value="Grindussy">Grindussy (3200m) — Endurance Grind</option>
+          <option value="Mudussy">Mudussy (1600m) — Mud Wrestling</option>
+          <option value="Thunderussy">Thunderussy (2400m) — Weather Chaos</option>
+          <option value="Frostussy">Frostussy (1200m) — Ice Surface</option>
+          <option value="Hauntedussy">Hauntedussy (666m) — 👻 Haunted</option>
+        </select>
+      </div>
+      <div id="track-desc" class="text-dim" style="font-size:10px;margin:4px 0 8px 0;"></div>
+      <div class="form-row">
+        <label>PURSE:</label>
+        <input class="term-input" id="race-purse" type="number" value="100" min="0" style="max-width:100px;">
+      </div>
+      <div class="form-row" style="gap:8px;">
+        <button class="term-btn" id="btn-start-race">START RACE</button>
+        <button class="term-btn amber" id="btn-quick-race">QUICK RACE</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="race-live" class="hidden">
+    <hr>
+    <h3 id="race-live-title">// RACE IN PROGRESS</h3>
+    <div class="section-hdr">Track: <span id="race-live-track"></span> | Distance: <span id="race-live-dist"></span>m | Weather: <span id="race-live-weather" class="text-amber">—</span> | Status: <span id="race-live-status" class="text-amber">RUNNING</span></div>
+    <div id="race-bars" class="mt-8 mb-8"></div>
+    <h3>// RACE NARRATIVE</h3>
+    <div class="narrative-log" id="race-narrative"></div>
+  </div>
+
+  <div id="race-results" class="hidden">
+    <hr>
+    <h3>// FINAL RESULTS</h3>
+    <div id="race-results-table"></div>
+  </div>
+</div>
+
+<!-- ═══ MARKET PAGE ═════════════════════════════════════════════════════════ -->
+<div class="page" id="page-market">
+  <div class="section-hdr">// STUDMARKETUSSY — BREED, BURN, PROFIT</div>
+
+  <div class="stats-row">
+    <div class="stat-block">
+      <div class="stat-label">🔥 Total Cummies Burned</div>
+      <div class="stat-val amber fire-text" id="market-burned">—</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Active Listings</div>
+      <div class="stat-val" id="market-count">—</div>
+    </div>
+  </div>
+
+  <h3>CREATE STUD LISTING</h3>
+  <div class="form-row">
+    <label>HORSE:</label>
+    <select class="term-input" id="market-horse"><option value="">-- SELECT HORSE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>PRICE (₵):</label>
+    <input class="term-input" id="market-price" type="number" value="50" min="1" style="max-width:120px;">
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn amber" id="btn-create-listing">LIST ON MARKET</button>
+  </div>
+  <div id="market-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+  <h3>// ACTIVE STUD LISTINGS</h3>
+  <div id="market-listings">
+    <span class="loading cursor-blink">Scanning market...</span>
+  </div>
+
+  <h3>// TRANSACTION HISTORY</h3>
+  <div id="market-transactions" class="text-dim" style="font-size:11px;">
+    No transactions recorded.
+  </div>
+</div>
+
+<!-- ═══ TOURNAMENT PAGE ═════════════════════════════════════════════════════ -->
+<div class="page" id="page-tournament">
+  <div class="section-hdr">// TOURNAMENT ARENA — Sanctioned by the First Congregational Church of the Holy Internet</div>
+
+  <h3>CREATE TOURNAMENT</h3>
+  <div class="form-row">
+    <label>NAME:</label>
+    <input class="term-input" id="tourney-name" placeholder="(optional)" maxlength="64">
+  </div>
+  <div class="form-row">
+    <label>TRACK:</label>
+    <select class="term-input" id="tourney-track">
+      <option value="Sprintussy">Sprintussy</option>
+      <option value="Grindussy">Grindussy</option>
+      <option value="Mudussy">Mudussy</option>
+      <option value="Thunderussy">Thunderussy</option>
+      <option value="Frostussy">Frostussy</option>
+      <option value="Hauntedussy">Hauntedussy</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label>ROUNDS:</label>
+    <input class="term-input" id="tourney-rounds" type="number" value="3" min="1" max="10" style="max-width:80px;">
+  </div>
+  <div class="form-row">
+    <label>ENTRY FEE (₵):</label>
+    <input class="term-input" id="tourney-fee" type="number" value="50" min="0" style="max-width:100px;">
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn amber" id="btn-create-tourney">🏆 CREATE TOURNAMENT</button>
+  </div>
+  <div id="tourney-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+  <h3>// TOURNAMENTS</h3>
+  <div id="tourney-list">
+    <span class="loading cursor-blink">Loading tournaments...</span>
+  </div>
+
+  <div id="tourney-detail" class="hidden">
+    <hr>
+    <div id="tourney-detail-content"></div>
+  </div>
+</div>
+
+<!-- ═══ TRADES PAGE ═════════════════════════════════════════════════════════ -->
+<div class="page" id="page-trades">
+  <div class="section-hdr">// HORSE TRADING — All trades monitored by Geoffrussy for insider trading</div>
+
+  <h3>CREATE TRADE OFFER</h3>
+  <div class="form-row">
+    <label>HORSE:</label>
+    <select class="term-input" id="trade-horse"><option value="">-- SELECT HORSE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>FROM STABLE:</label>
+    <select class="term-input" id="trade-from"><option value="">-- SOURCE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>TO STABLE:</label>
+    <select class="term-input" id="trade-to"><option value="">-- DESTINATION --</option></select>
+  </div>
+  <div class="form-row">
+    <label>PRICE (₵):</label>
+    <input class="term-input" id="trade-price" type="number" value="100" min="0" style="max-width:120px;">
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn cyan" id="btn-create-trade">📤 SEND OFFER</button>
+  </div>
+  <div id="trade-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+  <div class="two-col">
+    <div>
+      <h3>// INCOMING OFFERS</h3>
+      <div id="trade-incoming">
+        <span class="text-dim">No incoming offers.</span>
+      </div>
+    </div>
+    <div>
+      <h3>// OUTGOING OFFERS</h3>
+      <div id="trade-outgoing">
+        <span class="text-dim">No outgoing offers.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LEADERBOARD PAGE ════════════════════════════════════════════════════ -->
+<div class="page" id="page-leaderboard">
+  <div class="section-hdr">// RANKUSSY — ELO LEADERBOARD</div>
+
+  <div class="filter-bar">
+    <span class="text-dim">FILTER:</span>
+    <button class="active" data-filter="active" id="filter-active">Active Only</button>
+    <button data-filter="all" id="filter-all">All</button>
+    <button data-filter="retired" id="filter-retired">Retired Only</button>
+  </div>
+
+  <div id="leaderboard-table">
+    <span class="loading cursor-blink">Computing rankings...</span>
+  </div>
+</div>
+
+<!-- ═══ ACHIEVEMENTS PAGE ═══════════════════════════════════════════════════ -->
+<div class="page" id="page-achievements">
+  <div class="section-hdr">// ACHIEVEMENT GALLERY — Certified by the Sappho Scale Achievement Board</div>
+  <div class="text-dim" style="font-size:10px;margin-bottom:12px;">
+    "Excellence is not an act, it's a carefully monitored genetic mutation." — Dr. Mittens
+  </div>
+
+  <div id="achievements-grid" class="ach-grid">
+    <span class="loading cursor-blink">Loading achievements...</span>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     JAVASCRIPT
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STALLIONUSSY FRONTEND v3.0 — HACKER-STABLE TERMINAL
+// Full rewrite with: training, pedigree, tournaments, trading, achievements,
+// weather, traits — all new gameplay systems
+// ═══════════════════════════════════════════════════════════════════════════
+
+(function() {
+'use strict';
+
+// ─── API HELPER ────────────────────────────────────────────────────────────
+const API = '';
+
+async function api(path, opts = {}) {
+  try {
+    const fetchOpts = {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    };
+    if (opts.body && typeof opts.body === 'object') {
+      fetchOpts.body = JSON.stringify(opts.body);
+    }
+    const res = await fetch(`${API}/api${path}`, fetchOpts);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`HTTP ${res.status}: ${text}`);
+    }
+    const text = await res.text();
+    if (!text) return null;
+    return JSON.parse(text);
+  } catch (err) {
+    console.error(`API ${path}:`, err);
+    throw err;
+  }
+}
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
+let allHorses = [];
+let allStables = [];
+let allListings = [];
+let allTournaments = [];
+let currentWeather = null;
+let ws = null;
+let currentRace = null;
+let raceNarrativeLog = [];
+let leaderboardFilter = 'active';
+
+// ─── DOM HELPERS ───────────────────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+const el = (tag, attrs = {}, children = []) => {
+  const e = document.createElement(tag);
+  Object.entries(attrs).forEach(([k, v]) => {
+    if (k === 'className') e.className = v;
+    else if (k === 'innerHTML') e.innerHTML = v;
+    else if (k === 'textContent') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+    else e.setAttribute(k, v);
+  });
+  children.forEach(c => {
+    if (typeof c === 'string') e.appendChild(document.createTextNode(c));
+    else if (c) e.appendChild(c);
+  });
+  return e;
+};
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s || '';
+  return div.innerHTML;
+}
+
+function truncate(str, len) {
+  if (!str) return '';
+  return str.length > len ? str.substring(0, len - 1) + '…' : str;
+}
+
+// ─── ASCII ART ─────────────────────────────────────────────────────────────
+const HORSE_ASCII = `
+      ██╗  ██╗ ██████╗ ██████╗ ███████╗███████╗
+      ██║  ██║██╔═══██╗██╔══██╗██╔════╝██╔════╝
+      ███████║██║   ██║██████╔╝███████╗█████╗
+      ██╔══██║██║   ██║██╔══██╗╚════██║██╔══╝
+      ██║  ██║╚██████╔╝██║  ██║███████║███████╗
+      ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚══════╝
+                              ,--,
+                 _.___      ./ _ \\         .---.
+                /  _  \\    / / \`\\ \\       /  .  \\
+               / .' \\  |  | |   | |      |   /  |
+              / /    \`-'  | |   | |      |  /  /
+         ____/ /     ___  | |___| |       \\   /
+        / __  /     /__ \\ |  ___  |  ,'\\   | |
+       / /  \\/     / __ \\\\| |   | | /   \\  | |
+      |  \\    \\   | |  \\\\  |   | |/  ,'  \\ | |
+       \\  \\_/  |  | \\__/|  |   |  \\/  /\\  \\| |
+        \\_____/    \\___/|__|   |__/\\_/  \\___|_|
+  ╔═══════════════════════════════════════════════════╗
+  ║  S T A L L I O N U S S Y   v 3 . 0 . 2 6        ║
+  ║  Premium Equine Genetics Exchange                 ║
+  ║  Training ∙ Tournaments ∙ Trading ∙ Pedigree      ║
+  ╚═══════════════════════════════════════════════════╝`;
+
+const DNA_FRAMES = [
+  `   ╭─A──T─╮     ╭─G──C─╮     ╭─A──T─╮
+   │      │     │      │     │      │
+   ╰─T──A─╯     ╰─C──G─╯     ╰─T──A─╯
+        ╭─G──C─╮     ╭─A──T─╮
+        │      │     │      │
+        ╰─C──G─╯     ╰─T──A─╯`,
+  `        ╭─A──T─╮     ╭─G──C─╮
+        │      │     │      │
+        ╰─T──A─╯     ╰─C──G─╯
+   ╭─G──C─╮     ╭─A──T─╮     ╭─G──C─╮
+   │      │     │      │     │      │
+   ╰─C──G─╯     ╰─T──A─╯     ╰─C──G─╯`,
+];
+
+// ─── WEATHER HELPERS ───────────────────────────────────────────────────────
+const WEATHER_INFO = {
+  Clear:     { icon: '☀️',  desc: 'Perfect conditions. No modifiers.' },
+  Rainy:     { icon: '🌧️', desc: 'Wet track. Mud-lovers thrive, speed penalized.' },
+  Stormy:    { icon: '⛈️', desc: 'Lightning and chaos. Temper tested, random surges.' },
+  Foggy:     { icon: '🌫️', desc: 'Low visibility. Intelligence matters, panic risk up.' },
+  Scorching: { icon: '🔥',  desc: 'Extreme heat. Stamina drain doubled, fatigue spikes.' },
+  Haunted:   { icon: '👻',  desc: 'E-008 resonance. Anomalous events. Something watches.' },
+};
+
+// ─── TRACK DESCRIPTIONS ────────────────────────────────────────────────────
+const TRACK_INFO = {
+  Sprintussy:  '800m. Pure speed. The fastest hooves win. No excuses.',
+  Grindussy:   '3200m. The long grind. Stamina is king. Will is tested.',
+  Mudussy:     '1600m. Thick mud. Size matters. Power over finesse.',
+  Thunderussy: '2400m. Balanced with weather chaos. Anything can happen.',
+  Frostussy:   '1200m. Ice surface. SZE inverted — lean horses glide.',
+  Hauntedussy: '666m. The lights flicker. Something watches from the rail.',
+};
+
+// ─── WORKOUT INFO ──────────────────────────────────────────────────────────
+const WORKOUT_INFO = {
+  Sprint:    { label: '🏃 Sprint', desc: 'Boosts SPD expression. High fatigue.' },
+  Endurance: { label: '🏋️ Endurance', desc: 'Boosts STM expression. Moderate fatigue.' },
+  MentalRep: { label: '🧠 MentalRep', desc: 'Boosts TMP/INT. Low fatigue.' },
+  MudRun:    { label: '🐊 MudRun', desc: 'Boosts SZE for mud tracks. Moderate fatigue.' },
+  RestDay:   { label: '😴 RestDay', desc: 'Reduces fatigue. Slight REC boost.' },
+  General:   { label: '⚡ General', desc: 'Small boost to everything. Moderate fatigue.' },
+};
+
+// ─── SYSTEM MESSAGES (LORE) ────────────────────────────────────────────────
+const SYSTEM_MESSAGES = [
+  '[SYS] Dr. Mittens has been spotted near Sector 7... again.',
+  '[SYS] Yogurt containment levels: 94.2%. Within acceptable parameters.',
+  '[SYS] Jason Derulo sighting reported in the paddock. Security dispatched.',
+  '[SYS] E-008 resonance frequency has shifted. Monitoring...',
+  '[SYS] Reminder: Do NOT feed the horses after midnight.',
+  '[SYS] Cummies burn rate elevated. Economy is healthy.',
+  '[SYS] Stable ventilation system upgraded. Now with 40% less haunting.',
+  '[SYS] The yogurt is sentient. This is fine.',
+  '[SYS] WARNING: Someone left the Punnett squares unsupervised.',
+  '[SYS] Dr. Mittens requests additional funding for "cat-alytic breeding."',
+  '[SYS] Jason Derulo has been successfully escorted from the premises.',
+  '[SYS] Horse #E-008 containment field: ████████░░ 78% stable',
+  '[SYS] Genetic drift detected in Sector 12. Deploying countermeasures.',
+  '[SYS] ALERT: The yogurt is attempting to breed.',
+  '[SYS] Daily reminder: Cummies are a legitimate currency.',
+  '[SYS] Lot #3 "Comet Cummies" has escaped containment briefly. Retrieved.',
+  '[SYS] Market analysis: Sappho Scores trending upward across all sectors.',
+  '[SYS] Dr. Mittens published new paper: "On the Quantum Entanglement of Hooves"',
+  '[SYS] E-008 emitting low-frequency hum. Staff advised to wear earplugs.',
+  '[SYS] Jason Derulo found trying to enter the breeding lab. Access denied.',
+  '[SYS] Yogurt viscosity at 3.7 cP. Within normal operational range.',
+  '[SYS] NOTICE: "Stallionussy" is not a typo. Stop filing bug reports.',
+  '[WEATHER] Barometric pressure shifting. Track conditions may change.',
+  '[WEATHER] Fog rolling in from the eastern paddocks. Visibility declining.',
+  '[WEATHER] Hauntedussy track sensors offline. Probably nothing.',
+  '[TOURNAMENT] Geoffrussy announces next Grand Prix qualifiers opening soon.',
+  '[TOURNAMENT] Reminder: Tournament entry fees are non-refundable. Ask Dr. Mittens.',
+  '[TRADE] Geoffrussy flagged suspicious trade activity in Sector 4. Investigating.',
+  '[TRADE] Cross-stable trading volume up 23%. Healthy market dynamics.',
+  '[SYS] Time passes. The yogurt grows stronger.',
+  '[SYS] Achievement unlocked somewhere. The Sappho Scale hums with approval.',
+  '[SYS] Training facility sensors report unusual hoof patterns in Bay 3.',
+  '[SYS] Dr. Mittens\' Approved Workout Regimen posted on the bulletin board.',
+  '[SYS] A strange melody plays from the Hauntedussy track. No one is there.',
+  '[SYS] E-008 containment pod temperature rising. Within tolerance... barely.',
+];
+
+// ─── ACHIEVEMENT DEFINITIONS ───────────────────────────────────────────────
+const ACHIEVEMENT_DEFS = [
+  // Horse achievements (match server IDs from tournussy.go AllAchievements)
+  { id: 'first_blood', name: 'First Blood', desc: 'Win your first race', icon: '🏆', rarity: 'common' },
+  { id: 'triple_crown', name: 'Triple Crown', desc: 'Win on all 3 original track types', icon: '👑', rarity: 'epic' },
+  { id: 'undefeated_5', name: 'Untouchable', desc: 'Win 5 races in a row', icon: '🔥', rarity: 'rare' },
+  { id: 'undefeated_10', name: 'Legendary Streak', desc: 'Win 10 races in a row', icon: '⚡', rarity: 'legendary' },
+  { id: 'underdog', name: 'Underdog Victory', desc: 'Win a race with the lowest ELO entry', icon: '🐴', rarity: 'rare' },
+  { id: 'mud_master', name: 'Mud Master', desc: 'Win 5 Mudussy races', icon: '🐊', rarity: 'rare' },
+  { id: 'speed_demon', name: 'Speed Demon', desc: 'Win a Sprintussy in under 10 seconds', icon: '💨', rarity: 'epic' },
+  { id: 'marathon_king', name: 'Marathon King', desc: 'Win a Grindussy without panic', icon: '🏋️', rarity: 'rare' },
+  { id: 'photo_finish', name: 'By a Nose', desc: 'Win by less than 0.5m', icon: '📸', rarity: 'rare' },
+  { id: 'the_yogurt_sees', name: 'The Yogurt Sees All', desc: 'Race against E-008\'s Chosen and survive', icon: '🌀', rarity: 'legendary' },
+  { id: 'century_horse', name: 'Century Horse', desc: 'Complete 100 races', icon: '💯', rarity: 'epic' },
+  { id: 'comeback_kid', name: 'Comeback Kid', desc: 'Win after being in last place at 75% mark', icon: '🔄', rarity: 'epic' },
+  { id: 'elder_statesman', name: 'Elder Statesman', desc: 'Win a race at age 12+', icon: '🧓', rarity: 'legendary' },
+  // Stable achievements
+  { id: 'first_foal', name: 'First Foal', desc: 'Breed your first horse', icon: '🧬', rarity: 'common' },
+  { id: 'breeder_10', name: 'Prolific Breeder', desc: 'Breed 10 horses', icon: '🐎', rarity: 'rare' },
+  { id: 'millionaire', name: 'Cummy Millionaire', desc: 'Accumulate 1,000,000 Cummies', icon: '🤑', rarity: 'epic' },
+  { id: 'dynasty', name: 'Dynasty', desc: 'Have 3 generations of winners', icon: '🏛️', rarity: 'legendary' },
+  { id: 'tournament_winner', name: 'Tournament Champion', desc: 'Win a tournament', icon: '🏅', rarity: 'epic' },
+  { id: 'full_stable', name: 'Full House', desc: 'Own 20+ horses', icon: '🏠', rarity: 'rare' },
+  { id: 'legendary_bloodline', name: 'Legendary Bloodline', desc: 'Breed a foal from two legendary parents', icon: '✨', rarity: 'legendary' },
+];
+
+// ─── BOOT SEQUENCE ─────────────────────────────────────────────────────────
+function runBootSequence() {
+  const bootEl = $('#boot-text');
+  const lines = [
+    'STALLIONUSSY BIOS v3.0.26',
+    'Copyright (c) 2026 Dr. Mittens Laboratory',
+    '',
+    'Initializing Equine Genetics Processor... OK',
+    'Loading genome database................ OK',
+    'Calibrating Sappho Score matrix....... OK',
+    'Connecting to yogurt containment...... OK',
+    'Training facility subsystems........... OK',
+    'Tournament arena initialization....... OK',
+    'Trade monitoring (Geoffrussy)......... ACTIVE',
+    'Weather satellite link................ SYNCED',
+    'Achievement tracker calibration....... OK',
+    'Pedigree tree engine.................. OK',
+    'E-008 status check.................... ████████░░ 78%',
+    'Jason Derulo perimeter scan........... CLEAR',
+    'Cummies ledger integrity.............. VERIFIED',
+    'WebSocket race telemetry.............. STANDBY',
+    '',
+    'All systems nominal. Welcome, breeder.',
+    '',
+    '> Entering terminal...',
+  ];
+
+  let lineIdx = 0;
+  let charIdx = 0;
+  let current = '';
+
+  function typeLine() {
+    if (lineIdx >= lines.length) {
+      setTimeout(() => {
+        $('#boot-screen').classList.add('hidden');
+      }, 400);
+      return;
+    }
+
+    const line = lines[lineIdx];
+    if (charIdx === 0 && line === '') {
+      current += '\n';
+      bootEl.textContent = current;
+      lineIdx++;
+      setTimeout(typeLine, 50);
+      return;
+    }
+
+    if (charIdx < line.length) {
+      const chunk = line.length > 30 ? 3 : 1;
+      current += line.substring(charIdx, charIdx + chunk);
+      charIdx = Math.min(charIdx + chunk, line.length);
+      bootEl.textContent = current + '█';
+      setTimeout(typeLine, 6);
+    } else {
+      current += '\n';
+      bootEl.textContent = current;
+      lineIdx++;
+      charIdx = 0;
+      setTimeout(typeLine, 40);
+    }
+  }
+
+  typeLine();
+}
+
+// ─── CLOCK ─────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2, '0');
+  const m = String(now.getMinutes()).padStart(2, '0');
+  const s = String(now.getSeconds()).padStart(2, '0');
+  $('#clock').textContent = `${h}:${m}:${s}`;
+}
+
+// ─── TICKER (uses real horse data) ─────────────────────────────────────────
+async function initTicker() {
+  const cont = $('#ticker-content');
+  let items = [];
+
+  try {
+    const horses = await api('/horses');
+    const sorted = (Array.isArray(horses) ? horses : [])
+      .sort((a, b) => (b.elo || 0) - (a.elo || 0))
+      .slice(0, 6);
+
+    items = sorted.map(h => {
+      const change = ((h.elo || 1200) - 1200) / 12;
+      const cls = change >= 0 ? 'ticker-up' : 'ticker-down';
+      const arrow = change >= 0 ? '▲' : '▼';
+      const isE008 = h.name && (h.name.includes('E-008') || h.lot_number === 6);
+      const name = isE008
+        ? `<span class="glitch-e008">${escHtml(h.name)}</span>`
+        : escHtml(h.name);
+      return `<span>${name} ELO:${Math.round(h.elo || 1200)} <span class="${cls}">${arrow}${Math.abs(change).toFixed(1)}%</span></span>`;
+    });
+  } catch (e) {
+    // Fallback with fake data
+    const fakes = [
+      { name: 'Lot #1 "Thundercock"', elo: 1420 },
+      { name: 'Lot #2 "Abyssal Yogurt"', elo: 1387 },
+      { name: 'Lot #3 "Comet Cummies"', elo: 1552 },
+      { name: 'Lot #4 "Dr. Mittens\' Pride"', elo: 1314 },
+      { name: 'Lot #5 "Jason\'s Stallion"', elo: 1289 },
+      { name: 'E-008', elo: 9999 },
+    ];
+    items = fakes.map(h => {
+      const change = (h.elo - 1200) / 12;
+      const cls = change >= 0 ? 'ticker-up' : 'ticker-down';
+      const arrow = change >= 0 ? '▲' : '▼';
+      const isE008 = h.name.includes('E-008');
+      const name = isE008
+        ? `<span class="glitch-e008">${escHtml(h.name)}</span>`
+        : escHtml(h.name);
+      return `<span>${name} ELO:${h.elo} <span class="${cls}">${arrow}${Math.abs(change).toFixed(1)}%</span></span>`;
+    });
+  }
+
+  if (items.length === 0) {
+    cont.innerHTML = '<span>STALLIONUSSY MARKET — No data available — Waiting for horses...</span>';
+    return;
+  }
+  cont.innerHTML = items.join('') + items.join('');
+}
+
+// ─── WARNING BANNER ────────────────────────────────────────────────────────
+function flickerWarningBanner() {
+  const banner = $('#warning-banner');
+  setInterval(() => {
+    if (Math.random() < 0.15) {
+      banner.classList.toggle('visible');
+    }
+  }, 4000);
+  if (Math.random() < 0.3) {
+    banner.classList.add('visible');
+  }
+}
+
+// ─── ROUTING ───────────────────────────────────────────────────────────────
+function getPage() {
+  const hash = location.hash.replace('#', '') || 'home';
+  return hash.split('/')[0];
+}
+
+function getPageParam() {
+  const hash = location.hash.replace('#', '') || '';
+  const parts = hash.split('/');
+  return parts.length > 1 ? parts.slice(1).join('/') : null;
+}
+
+function navigate() {
+  const page = getPage();
+
+  $$('#nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.page === page);
+  });
+
+  $$('.page').forEach(p => {
+    p.classList.toggle('active', p.id === `page-${page}`);
+  });
+
+  switch (page) {
+    case 'home': loadDashboard(); break;
+    case 'stable': loadStables(); break;
+    case 'horse': loadHorseDetail(getPageParam()); break;
+    case 'breed': loadBreedPage(); break;
+    case 'race': loadRacePage(); break;
+    case 'market': loadMarket(); break;
+    case 'tournament': loadTournaments(); break;
+    case 'trades': loadTrades(); break;
+    case 'leaderboard': loadLeaderboard(); break;
+    case 'achievements': loadAchievements(); break;
+  }
+}
+
+// ─── WEBSOCKET ─────────────────────────────────────────────────────────────
+function connectWebSocket() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws`;
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    console.warn('WebSocket connection failed:', e);
+    $('#ws-status').textContent = 'WS: UNAVAILABLE';
+    return;
+  }
+
+  ws.onopen = () => {
+    $('#ws-status').textContent = 'WS: CONNECTED';
+    $('#ws-status').style.color = 'var(--fg)';
+  };
+
+  ws.onclose = () => {
+    $('#ws-status').textContent = 'WS: DISCONNECTED';
+    $('#ws-status').style.color = '';
+    setTimeout(connectWebSocket, 3000);
+  };
+
+  ws.onerror = () => {
+    console.warn('WebSocket error');
+  };
+
+  ws.onmessage = (evt) => {
+    const messages = evt.data.split('\n').filter(Boolean);
+    messages.forEach(raw => {
+      try {
+        const msg = JSON.parse(raw);
+        handleWsMessage(msg);
+      } catch (e) {
+        console.warn('WS parse error:', e, raw);
+      }
+    });
+  };
+}
+
+function handleWsMessage(msg) {
+  switch (msg.type) {
+    case 'race_start': onRaceStart(msg); break;
+    case 'race_tick': onRaceTick(msg); break;
+    case 'race_end': onRaceEnd(msg); break;
+    case 'narrative': onNarrative(msg); break;
+  }
+}
+
+// ─── RACE WS HANDLERS ─────────────────────────────────────────────────────
+function onRaceStart(msg) {
+  currentRace = msg.race || msg.data;
+  raceNarrativeLog = [];
+
+  const liveEl = $('#race-live');
+  liveEl.classList.remove('hidden');
+  $('#race-results').classList.add('hidden');
+
+  if (currentRace) {
+    $('#race-live-track').textContent = currentRace.track_type || '?';
+    $('#race-live-dist').textContent = currentRace.distance || '?';
+    $('#race-live-status').textContent = 'RUNNING';
+    $('#race-live-status').className = 'text-amber';
+    $('#race-live-title').textContent = `// RACE ${(currentRace.id || '').substring(0, 8)} IN PROGRESS`;
+
+    const entries = currentRace.entries || [];
+    const barsEl = $('#race-bars');
+    barsEl.innerHTML = '';
+    entries.forEach(e => {
+      const bar = el('div', { className: 'progress-bar', id: `race-bar-${e.horse_id}` }, [
+        el('span', { className: 'bar-label', textContent: truncate(e.horse_name, 18) }),
+        el('div', { className: 'bar-track' }, [
+          el('div', { className: 'bar-fill', style: 'width:0%' }),
+        ]),
+        el('span', { className: 'bar-pct', textContent: '0%' }),
+      ]);
+      barsEl.appendChild(bar);
+    });
+  }
+
+  addNarrativeLine('═══ RACE STARTED ═══', 'event-burst');
+}
+
+function onRaceTick(msg) {
+  const dist = currentRace ? (currentRace.distance || 1600) : 1600;
+  const entries = msg.entries || [];
+
+  entries.forEach(e => {
+    const barEl = $(`#race-bar-${e.horseID}`);
+    if (!barEl) return;
+
+    const pct = Math.min(100, (e.position / dist) * 100);
+    const fill = barEl.querySelector('.bar-fill');
+    const pctLabel = barEl.querySelector('.bar-pct');
+
+    fill.style.width = `${pct}%`;
+    if (pct >= 100) fill.classList.add('finished');
+    pctLabel.textContent = `${pct.toFixed(0)}%`;
+
+    if (e.event) {
+      const label = barEl.querySelector('.bar-label');
+      if (e.event.includes('PANIC')) {
+        label.style.color = 'var(--red)';
+        setTimeout(() => label.style.color = '', 500);
+      } else if (e.event.includes('E-008') || e.event.includes('GLITCH')) {
+        label.style.color = 'var(--purple)';
+        label.classList.add('glitch-flicker');
+        setTimeout(() => {
+          label.style.color = '';
+          label.classList.remove('glitch-flicker');
+        }, 500);
+      } else if (e.event.includes('BURST') || e.event.includes('SURGE')) {
+        label.style.color = 'var(--cyan)';
+        setTimeout(() => label.style.color = '', 500);
+      }
+
+      addNarrativeLine(`[T${msg.tick}] ${e.horseName}: ${e.event}`, getEventClass(e.event));
+    }
+  });
+}
+
+function onRaceEnd(msg) {
+  const race = msg.race || msg.data;
+  currentRace = race;
+
+  $('#race-live-status').textContent = 'FINISHED';
+  $('#race-live-status').className = 'text-fg';
+
+  addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
+
+  if (race && race.entries) {
+    showRaceResults(race);
+  }
+}
+
+function onNarrative(msg) {
+  const cls = getEventClass(msg.message || '');
+  addNarrativeLine(msg.message, cls);
+}
+
+function getEventClass(text) {
+  if (!text) return 'event-normal';
+  const upper = text.toUpperCase();
+  if (upper.includes('PANIC') || upper.includes('STUMBLE') || upper.includes('CRASH')) return 'event-panic';
+  if (upper.includes('E-008') || upper.includes('GLITCH') || upper.includes('ANOMAL')) return 'event-e008';
+  if (upper.includes('GHOST') || upper.includes('HAUNT') || upper.includes('PHANTOM')) return 'event-ghost';
+  if (upper.includes('WEATHER') || upper.includes('RAIN') || upper.includes('STORM') || upper.includes('FOG') || upper.includes('HEAT')) return 'event-weather';
+  if (upper.includes('TRAIT') || upper.includes('ABILITY')) return 'event-trait';
+  if (upper.includes('BURST') || upper.includes('SURGE') || upper.includes('SPRINT')) return 'event-burst';
+  return 'event-normal';
+}
+
+function addNarrativeLine(text, cls = 'event-normal') {
+  const logEl = $('#race-narrative');
+  if (!logEl) return;
+  const line = el('div', { className: cls, textContent: text });
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+  raceNarrativeLog.push({ text, cls });
+}
+
+function showRaceResults(race) {
+  const resultsEl = $('#race-results');
+  const tableEl = $('#race-results-table');
+  resultsEl.classList.remove('hidden');
+
+  const sorted = [...(race.entries || [])].sort((a, b) => (a.finish_place || 999) - (b.finish_place || 999));
+
+  let html = `<table class="term-table">
+    <thead><tr><th>PLACE</th><th>HORSE</th><th>TIME</th><th>ID</th></tr></thead>
+    <tbody>`;
+
+  sorted.forEach((e, i) => {
+    const place = e.finish_place || (i + 1);
+    const placeClass = place === 1 ? 'gold' : place === 2 ? 'silver' : place === 3 ? 'bronze' : '';
+    const medal = place === 1 ? '🏆' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
+    const timeStr = e.final_time ? formatDuration(e.final_time) : '—';
+
+    html += `<tr>
+      <td class="result-place ${placeClass}">${medal}</td>
+      <td><a href="#horse/${e.horse_id}">${escHtml(e.horse_name)}</a></td>
+      <td class="text-amber">${timeStr}</td>
+      <td class="text-dim">${(e.horse_id || '').substring(0, 8)}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+
+  if (race.purse && race.purse > 0) {
+    html += `<div class="text-amber mt-4" style="font-size:11px;">PURSE: ₵${race.purse.toLocaleString()} distributed to winners</div>`;
+  }
+
+  tableEl.innerHTML = html;
+}
+
+function formatDuration(ns) {
+  if (typeof ns === 'number') {
+    const ms = ns / 1e6;
+    const s = Math.floor(ms / 1000);
+    const remainder = Math.floor(ms % 1000);
+    return `${s}.${String(remainder).padStart(3, '0')}s`;
+  }
+  return String(ns);
+}
+
+// ─── GENOME HELPERS ────────────────────────────────────────────────────────
+function expressGene(gene) {
+  if (!gene) return '??';
+  let a = gene.allele_a || 'A';
+  let b = gene.allele_b || 'B';
+  if (a > b) { const tmp = a; a = b; b = tmp; }
+  return a + b;
+}
+
+function formatGenomeShort(genome) {
+  if (!genome) return '<span class="text-dim">—</span>';
+  const types = ['SPD','STM','TMP','SZE','REC','INT','MUT'];
+  return types.map(t => {
+    const g = genome[t];
+    if (!g) return `<span class="text-dim">${t}:??</span>`;
+    const expr = expressGene(g);
+    const cls = expr === 'AA' ? 'aa' : expr === 'AB' ? 'ab' : 'bb';
+    return `<span class="gene-val ${cls}">${t}:${expr}</span>`;
+  }).join(' ');
+}
+
+function formatGenomeDetailed(genome) {
+  if (!genome) return '<div class="text-dim">No genome data</div>';
+  const types = ['SPD','STM','TMP','SZE','REC','INT','MUT'];
+  const labels = {
+    SPD: 'Speed', STM: 'Stamina', TMP: 'Temper',
+    SZE: 'Size', REC: 'Recovery', INT: 'Intel', MUT: 'Mutation'
+  };
+  return types.map(t => {
+    const g = genome[t];
+    if (!g) return '';
+    const expr = expressGene(g);
+    const cls = expr === 'AA' ? 'aa' : expr === 'AB' ? 'ab' : 'bb';
+    return `<span class="gene"><span class="gene-type">${labels[t] || t}</span> <span class="gene-val ${cls}">[${expr}]</span></span>`;
+  }).join('');
+}
+
+// ─── TRAIT BADGES ──────────────────────────────────────────────────────────
+function renderTraitBadges(traits) {
+  if (!traits || traits.length === 0) return '<span class="text-dim" style="font-size:10px;">None</span>';
+  return traits.map(t => {
+    const rarity = (t.rarity || 'common').toLowerCase();
+    const cls = `trait-badge trait-${rarity}`;
+    return `<span class="${cls}" title="${escHtml(t.description || '')} | Effect: ${escHtml(t.effect || '')} (${t.magnitude || 1}x)">${escHtml(t.name)}</span>`;
+  }).join('');
+}
+
+// ─── FATIGUE GAUGE ─────────────────────────────────────────────────────────
+function renderFatigueGauge(fatigue) {
+  const val = fatigue || 0;
+  let cls = 'fatigue-low';
+  let label = '';
+  if (val >= 90) { cls = 'fatigue-crit'; label = ' <span class="text-red" style="font-size:10px;">⚠ DANGER: HIGH INJURY RISK</span>'; }
+  else if (val >= 70) { cls = 'fatigue-high'; label = ' <span class="text-amber" style="font-size:10px;">⚠ HIGH</span>'; }
+  else if (val >= 50) { cls = 'fatigue-med'; }
+
+  return `<span class="fatigue-gauge ${cls}">
+    <span class="gauge-track"><span class="gauge-fill" style="width:${Math.min(100, val)}%"></span></span>
+    <span>${val.toFixed(0)}%</span>${label}
+  </span>`;
+}
+
+// ─── SAPPHO BAR ────────────────────────────────────────────────────────────
+function renderSapphoBar(score) {
+  const max = 12;
+  const filled = Math.round((score / max) * 12);
+  const empty = 12 - filled;
+  const bar = '█'.repeat(filled) + '░'.repeat(empty);
+  const color = score >= 9 ? 'var(--fg-bright)' : score >= 6 ? 'var(--amber)' : 'var(--red)';
+  return `<span class="sappho-bar" style="color:${color}">[${bar}] ${score.toFixed(1)}/${max}</span>`;
+}
+
+// ─── WEATHER DISPLAY ───────────────────────────────────────────────────────
+function renderWeatherBox(weather) {
+  const w = weather || 'Clear';
+  const info = WEATHER_INFO[w] || WEATHER_INFO.Clear;
+  return `<div class="weather-box">
+    <span class="weather-icon">${info.icon}</span>
+    <span>
+      <span class="weather-name">${escHtml(w)}</span><br>
+      <span class="weather-effect">${info.desc}</span>
+    </span>
+  </div>`;
+}
+
+// ─── STATUS BADGE ──────────────────────────────────────────────────────────
+function renderStatusBadge(status) {
+  const s = (status || 'Unknown').toLowerCase().replace(/\s/g, '');
+  const cls = {
+    open: 'badge-open', inprogress: 'badge-inprogress', finished: 'badge-finished',
+    pending: 'badge-pending', accepted: 'badge-accepted', rejected: 'badge-rejected',
+    cancelled: 'badge-cancelled',
+  }[s] || 'badge-open';
+  return `<span class="status-badge ${cls}">${escHtml(status)}</span>`;
+}
+
+// ─── WEATHER FETCH ─────────────────────────────────────────────────────────
+async function fetchWeather() {
+  try {
+    const data = await api('/weather');
+    currentWeather = data;
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ─── DASHBOARD ─────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  $('#ascii-logo').textContent = HORSE_ASCII;
+  $('#dash-date').textContent = new Date().toISOString().split('T')[0];
+
+  try {
+    const [horses, stables, history, weather] = await Promise.allSettled([
+      api('/horses'),
+      api('/stables'),
+      api('/history?limit=5'),
+      fetchWeather(),
+    ]);
+
+    const horseData = horses.status === 'fulfilled' ? (horses.value || []) : [];
+    const stableData = stables.status === 'fulfilled' ? (stables.value || []) : [];
+    const historyData = history.status === 'fulfilled' ? (history.value || []) : [];
+    const weatherData = weather.status === 'fulfilled' ? weather.value : null;
+
+    allHorses = Array.isArray(horseData) ? horseData : [];
+    allStables = Array.isArray(stableData) ? stableData : [];
+
+    $('#stat-horses').textContent = allHorses.length;
+    $('#stat-stables').textContent = allStables.length;
+
+    // Weather
+    if (weatherData) {
+      const wName = typeof weatherData === 'string' ? weatherData : (weatherData.condition || weatherData.weather || 'Clear');
+      const wInfo = WEATHER_INFO[wName] || WEATHER_INFO.Clear;
+      $('#dash-weather').innerHTML = `Weather: ${wInfo.icon} ${escHtml(wName)}`;
+    }
+
+    // Burned cummies estimate
+    let totalBurned = 0;
+    allStables.forEach(s => {
+      // Sum from total earnings vs cummies as rough estimate
+    });
+    // Estimate from market
+    try {
+      const market = await api('/market');
+      const listings = Array.isArray(market) ? market : [];
+      listings.forEach(l => {
+        if (!l.active) totalBurned += Math.floor((l.price || 0) * 0.02);
+      });
+    } catch(e) {}
+    $('#stat-burned').textContent = `₵${totalBurned.toLocaleString()}`;
+
+    // Total races
+    let totalRaces = 0;
+    allHorses.forEach(h => totalRaces += (h.races || 0));
+    $('#stat-races').textContent = Math.floor(totalRaces / Math.max(2, Math.min(allHorses.length, 6)));
+
+    // Current season estimate (based on max generation)
+    let maxGen = 0;
+    allHorses.forEach(h => { if (h.generation > maxGen) maxGen = h.generation; });
+    $('#stat-season').textContent = maxGen > 0 ? `Gen ${maxGen}` : 'Genesis';
+
+    // Top 5 performers
+    const perfEl = $('#top-performers');
+    const topPerformers = [...allHorses]
+      .filter(h => h.races > 0)
+      .sort((a, b) => (b.elo || 1200) - (a.elo || 1200))
+      .slice(0, 5);
+
+    if (topPerformers.length > 0) {
+      let html = `<table class="term-table"><thead><tr>
+        <th>#</th><th>HORSE</th><th>ELO</th><th>W/L/R</th><th>TRAITS</th>
+      </tr></thead><tbody>`;
+      topPerformers.forEach((h, i) => {
+        const cls = h.is_legendary ? ' class="legendary"' : '';
+        const traitCount = (h.traits || []).length;
+        html += `<tr${cls}>
+          <td>${i + 1}</td>
+          <td><a href="#horse/${h.id}">${escHtml(h.name)}</a></td>
+          <td style="font-weight:bold">${Math.round(h.elo || 1200)}</td>
+          <td>${h.wins}/${h.losses}/${h.races}</td>
+          <td class="text-dim">${traitCount}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      perfEl.innerHTML = html;
+    } else {
+      perfEl.innerHTML = '<span class="text-dim">No race data yet. Start racing!</span>';
+    }
+
+    // Recent race results from history
+    const recentEl = $('#recent-races');
+    const historyArr = Array.isArray(historyData) ? historyData : [];
+
+    if (historyArr.length > 0) {
+      let html = `<table class="term-table"><thead><tr>
+        <th>HORSE</th><th>TRACK</th><th>PLACE</th><th>TIME</th><th>ELO Δ</th><th>💰</th>
+      </tr></thead><tbody>`;
+      historyArr.forEach(r => {
+        const eloDelta = (r.elo_after || 0) - (r.elo_before || 0);
+        const deltaClass = eloDelta >= 0 ? 'ticker-up' : 'ticker-down';
+        const deltaStr = eloDelta >= 0 ? `+${eloDelta.toFixed(0)}` : eloDelta.toFixed(0);
+        html += `<tr>
+          <td><a href="#horse/${r.horse_id}">${escHtml(r.horse_name)}</a></td>
+          <td class="text-dim">${escHtml(r.track_type || '?')}</td>
+          <td>${r.finish_place}/${r.total_horses}</td>
+          <td class="text-amber">${r.final_time ? formatDuration(r.final_time) : '—'}</td>
+          <td class="${deltaClass}">${deltaStr}</td>
+          <td class="text-amber">₵${r.earnings || 0}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      recentEl.innerHTML = html;
+    } else {
+      // Fallback: show top horses by win rate
+      const recentHorses = [...allHorses]
+        .filter(h => h.races > 0)
+        .sort((a, b) => (b.wins / Math.max(1, b.races)) - (a.wins / Math.max(1, a.races)))
+        .slice(0, 5);
+
+      if (recentHorses.length > 0) {
+        let html = `<table class="term-table"><thead><tr>
+          <th>HORSE</th><th>ELO</th><th>W/L/R</th><th>WIN%</th>
+        </tr></thead><tbody>`;
+        recentHorses.forEach(h => {
+          const winPct = ((h.wins / Math.max(1, h.races)) * 100).toFixed(1);
+          const cls = h.is_legendary ? ' class="legendary"' : '';
+          html += `<tr${cls}>
+            <td><a href="#horse/${h.id}">${escHtml(h.name)}</a></td>
+            <td>${Math.round(h.elo || 1200)}</td>
+            <td>${h.wins}/${h.losses}/${h.races}</td>
+            <td class="text-amber">${winPct}%</td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        recentEl.innerHTML = html;
+      } else {
+        recentEl.innerHTML = '<span class="text-dim">No race data yet. Start racing!</span>';
+      }
+    }
+
+    // Achievement feed
+    loadAchievementFeed();
+
+  } catch (e) {
+    console.warn('Dashboard load error:', e);
+    $('#stat-horses').textContent = '?';
+    $('#stat-stables').textContent = '?';
+    $('#recent-races').innerHTML = '<span class="text-dim">API offline. Backend not responding.</span>';
+  }
+
+  startSystemMessages();
+}
+
+async function loadAchievementFeed() {
+  const feedEl = $('#achievement-feed');
+  try {
+    let allAch = [];
+    for (const s of allStables.slice(0, 10)) {
+      try {
+        const achs = await api(`/stables/${s.id}/achievements`);
+        if (Array.isArray(achs)) {
+          achs.forEach(a => allAch.push({ ...a, stableName: s.name }));
+        }
+      } catch(e) {}
+    }
+
+    if (allAch.length === 0) {
+      feedEl.innerHTML = '<span class="text-dim">No achievements unlocked yet. Keep racing!</span>';
+      return;
+    }
+
+    allAch.sort((a, b) => new Date(b.unlocked_at || 0) - new Date(a.unlocked_at || 0));
+    const recent = allAch.slice(0, 10);
+
+    feedEl.innerHTML = recent.map(a => {
+      const rarCls = `ach-rarity-${(a.rarity || 'common').toLowerCase()}`;
+      return `<div style="margin:3px 0;">
+        <span>${a.icon || '🏅'}</span>
+        <strong class="${rarCls}">${escHtml(a.name)}</strong>
+        <span class="text-dim">— ${escHtml(a.stableName || '?')}</span>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    feedEl.innerHTML = '<span class="text-dim">Could not load achievement feed.</span>';
+  }
+}
+
+let sysMessageInterval = null;
+function startSystemMessages() {
+  const logEl = $('#system-messages');
+  if (!logEl) return;
+  logEl.innerHTML = '';
+
+  function addSysMsg() {
+    const msg = SYSTEM_MESSAGES[Math.floor(Math.random() * SYSTEM_MESSAGES.length)];
+    const ts = new Date().toLocaleTimeString();
+    const isE008 = msg.includes('E-008');
+    const isWeather = msg.includes('[WEATHER]');
+    const isTrade = msg.includes('[TRADE]');
+    const isTourney = msg.includes('[TOURNAMENT]');
+    let cls = 'event-normal';
+    if (isE008) cls = 'event-e008 glitch-e008';
+    else if (isWeather) cls = 'event-weather';
+    else if (isTrade) cls = 'event-burst';
+    else if (isTourney) cls = 'event-trait';
+
+    const line = el('div', { className: cls, textContent: `[${ts}] ${msg}` });
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+
+    while (logEl.children.length > 25) logEl.removeChild(logEl.firstChild);
+  }
+
+  addSysMsg();
+  setTimeout(addSysMsg, 600);
+  setTimeout(addSysMsg, 1200);
+
+  if (sysMessageInterval) clearInterval(sysMessageInterval);
+  sysMessageInterval = setInterval(addSysMsg, 5000 + Math.random() * 5000);
+}
+
+// ─── ADVANCE SEASON ────────────────────────────────────────────────────────
+async function advanceSeason() {
+  const btn = $('#btn-advance-season');
+  const resultEl = $('#season-result');
+  btn.disabled = true;
+  btn.textContent = 'ADVANCING...';
+  resultEl.classList.remove('hidden');
+  resultEl.innerHTML = '<div class="season-result"><span class="loading cursor-blink">Time passes. The yogurt grows stronger...</span></div>';
+
+  try {
+    const result = await api('/advance-season', { method: 'POST' });
+    let html = '<div class="season-result">';
+    html += '<strong class="glow-amber">⏩ Season Advanced</strong><br>';
+    html += '<span class="text-dim" style="font-size:10px;">"Time passes. The yogurt grows stronger."</span><br><br>';
+    if (result) {
+      if (result.message) html += `<div>${escHtml(result.message)}</div>`;
+      if (result.retirements && result.retirements.length > 0) {
+        html += `<div class="text-amber mt-4">Retirements: ${result.retirements.map(r => escHtml(r)).join(', ')}</div>`;
+      }
+      if (result.aged) html += `<div class="text-dim mt-4">Horses aged: ${result.aged}</div>`;
+    }
+    html += '</div>';
+    resultEl.innerHTML = html;
+
+    // Refresh data
+    loadDashboard();
+  } catch (e) {
+    resultEl.innerHTML = `<div class="season-result text-red">Season advance failed: ${escHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⏩ ADVANCE SEASON';
+  }
+}
+
+// ─── STABLES PAGE ──────────────────────────────────────────────────────────
+async function loadStables() {
+  try {
+    const data = await api('/stables');
+    allStables = Array.isArray(data) ? data : [];
+  } catch (e) {
+    allStables = [];
+  }
+  renderStableList();
+}
+
+function renderStableList() {
+  const listEl = $('#stable-list');
+
+  if (allStables.length === 0) {
+    listEl.innerHTML = `<div class="text-dim">total 0<br>No stables found. Create one above.</div>`;
+    return;
+  }
+
+  let html = `<div class="text-dim mb-8">total ${allStables.length}</div>
+<table class="term-table"><thead><tr>
+  <th>PERMS</th><th>STABLE NAME</th><th>HORSES</th><th>CUMMIES</th><th>EARNINGS</th><th>CREATED</th><th></th>
+</tr></thead><tbody>`;
+
+  allStables.forEach(s => {
+    const horseCount = (s.horses && s.horses.length) || 0;
+    const date = s.created_at ? new Date(s.created_at).toLocaleDateString() : '—';
+    html += `<tr class="clickable" onclick="window.SU.viewStable('${escHtml(s.id)}')">
+      <td class="text-dim">drwxr-xr-x</td>
+      <td><a onclick="event.stopPropagation()">${escHtml(s.name)}</a></td>
+      <td>${horseCount}</td>
+      <td class="text-amber">₵${(s.cummies || 0).toLocaleString()}</td>
+      <td class="text-dim">₵${(s.total_earnings || 0).toLocaleString()}</td>
+      <td class="text-dim">${date}</td>
+      <td><a onclick="event.stopPropagation(); window.SU.viewStable('${escHtml(s.id)}')">[cd]</a></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  listEl.innerHTML = html;
+}
+
+async function createStable() {
+  const nameInput = $('#new-stable-name');
+  const name = nameInput.value.trim();
+  const msgEl = $('#stable-create-msg');
+
+  if (!name) {
+    msgEl.textContent = 'ERROR: stable name required';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  msgEl.textContent = 'mkdir: creating directory...';
+  msgEl.style.color = 'var(--fg-dim)';
+
+  try {
+    const result = await api('/stables', { method: 'POST', body: { name, ownerID: 'player' } });
+    msgEl.textContent = `mkdir: created stable '${result.name || name}' [${(result.id || '').substring(0, 8)}]`;
+    msgEl.style.color = 'var(--fg)';
+    nameInput.value = '';
+    await loadStables();
+  } catch (e) {
+    msgEl.textContent = `mkdir: error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function viewStable(stableId) {
+  const detailEl = $('#stable-detail');
+  detailEl.classList.remove('hidden');
+  $('#stable-horses').innerHTML = '<span class="loading cursor-blink">Loading horses...</span>';
+
+  const stable = allStables.find(s => s.id === stableId);
+  if (stable) {
+    $('#stable-detail-name').textContent = `// ${stable.name.toUpperCase()} — ls -la`;
+    $('#stable-detail-cummies').textContent = `₵${(stable.cummies || 0).toLocaleString()}`;
+    $('#stable-detail-earnings').textContent = `₵${(stable.total_earnings || 0).toLocaleString()}`;
+  }
+
+  try {
+    const horses = await api(`/stables/${stableId}/horses`);
+    const horseList = Array.isArray(horses) ? horses : [];
+
+    if (horseList.length === 0) {
+      $('#stable-horses').innerHTML = '<div class="text-dim">total 0<br>Empty stable. Breed some horses!</div>';
+    } else {
+      let html = `<div class="text-dim mb-8">total ${horseList.length}</div>
+<table class="term-table"><thead><tr>
+  <th>NAME</th><th>ELO</th><th>W/L/R</th><th>FITNESS</th><th>FATIGUE</th><th>TRAITS</th><th>GEN</th><th>STATUS</th>
+</tr></thead><tbody>`;
+
+      horseList.forEach(h => {
+        let cls = '';
+        if (h.is_legendary) cls = ' class="legendary"';
+        else if (h.retired) cls = ' class="retired"';
+        html += `<tr${cls}>
+          <td><a href="#horse/${h.id}">${escHtml(h.name)}</a></td>
+          <td>${Math.round(h.elo || 1200)}</td>
+          <td>${h.wins}/${h.losses}/${h.races}</td>
+          <td class="text-amber">${(h.current_fitness || 0).toFixed(2)}</td>
+          <td>${renderFatigueGauge(h.fatigue || 0)}</td>
+          <td>${renderTraitBadges(h.traits)}</td>
+          <td class="text-dim">G${h.generation}</td>
+          <td>${h.retired ? '<span class="text-red">RETIRED</span>' : '<span class="text-dim">Active</span>'}</td>
+        </tr>`;
+      });
+
+      html += '</tbody></table>';
+      $('#stable-horses').innerHTML = html;
+    }
+  } catch (e) {
+    $('#stable-horses').innerHTML = `<span class="text-red">Error: ${e.message}</span>`;
+  }
+
+  // Load stable achievements
+  try {
+    const achs = await api(`/stables/${stableId}/achievements`);
+    const achList = Array.isArray(achs) ? achs : [];
+    const achEl = $('#stable-achievements');
+
+    if (achList.length === 0) {
+      achEl.innerHTML = '<span class="text-dim">No achievements unlocked yet.</span>';
+    } else {
+      achEl.innerHTML = achList.map(a => {
+        const rarCls = `ach-rarity-${(a.rarity || 'common').toLowerCase()}`;
+        return `<span style="margin-right:12px;">${a.icon || '🏅'} <strong class="${rarCls}">${escHtml(a.name)}</strong></span>`;
+      }).join('');
+    }
+  } catch (e) {
+    $('#stable-achievements').innerHTML = '<span class="text-dim">Could not load achievements.</span>';
+  }
+}
+
+// ─── HORSE DETAIL PAGE ─────────────────────────────────────────────────────
+async function loadHorseDetail(horseId) {
+  if (!horseId) {
+    $('#horse-detail-content').innerHTML = '<span class="text-red">No horse ID specified.</span>';
+    return;
+  }
+
+  $('#horse-detail-subtitle').textContent = `Loading horse ${horseId.substring(0, 8)}...`;
+  $('#horse-detail-content').innerHTML = '<span class="loading cursor-blink">Loading horse dossier...</span>';
+
+  try {
+    const [horse, pedigree, history, stats, training, achievements] = await Promise.allSettled([
+      api(`/horses/${horseId}`),
+      api(`/horses/${horseId}/pedigree/ascii`),
+      api(`/horses/${horseId}/history`),
+      api(`/horses/${horseId}/stats`),
+      api(`/horses/${horseId}/training`),
+      api(`/horses/${horseId}/achievements`),
+    ]);
+
+    const h = horse.status === 'fulfilled' ? horse.value : null;
+    if (!h) {
+      $('#horse-detail-content').innerHTML = '<span class="text-red">Horse not found.</span>';
+      return;
+    }
+
+    const pedigreeAscii = pedigree.status === 'fulfilled' ? (typeof pedigree.value === 'string' ? pedigree.value : (pedigree.value && pedigree.value.tree) || '') : '';
+    const historyData = history.status === 'fulfilled' ? (Array.isArray(history.value) ? history.value : []) : [];
+    const statsData = stats.status === 'fulfilled' ? stats.value : null;
+    const trainingData = training.status === 'fulfilled' ? (Array.isArray(training.value) ? training.value : []) : [];
+    const achRaw = achievements.status === 'fulfilled' ? achievements.value : null;
+    const achData = Array.isArray(achRaw) ? achRaw : (achRaw && Array.isArray(achRaw.allAchievements) ? achRaw.allAchievements : []);
+
+    const isE008 = h.name && (h.name.includes('E-008') || h.lot_number === 6);
+    const nameClass = isE008 ? 'glitch-e008' : (h.is_legendary ? 'glow-amber' : 'glow');
+
+    $('#horse-detail-subtitle').innerHTML = `<span class="${nameClass}">${escHtml(h.name)}</span> [${horseId.substring(0, 8)}]`;
+
+    let html = '';
+
+    // ── Info Card ──
+    html += `<div class="panel">
+      <div style="display:flex;gap:20px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:280px;">
+          <h3 class="${nameClass}" style="font-size:16px;margin-top:0;">${escHtml(h.name)} ${h.is_legendary ? '★ LEGENDARY' : ''} ${h.retired ? '<span class="text-red">[RETIRED]</span>' : ''}</h3>
+          <div class="text-dim mb-4" style="font-size:10px;">${escHtml(h.lore || 'No lore recorded.')}</div>
+          <div class="genome-display mb-8">${formatGenomeDetailed(h.genome)}</div>
+          <div style="font-size:12px;">
+            <span class="text-dim">ELO:</span> <strong>${Math.round(h.elo || 1200)}</strong>
+            <span class="text-dim">(Peak: ${Math.round(h.peak_elo || h.elo || 1200)})</span> |
+            <span class="text-dim">W/L/R:</span> ${h.wins}/${h.losses}/${h.races} |
+            <span class="text-dim">Gen:</span> G${h.generation} |
+            <span class="text-dim">Age:</span> ${h.age || 0}
+          </div>
+          <div style="font-size:12px;margin-top:4px;">
+            <span class="text-dim">Fitness:</span> <span class="text-amber">${(h.current_fitness || 0).toFixed(3)}</span>
+            <span class="text-dim">(Ceiling: ${(h.fitness_ceiling || 0).toFixed(3)})</span> |
+            <span class="text-dim">Training XP:</span> ${(h.training_xp || 0).toFixed(1)} |
+            <span class="text-dim">Earnings:</span> <span class="text-amber">₵${(h.total_earnings || 0).toLocaleString()}</span>
+          </div>
+          <div style="font-size:12px;margin-top:4px;">
+            <span class="text-dim">Fatigue:</span> ${renderFatigueGauge(h.fatigue || 0)}
+          </div>
+        </div>
+        <div style="min-width:200px;">
+          <h3 style="margin-top:0;">TRAITS</h3>
+          <div>${renderTraitBadges(h.traits)}</div>
+          ${achData.length > 0 ? `<h3 class="mt-8">ACHIEVEMENTS</h3><div>${achData.map(a => `<span style="margin-right:8px;">${a.icon || '🏅'} ${escHtml(a.name)}</span>`).join('')}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
+
+    // ── Training Section ──
+    html += `<div class="panel">
+      <h3 style="margin-top:0;">🏋️ TRAINING — Dr. Mittens' Approved Workout Regimen</h3>
+      <div class="text-dim" style="font-size:10px;margin-bottom:8px;">"Discipline is the bridge between goals and accomplishment. Also between hooves and injury." — Dr. Mittens</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">`;
+
+    Object.entries(WORKOUT_INFO).forEach(([type, info]) => {
+      const btnClass = type === 'RestDay' ? 'term-btn purple sm' : 'term-btn sm';
+      html += `<span class="has-tooltip">
+        <button class="${btnClass}" onclick="window.SU.trainHorse('${horseId}', '${type}')" id="train-btn-${type}">${info.label}</button>
+        <span class="tooltip-text">${info.desc}</span>
+      </span>`;
+    });
+
+    html += `</div>
+      <div id="training-result"></div>
+      <div id="training-history" class="mt-8">`;
+
+    if (trainingData.length > 0) {
+      html += `<details><summary class="text-dim" style="cursor:pointer;font-size:11px;">Recent Training Sessions (${trainingData.length})</summary>
+        <table class="term-table"><thead><tr><th>WORKOUT</th><th>XP</th><th>FITNESS Δ</th><th>INJURY</th></tr></thead><tbody>`;
+      trainingData.slice(0, 10).forEach(t => {
+        html += `<tr>
+          <td>${escHtml(t.workout_type)}</td>
+          <td class="text-amber">+${(t.xp_gained || 0).toFixed(1)}</td>
+          <td>${(t.fitness_after || 0).toFixed(3)} <span class="text-dim">(${((t.fitness_after || 0) - (t.fitness_before || 0) >= 0 ? '+' : '')}${((t.fitness_after || 0) - (t.fitness_before || 0)).toFixed(3)})</span></td>
+          <td>${t.injury ? `<span class="text-red">⚠ ${escHtml(t.injury_note || 'Injured')}</span>` : '<span class="text-dim">—</span>'}</td>
+        </tr>`;
+      });
+      html += '</tbody></table></details>';
+    } else {
+      html += '<span class="text-dim" style="font-size:11px;">No training sessions yet.</span>';
+    }
+
+    html += `</div></div>`;
+
+    // ── Pedigree Tree ──
+    if (pedigreeAscii) {
+      html += `<div class="panel">
+        <h3 style="margin-top:0;">🌳 PEDIGREE TREE</h3>
+        <div class="pedigree-tree">${escHtml(pedigreeAscii)}</div>
+      </div>`;
+    }
+
+    // ── Computed Stats ──
+    if (statsData || historyData.length > 0) {
+      html += `<div class="panel">
+        <h3 style="margin-top:0;">📊 COMPUTED STATS</h3>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;">`;
+
+      if (statsData) {
+        html += `
+          <div><span class="text-dim">Win Rate:</span> <span class="text-amber">${((statsData.win_rate || 0) * 100).toFixed(1)}%</span></div>
+          <div><span class="text-dim">Avg Place:</span> ${(statsData.avg_place || 0).toFixed(2)}</div>
+          <div><span class="text-dim">Best Streak:</span> ${statsData.best_streak || 0}W</div>
+          <div><span class="text-dim">Current Streak:</span> ${statsData.current_streak || 0}W</div>
+          <div><span class="text-dim">Favorite Track:</span> ${escHtml(statsData.favorite_track || '—')}</div>
+          <div><span class="text-dim">Best Time:</span> ${statsData.best_time ? formatDuration(statsData.best_time) : '—'}</div>`;
+      } else if (h.races > 0) {
+        const winRate = h.races > 0 ? ((h.wins / h.races) * 100).toFixed(1) : '0.0';
+        html += `<div><span class="text-dim">Win Rate:</span> <span class="text-amber">${winRate}%</span></div>`;
+      }
+
+      html += '</div></div>';
+    }
+
+    // ── Race History ──
+    html += `<div class="panel">
+      <h3 style="margin-top:0;">🏁 RACE HISTORY</h3>`;
+
+    if (historyData.length > 0) {
+      html += `<table class="term-table"><thead><tr>
+        <th>TRACK</th><th>PLACE</th><th>TIME</th><th>ELO Δ</th><th>💰</th><th>WEATHER</th>
+      </tr></thead><tbody>`;
+      historyData.slice(0, 20).forEach(r => {
+        const eloDelta = (r.elo_after || 0) - (r.elo_before || 0);
+        const deltaClass = eloDelta >= 0 ? 'ticker-up' : 'ticker-down';
+        const deltaStr = eloDelta >= 0 ? `+${eloDelta.toFixed(0)}` : eloDelta.toFixed(0);
+        const wIcon = r.weather ? (WEATHER_INFO[r.weather] || {}).icon || '' : '';
+        html += `<tr>
+          <td>${escHtml(r.track_type || '?')}</td>
+          <td>${r.finish_place}/${r.total_horses}</td>
+          <td class="text-amber">${r.final_time ? formatDuration(r.final_time) : '—'}</td>
+          <td class="${deltaClass}">${deltaStr}</td>
+          <td class="text-amber">₵${r.earnings || 0}</td>
+          <td>${wIcon} ${escHtml(r.weather || '—')}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    } else {
+      html += '<span class="text-dim">No race history.</span>';
+    }
+
+    html += '</div>';
+
+    $('#horse-detail-content').innerHTML = html;
+
+  } catch (e) {
+    console.error('Horse detail error:', e);
+    $('#horse-detail-content').innerHTML = `<span class="text-red">Error loading horse: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function trainHorse(horseId, workoutType) {
+  const resultEl = $('#training-result');
+  if (!resultEl) return;
+
+  // Disable all train buttons
+  Object.keys(WORKOUT_INFO).forEach(t => {
+    const btn = $(`#train-btn-${t}`);
+    if (btn) btn.disabled = true;
+  });
+
+  resultEl.innerHTML = `<span class="loading">Training: ${workoutType}...</span>`;
+
+  try {
+    const result = await api(`/horses/${horseId}/train`, {
+      method: 'POST',
+      body: { workoutType },
+    });
+
+    if (result && result.injury) {
+      resultEl.innerHTML = `<div class="injury-alert">
+        ⚠ INJURY DURING TRAINING ⚠<br>
+        <strong>${escHtml(result.injury_note || 'Horse suffered an injury!')}</strong><br>
+        <span class="text-dim">XP: +${(result.xp_gained || 0).toFixed(1)} | Fitness: ${(result.fitness_after || 0).toFixed(3)}</span>
+      </div>`;
+    } else if (result) {
+      const fitDelta = (result.fitness_after || 0) - (result.fitness_before || 0);
+      resultEl.innerHTML = `<div style="border:1px solid var(--fg-dim);padding:8px;margin:4px 0;font-size:12px;">
+        ✅ <strong>${escHtml(workoutType)}</strong> complete!
+        XP: <span class="text-amber">+${(result.xp_gained || 0).toFixed(1)}</span> |
+        Fitness: ${(result.fitness_after || 0).toFixed(3)} <span class="${fitDelta >= 0 ? 'ticker-up' : 'ticker-down'}">(${fitDelta >= 0 ? '+' : ''}${fitDelta.toFixed(3)})</span>
+      </div>`;
+    }
+
+    // Reload page after short delay
+    setTimeout(() => loadHorseDetail(horseId), 800);
+
+  } catch (e) {
+    resultEl.innerHTML = `<span class="text-red">Training failed: ${escHtml(e.message)}</span>`;
+  }
+
+  // Re-enable buttons
+  Object.keys(WORKOUT_INFO).forEach(t => {
+    const btn = $(`#train-btn-${t}`);
+    if (btn) btn.disabled = false;
+  });
+}
+
+// ─── BREED PAGE ────────────────────────────────────────────────────────────
+let dnaAnimFrame = 0;
+let dnaAnimInterval = null;
+
+async function loadBreedPage() {
+  animateDNA();
+
+  try {
+    const [hData, sData] = await Promise.allSettled([api('/horses'), api('/stables')]);
+    allHorses = hData.status === 'fulfilled' ? (Array.isArray(hData.value) ? hData.value : []) : allHorses;
+    allStables = sData.status === 'fulfilled' ? (Array.isArray(sData.value) ? sData.value : []) : allStables;
+  } catch (e) {}
+
+  const activeHorses = allHorses.filter(h => !h.retired);
+
+  const sireEl = $('#breed-sire');
+  sireEl.innerHTML = '<option value="">-- SELECT SIRE --</option>';
+  activeHorses.forEach(h => {
+    sireEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)} G${h.generation}]</option>`;
+  });
+
+  const mareEl = $('#breed-mare');
+  mareEl.innerHTML = '<option value="">-- SELECT MARE --</option>';
+  activeHorses.forEach(h => {
+    mareEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)} G${h.generation}]</option>`;
+  });
+
+  const stableEl = $('#breed-stable');
+  stableEl.innerHTML = '<option value="">-- SELECT STABLE --</option>';
+  allStables.forEach(s => {
+    stableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)} (₵${(s.cummies || 0).toLocaleString()})</option>`;
+  });
+
+  // Set up inbreeding warning check
+  sireEl.onchange = checkInbreeding;
+  mareEl.onchange = checkInbreeding;
+
+  $('#breed-result').classList.add('hidden');
+  $('#breed-error').classList.add('hidden');
+  $('#breed-warnings').classList.add('hidden');
+}
+
+function checkInbreeding() {
+  const sireID = $('#breed-sire').value;
+  const mareID = $('#breed-mare').value;
+  const warnEl = $('#breed-warnings');
+
+  if (!sireID || !mareID || sireID === mareID) {
+    warnEl.classList.add('hidden');
+    return;
+  }
+
+  const sire = allHorses.find(h => h.id === sireID);
+  const mare = allHorses.find(h => h.id === mareID);
+
+  if (!sire || !mare) {
+    warnEl.classList.add('hidden');
+    return;
+  }
+
+  // Simple inbreeding check: shared parents
+  let warnings = [];
+  if (sire.sire_id && mare.sire_id && sire.sire_id === mare.sire_id) {
+    warnings.push('⚠ Same sire detected — half-siblings! Inbreeding risk elevated.');
+  }
+  if (sire.mare_id && mare.mare_id && sire.mare_id === mare.mare_id) {
+    warnings.push('⚠ Same mare detected — half-siblings! Inbreeding risk elevated.');
+  }
+  if (sire.sire_id === mareID || sire.mare_id === mareID) {
+    warnings.push('🔴 PARENT-CHILD CROSS — Extremely high inbreeding coefficient!');
+  }
+  if (mare.sire_id === sireID || mare.mare_id === sireID) {
+    warnings.push('🔴 PARENT-CHILD CROSS — Extremely high inbreeding coefficient!');
+  }
+
+  // Bloodline bonus info
+  let bonuses = [];
+  if (sire.is_legendary || mare.is_legendary) {
+    bonuses.push('★ Legendary bloodline detected — foal may inherit enhanced traits');
+  }
+  if ((sire.generation || 0) >= 3 && (mare.generation || 0) >= 3) {
+    bonuses.push('📈 Deep lineage pairing — dynasty bonus possible');
+  }
+
+  if (warnings.length > 0 || bonuses.length > 0) {
+    warnEl.classList.remove('hidden');
+    let html = '';
+    warnings.forEach(w => {
+      const isCrit = w.includes('🔴');
+      html += `<div class="inbreed-warn ${isCrit ? 'red' : 'yellow'}">${w}</div>`;
+    });
+    bonuses.forEach(b => {
+      html += `<div style="color:var(--fg);font-size:11px;margin:4px 0;">${b}</div>`;
+    });
+    warnEl.innerHTML = html;
+  } else {
+    warnEl.classList.add('hidden');
+  }
+}
+
+function animateDNA() {
+  if (dnaAnimInterval) clearInterval(dnaAnimInterval);
+  const dnaEl = $('#dna-art');
+  if (!dnaEl) return;
+  dnaAnimFrame = 0;
+  dnaEl.textContent = DNA_FRAMES[0];
+  dnaAnimInterval = setInterval(() => {
+    dnaAnimFrame = (dnaAnimFrame + 1) % DNA_FRAMES.length;
+    dnaEl.textContent = DNA_FRAMES[dnaAnimFrame];
+  }, 800);
+}
+
+async function breedHorses() {
+  const sireID = $('#breed-sire').value;
+  const mareID = $('#breed-mare').value;
+  const stableID = $('#breed-stable').value;
+  const errorEl = $('#breed-error');
+  const resultEl = $('#breed-result');
+
+  errorEl.classList.add('hidden');
+  resultEl.classList.add('hidden');
+
+  if (!sireID || !mareID) {
+    errorEl.textContent = 'ERROR: Select both sire and mare';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (sireID === mareID) {
+    errorEl.textContent = 'ERROR: Cannot breed a horse with itself. Dr. Mittens disapproves.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (!stableID) {
+    errorEl.textContent = 'ERROR: Select destination stable';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = $('#btn-breed');
+  btn.disabled = true;
+  btn.textContent = 'COMPILING...';
+
+  try {
+    await showPunnettAnimation();
+
+    const breedResult = await api('/breed', {
+      method: 'POST',
+      body: { sireID, mareID, stableID },
+    });
+
+    // Server returns { foal: {...}, bloodlineBonus, inbreedingCoefficient, inbreedingPenalty }
+    const foal = breedResult.foal || breedResult;
+    const bloodlineBonus = breedResult.bloodlineBonus || 1.0;
+    const inbreedingCoef = breedResult.inbreedingCoefficient || 0;
+
+    resultEl.classList.remove('hidden');
+    const infoEl = $('#breed-foal-info');
+
+    const sire = allHorses.find(h => h.id === sireID);
+    const mare = allHorses.find(h => h.id === mareID);
+
+    let foalHtml = `
+      <div class="mb-8">
+        <span class="text-dim">SIRE:</span> ${escHtml(sire ? sire.name : sireID.substring(0, 8))}
+        <span class="text-dim">×</span>
+        <span class="text-dim">MARE:</span> ${escHtml(mare ? mare.name : mareID.substring(0, 8))}
+      </div>
+      <div class="mb-8">
+        <span class="text-dim">FOAL NAME:</span> <strong><a href="#horse/${foal.id}">${escHtml(foal.name)}</a></strong>
+        <span class="text-dim">[${(foal.id || '').substring(0, 8)}]</span>
+      </div>
+      <div class="mb-8">
+        <span class="text-dim">GENERATION:</span> G${foal.generation}
+        <span class="text-dim">| FITNESS CEILING:</span>
+        <span class="text-amber">${(foal.fitness_ceiling || 0).toFixed(3)}</span>
+      </div>
+      <div class="mb-8">
+        <span class="text-dim">GENOME:</span><br>
+        <div class="genome-display">${formatGenomeDetailed(foal.genome)}</div>
+      </div>`;
+
+    if (foal.traits && foal.traits.length > 0) {
+      foalHtml += `<div class="mb-8">
+        <span class="text-dim">TRAITS:</span> ${renderTraitBadges(foal.traits)}
+      </div>`;
+    }
+
+    if (foal.is_legendary) {
+      foalHtml += '<div class="text-amber glow-amber">★ LEGENDARY FOAL DETECTED ★</div>';
+    }
+
+    if (bloodlineBonus > 1.0) {
+      foalHtml += `<div class="mb-8"><span class="text-dim">BLOODLINE BONUS:</span> <span class="text-amber">+${((bloodlineBonus - 1) * 100).toFixed(1)}%</span></div>`;
+    }
+    if (inbreedingCoef > 0) {
+      foalHtml += `<div class="mb-8"><span class="text-dim">INBREEDING COEFFICIENT:</span> <span class="text-red">${(inbreedingCoef * 100).toFixed(1)}%</span> (fitness penalty applied)</div>`;
+    }
+
+    infoEl.innerHTML = foalHtml;
+
+  } catch (e) {
+    errorEl.textContent = `COMPILATION FAILED: ${e.message}`;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ COMPILE FOAL ⚡';
+  }
+}
+
+function showPunnettAnimation() {
+  return new Promise(resolve => {
+    const dnaEl = $('#dna-art');
+    const frames = [
+      '  CROSSING GENOMES...',
+      '  ┌───┬───┬───┬───┐\n  │ A │ B │ A │ A │  ←SIRE\n  ├───┼───┼───┼───┤\n  │ A │AA │AB │AA │\n  ├───┼───┼───┼───┤\n  │ B │AB │BB │AB │  ←MARE\n  └───┴───┴───┴───┘',
+      '  RESOLVING ALLELES...\n  SPD:[██████░░░░] STM:[████████░░]\n  TMP:[████░░░░░░] SZE:[██████████]\n  REC:[██████░░░░] INT:[████████░░]\n  MUT:[██░░░░░░░░]',
+      '  ASSIGNING TRAITS...\n  Scanning trait pool... DONE\n  Checking bloodline bonuses... OK',
+      '  COMPILATION COMPLETE ✓',
+    ];
+    let i = 0;
+    const interval = setInterval(() => {
+      if (i < frames.length) {
+        dnaEl.textContent = frames[i];
+        i++;
+      } else {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 350);
+  });
+}
+
+// ─── RACE PAGE ─────────────────────────────────────────────────────────────
+async function loadRacePage() {
+  try {
+    const [hData, weatherData] = await Promise.allSettled([api('/horses'), fetchWeather()]);
+    allHorses = hData.status === 'fulfilled' ? (Array.isArray(hData.value) ? hData.value : []) : allHorses;
+  } catch (e) {}
+
+  // Show weather
+  const weatherEl = $('#race-weather-display');
+  if (currentWeather) {
+    const wName = typeof currentWeather === 'string' ? currentWeather : (currentWeather.condition || currentWeather.weather || 'Clear');
+    weatherEl.innerHTML = renderWeatherBox(wName);
+  } else {
+    weatherEl.innerHTML = renderWeatherBox('Clear');
+  }
+
+  // Track description
+  updateTrackDesc();
+  $('#race-track').onchange = updateTrackDesc;
+
+  renderRaceHorseList();
+}
+
+function updateTrackDesc() {
+  const track = $('#race-track').value;
+  const descEl = $('#track-desc');
+  descEl.textContent = TRACK_INFO[track] || '';
+}
+
+function renderRaceHorseList() {
+  const listEl = $('#race-horse-list');
+  const active = allHorses.filter(h => !h.retired);
+
+  if (active.length === 0) {
+    listEl.innerHTML = '<div class="text-dim">No horses available. Breed some first!</div>';
+    return;
+  }
+
+  let html = '<div style="max-height:320px;overflow-y:auto;">';
+  active.forEach(h => {
+    const legendary = h.is_legendary ? ' ★' : '';
+    const fatigueClass = (h.fatigue || 0) >= 70 ? 'text-red' : (h.fatigue || 0) >= 50 ? 'text-amber' : 'text-dim';
+    html += `<div style="padding:2px 0;">
+      <label>
+        <input type="checkbox" class="term-checkbox race-horse-cb" value="${h.id}">
+        <span>${escHtml(h.name)}${legendary}</span>
+        <span class="text-dim">[ELO:${Math.round(h.elo || 1200)}]</span>
+        <span class="text-dim">Fit:${(h.current_fitness || 0).toFixed(2)}</span>
+        <span class="${fatigueClass}">Fat:${(h.fatigue || 0).toFixed(0)}%</span>
+      </label>
+    </div>`;
+  });
+  html += '</div>';
+  listEl.innerHTML = html;
+}
+
+async function startRace() {
+  const selected = [...$$('.race-horse-cb:checked')].map(cb => cb.value);
+  const track = $('#race-track').value;
+  const purse = parseInt($('#race-purse').value) || 0;
+
+  if (selected.length < 2) {
+    alert('Select at least 2 horses for the race.');
+    return;
+  }
+
+  const btn = $('#btn-start-race');
+  btn.disabled = true;
+  btn.textContent = 'STARTING...';
+
+  $('#race-narrative').innerHTML = '';
+  raceNarrativeLog = [];
+  $('#race-results').classList.add('hidden');
+
+  try {
+    const race = await api('/races', {
+      method: 'POST',
+      body: { horseIDs: selected, trackType: track, purse },
+    });
+
+    const raceData = race;
+    const raceObj = race.race || race;  // unwrap { race: {...}, narrative: [...], weather: "..." }
+    const narrativeLines = race.narrative || [];
+    const raceWeather = race.weather || null;
+
+    if (raceObj && (raceObj.status === 'Finished' || raceObj.entries)) {
+      currentRace = raceObj;
+      currentWeather = raceWeather;
+      simulateLocalRace(raceObj, narrativeLines);
+    } else if (raceObj) {
+      currentRace = raceObj;
+      currentWeather = raceWeather;
+      onRaceStart({ race: raceObj });
+    }
+  } catch (e) {
+    alert(`Race error: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'START RACE';
+  }
+}
+
+async function quickRace() {
+  const btn = $('#btn-quick-race');
+  btn.disabled = true;
+  btn.textContent = 'RACING...';
+
+  $('#race-narrative').innerHTML = '';
+  raceNarrativeLog = [];
+  $('#race-results').classList.add('hidden');
+
+  try {
+    const race = await api('/races/quick');
+    if (race) {
+      const raceObj = race.race || race;
+      const raceWeather = race.weather || null;
+      currentRace = raceObj;
+      currentWeather = raceWeather;
+      simulateLocalRace(raceObj, race.narrative || []);
+    }
+  } catch (e) {
+    alert(`Quick race error: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'QUICK RACE';
+  }
+}
+
+function simulateLocalRace(race, serverNarrative) {
+  const liveEl = $('#race-live');
+  liveEl.classList.remove('hidden');
+
+  $('#race-live-track').textContent = race.track_type || '?';
+  $('#race-live-dist').textContent = race.distance || '?';
+  $('#race-live-status').textContent = 'REPLAYING';
+  $('#race-live-status').className = 'text-amber';
+  $('#race-live-title').textContent = `// RACE ${(race.id || '').substring(0, 8)}`;
+
+  // Show weather if available
+  if (currentWeather) {
+    const wName = typeof currentWeather === 'string' ? currentWeather : (currentWeather.condition || currentWeather.weather || '—');
+    const wInfo = WEATHER_INFO[wName] || {};
+    $('#race-live-weather').innerHTML = `${wInfo.icon || ''} ${escHtml(wName)}`;
+  }
+
+  const entries = race.entries || [];
+  const dist = race.distance || 1600;
+
+  const barsEl = $('#race-bars');
+  barsEl.innerHTML = '';
+  entries.forEach(e => {
+    const bar = el('div', { className: 'progress-bar', id: `race-bar-${e.horse_id}` }, [
+      el('span', { className: 'bar-label', textContent: truncate(e.horse_name, 18) }),
+      el('div', { className: 'bar-track' }, [
+        el('div', { className: 'bar-fill', style: 'width:0%' }),
+      ]),
+      el('span', { className: 'bar-pct', textContent: '0%' }),
+    ]);
+    barsEl.appendChild(bar);
+  });
+
+  addNarrativeLine('═══ RACE REPLAY START ═══', 'event-burst');
+
+  let maxTicks = 0;
+  entries.forEach(e => {
+    if (e.tick_log && e.tick_log.length > maxTicks) maxTicks = e.tick_log.length;
+  });
+
+  if (maxTicks === 0) {
+    entries.forEach(e => {
+      const barEl = $(`#race-bar-${e.horse_id}`);
+      if (barEl) {
+        barEl.querySelector('.bar-fill').style.width = '100%';
+        barEl.querySelector('.bar-fill').classList.add('finished');
+        barEl.querySelector('.bar-pct').textContent = '100%';
+      }
+    });
+    addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
+    showRaceResults(race);
+    return;
+  }
+
+  let tick = 0;
+  const interval = setInterval(() => {
+    if (tick >= maxTicks) {
+      clearInterval(interval);
+      $('#race-live-status').textContent = 'FINISHED';
+      addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
+      showRaceResults(race);
+      return;
+    }
+
+    entries.forEach(e => {
+      if (!e.tick_log || tick >= e.tick_log.length) return;
+      const te = e.tick_log[tick];
+      const pct = Math.min(100, (te.position / dist) * 100);
+
+      const barEl = $(`#race-bar-${e.horse_id}`);
+      if (barEl) {
+        barEl.querySelector('.bar-fill').style.width = `${pct}%`;
+        if (pct >= 100) barEl.querySelector('.bar-fill').classList.add('finished');
+        barEl.querySelector('.bar-pct').textContent = `${pct.toFixed(0)}%`;
+      }
+
+      if (te.event) {
+        addNarrativeLine(`[T${tick}] ${e.horse_name}: ${te.event}`, getEventClass(te.event));
+      }
+    });
+
+    tick++;
+  }, 80);
+}
+
+// ─── MARKET PAGE ───────────────────────────────────────────────────────────
+async function loadMarket() {
+  try {
+    const [listings, horses, stables] = await Promise.allSettled([
+      api('/market'),
+      api('/horses'),
+      api('/stables'),
+    ]);
+
+    allListings = listings.status === 'fulfilled' ? (Array.isArray(listings.value) ? listings.value : []) : [];
+    allHorses = horses.status === 'fulfilled' ? (Array.isArray(horses.value) ? horses.value : []) : allHorses;
+    allStables = stables.status === 'fulfilled' ? (Array.isArray(stables.value) ? stables.value : []) : allStables;
+  } catch (e) {
+    allListings = [];
+  }
+
+  // Populate horse select
+  const horseEl = $('#market-horse');
+  horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+  allHorses.filter(h => !h.retired).forEach(h => {
+    horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+  });
+
+  renderMarketListings();
+
+  // Stats
+  let totalBurned = 0;
+  allListings.forEach(l => {
+    if (!l.active) totalBurned += Math.floor((l.price || 0) * 0.02);
+  });
+  $('#market-burned').textContent = `₵${totalBurned.toLocaleString()}`;
+  $('#market-count').textContent = allListings.filter(l => l.active).length;
+}
+
+function renderMarketListings() {
+  const listEl = $('#market-listings');
+  const active = allListings.filter(l => l.active);
+
+  if (active.length === 0) {
+    listEl.innerHTML = '<div class="text-dim">No active listings. The market awaits your studs.</div>';
+    return;
+  }
+
+  let html = `<table class="term-table"><thead><tr>
+    <th>HORSE</th><th>PRICE</th><th>SAPPHO</th><th>PEDIGREE</th><th>BUYER STABLE</th><th>ACTIONS</th>
+  </tr></thead><tbody>`;
+
+  active.forEach(l => {
+    const sappho = renderSapphoBar(l.sappho_score || 0);
+    // Build stable selector for each listing
+    let stableOpts = '<option value="">-- Select --</option>';
+    allStables.forEach(s => {
+      stableOpts += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+    });
+
+    html += `<tr>
+      <td><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></td>
+      <td class="text-amber">₵${(l.price || 0).toLocaleString()}</td>
+      <td>${sappho}</td>
+      <td class="text-dim" style="max-width:180px">${escHtml(l.pedigree || '—')}</td>
+      <td><select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select></td>
+      <td>
+        <button class="term-btn sm" onclick="window.SU.buyListing('${escHtml(l.id)}')">BUY</button>
+        <button class="term-btn danger sm" onclick="window.SU.cancelListing('${escHtml(l.id)}')">DEL</button>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  listEl.innerHTML = html;
+}
+
+async function createListing() {
+  const horseID = $('#market-horse').value;
+  const price = parseInt($('#market-price').value) || 0;
+  const msgEl = $('#market-create-msg');
+
+  if (!horseID) {
+    msgEl.textContent = 'ERROR: Select a horse';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+  if (price <= 0) {
+    msgEl.textContent = 'ERROR: Price must be positive';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  try {
+    await api('/market', { method: 'POST', body: { horseID, price } });
+    msgEl.textContent = 'Listing created successfully.';
+    msgEl.style.color = 'var(--fg)';
+    await loadMarket();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function buyListing(listingId) {
+  const stableSelect = $(`#market-buyer-${listingId}`);
+  const buyerStableID = stableSelect ? stableSelect.value : '';
+
+  if (!buyerStableID) {
+    alert('Please select a buyer stable first.');
+    return;
+  }
+
+  if (!confirm('Confirm purchase? (2% burn fee applies)')) return;
+
+  try {
+    await api(`/market/${listingId}/buy`, {
+      method: 'POST',
+      body: { buyerStableID },
+    });
+    await loadMarket();
+  } catch (e) {
+    alert(`Buy error: ${e.message}`);
+  }
+}
+
+async function cancelListing(listingId) {
+  if (!confirm('Cancel this listing?')) return;
+  try {
+    await api(`/market/${listingId}`, { method: 'DELETE' });
+    await loadMarket();
+  } catch (e) {
+    alert(`Cancel error: ${e.message}`);
+  }
+}
+
+// ─── TOURNAMENT PAGE ───────────────────────────────────────────────────────
+async function loadTournaments() {
+  try {
+    const [tData, hData, sData] = await Promise.allSettled([
+      api('/tournaments'),
+      api('/horses'),
+      api('/stables'),
+    ]);
+    allTournaments = tData.status === 'fulfilled' ? (Array.isArray(tData.value) ? tData.value : []) : [];
+    allHorses = hData.status === 'fulfilled' ? (Array.isArray(hData.value) ? hData.value : []) : allHorses;
+    allStables = sData.status === 'fulfilled' ? (Array.isArray(sData.value) ? sData.value : []) : allStables;
+  } catch (e) {
+    allTournaments = [];
+  }
+
+  renderTournamentList();
+}
+
+function renderTournamentList() {
+  const listEl = $('#tourney-list');
+
+  if (allTournaments.length === 0) {
+    listEl.innerHTML = '<div class="text-dim">No tournaments found. Create one above.</div>';
+    return;
+  }
+
+  let html = `<table class="term-table"><thead><tr>
+    <th>NAME</th><th>TRACK</th><th>STATUS</th><th>ROUND</th><th>PRIZE POOL</th><th>ENTRANTS</th><th></th>
+  </tr></thead><tbody>`;
+
+  allTournaments.forEach(t => {
+    const name = t.name || `Tournament ${(t.id || '').substring(0, 8)}`;
+    const entrants = (t.standings || []).length;
+    html += `<tr class="clickable" onclick="window.SU.viewTournament('${escHtml(t.id)}')">
+      <td>${escHtml(name)}</td>
+      <td class="text-dim">${escHtml(t.track_type || '?')}</td>
+      <td>${renderStatusBadge(t.status || 'Open')}</td>
+      <td>${t.current_round || 0}/${t.rounds || '?'}</td>
+      <td class="text-amber">₵${(t.prize_pool || 0).toLocaleString()}</td>
+      <td>${entrants}</td>
+      <td><a onclick="event.stopPropagation()">[VIEW]</a></td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  listEl.innerHTML = html;
+}
+
+async function createTournament() {
+  const name = $('#tourney-name').value.trim();
+  const track = $('#tourney-track').value;
+  const rounds = parseInt($('#tourney-rounds').value) || 3;
+  const fee = parseInt($('#tourney-fee').value) || 0;
+  const msgEl = $('#tourney-create-msg');
+
+  try {
+    const body = { trackType: track, rounds, entryFee: fee };
+    if (name) body.name = name;
+    await api('/tournaments', { method: 'POST', body });
+    msgEl.textContent = 'Tournament created!';
+    msgEl.style.color = 'var(--fg)';
+    $('#tourney-name').value = '';
+    await loadTournaments();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function viewTournament(tourneyId) {
+  const detailEl = $('#tourney-detail');
+  detailEl.classList.remove('hidden');
+  const contentEl = $('#tourney-detail-content');
+  contentEl.innerHTML = '<span class="loading cursor-blink">Loading tournament...</span>';
+
+  try {
+    const t = await api(`/tournaments/${tourneyId}`);
+    if (!t) {
+      contentEl.innerHTML = '<span class="text-red">Tournament not found.</span>';
+      return;
+    }
+
+    const name = t.name || `Tournament ${(t.id || '').substring(0, 8)}`;
+    const standings = t.standings || [];
+    const isOpen = (t.status || '').toLowerCase() === 'open';
+    const isInProgress = (t.status || '').toLowerCase() === 'inprogress';
+
+    let html = `<h3>🏆 ${escHtml(name)} ${renderStatusBadge(t.status || 'Open')}</h3>
+      <div style="font-size:12px;margin:8px 0;">
+        <span class="text-dim">Track:</span> ${escHtml(t.track_type || '?')} |
+        <span class="text-dim">Rounds:</span> ${t.current_round || 0}/${t.rounds || '?'} |
+        <span class="text-dim">Prize Pool:</span> <span class="text-amber">₵${(t.prize_pool || 0).toLocaleString()}</span> |
+        <span class="text-dim">Entry Fee:</span> ₵${(t.entry_fee || 0).toLocaleString()}
+      </div>`;
+
+    // Standings table
+    if (standings.length > 0) {
+      html += `<h3>STANDINGS</h3>
+        <table class="term-table"><thead><tr>
+          <th>RANK</th><th>HORSE</th><th>POINTS</th><th>RACES</th><th>BEST PLACE</th>
+        </tr></thead><tbody>`;
+
+      const sorted = [...standings].sort((a, b) => (b.points || 0) - (a.points || 0));
+      sorted.forEach((s, i) => {
+        html += `<tr>
+          <td>${i + 1}</td>
+          <td><a href="#horse/${s.horse_id}">${escHtml(s.horse_name)}</a></td>
+          <td class="text-amber">${s.points || 0}</td>
+          <td>${s.races_run || 0}</td>
+          <td>${s.best_place || '—'}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+    }
+
+    // Registration form (if open)
+    if (isOpen || isInProgress) {
+      html += `<h3>REGISTER HORSE</h3>
+        <div class="form-row">
+          <label>HORSE:</label>
+          <select class="term-input" id="tourney-reg-horse" style="max-width:250px;">
+            <option value="">-- SELECT --</option>`;
+      allHorses.filter(h => !h.retired).forEach(h => {
+        html += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+      });
+      html += `</select>
+        </div>
+        <div class="form-row">
+          <label>STABLE:</label>
+          <select class="term-input" id="tourney-reg-stable" style="max-width:250px;">
+            <option value="">-- SELECT --</option>`;
+      allStables.forEach(s => {
+        html += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+      });
+      html += `</select>
+        </div>
+        <div class="form-row">
+          <label></label>
+          <button class="term-btn" onclick="window.SU.registerForTournament('${escHtml(tourneyId)}')">REGISTER</button>
+        </div>
+        <div id="tourney-reg-msg" class="text-dim" style="font-size:11px;"></div>`;
+    }
+
+    // Run next round button (if in progress or open with enough entrants)
+    if (isOpen || isInProgress) {
+      html += `<div style="margin-top:12px;">
+        <button class="term-btn amber" onclick="window.SU.runTournamentRound('${escHtml(tourneyId)}')">▶ RUN NEXT ROUND</button>
+        <span id="tourney-round-msg" class="text-dim" style="font-size:11px;margin-left:8px;"></span>
+      </div>`;
+    }
+
+    contentEl.innerHTML = html;
+
+  } catch (e) {
+    contentEl.innerHTML = `<span class="text-red">Error: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function registerForTournament(tourneyId) {
+  const horseID = $('#tourney-reg-horse') ? $('#tourney-reg-horse').value : '';
+  const stableID = $('#tourney-reg-stable') ? $('#tourney-reg-stable').value : '';
+  const msgEl = $('#tourney-reg-msg');
+
+  if (!horseID || !stableID) {
+    if (msgEl) msgEl.textContent = 'Select both horse and stable.';
+    return;
+  }
+
+  try {
+    await api(`/tournaments/${tourneyId}/register`, {
+      method: 'POST',
+      body: { horseID, stableID },
+    });
+    if (msgEl) {
+      msgEl.textContent = 'Registered successfully!';
+      msgEl.style.color = 'var(--fg)';
+    }
+    viewTournament(tourneyId);
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = `Error: ${e.message}`;
+      msgEl.style.color = 'var(--red)';
+    }
+  }
+}
+
+async function runTournamentRound(tourneyId) {
+  const msgEl = $('#tourney-round-msg');
+  if (msgEl) {
+    msgEl.textContent = 'Racing...';
+    msgEl.style.color = 'var(--amber)';
+  }
+
+  try {
+    await api(`/tournaments/${tourneyId}/race`, { method: 'POST' });
+    if (msgEl) {
+      msgEl.textContent = 'Round complete!';
+      msgEl.style.color = 'var(--fg)';
+    }
+    viewTournament(tourneyId);
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = `Error: ${e.message}`;
+      msgEl.style.color = 'var(--red)';
+    }
+  }
+}
+
+// ─── TRADES PAGE ───────────────────────────────────────────────────────────
+async function loadTrades() {
+  try {
+    const [hData, sData] = await Promise.allSettled([api('/horses'), api('/stables')]);
+    allHorses = hData.status === 'fulfilled' ? (Array.isArray(hData.value) ? hData.value : []) : allHorses;
+    allStables = sData.status === 'fulfilled' ? (Array.isArray(sData.value) ? sData.value : []) : allStables;
+  } catch (e) {}
+
+  // Populate form selects
+  const horseEl = $('#trade-horse');
+  horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+  allHorses.filter(h => !h.retired).forEach(h => {
+    horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+  });
+
+  const fromEl = $('#trade-from');
+  const toEl = $('#trade-to');
+  fromEl.innerHTML = '<option value="">-- SOURCE --</option>';
+  toEl.innerHTML = '<option value="">-- DESTINATION --</option>';
+  allStables.forEach(s => {
+    fromEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+    toEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+  });
+
+  // Load trades for each stable
+  await loadTradeOffers();
+}
+
+async function loadTradeOffers() {
+  const inEl = $('#trade-incoming');
+  const outEl = $('#trade-outgoing');
+
+  let allIncoming = [];
+  let allOutgoing = [];
+
+  for (const s of allStables) {
+    try {
+      const trades = await api(`/trades?stableID=${s.id}`);
+      if (Array.isArray(trades)) {
+        trades.forEach(t => {
+          if (t.to_stable === s.id && t.status === 'Pending') {
+            allIncoming.push({ ...t, toStableName: s.name });
+          }
+          if (t.from_stable === s.id && t.status === 'Pending') {
+            allOutgoing.push({ ...t, fromStableName: s.name });
+          }
+        });
+      }
+    } catch (e) {}
+  }
+
+  // Deduplicate
+  const seenIn = new Set();
+  allIncoming = allIncoming.filter(t => {
+    if (seenIn.has(t.id)) return false;
+    seenIn.add(t.id);
+    return true;
+  });
+  const seenOut = new Set();
+  allOutgoing = allOutgoing.filter(t => {
+    if (seenOut.has(t.id)) return false;
+    seenOut.add(t.id);
+    return true;
+  });
+
+  if (allIncoming.length === 0) {
+    inEl.innerHTML = '<span class="text-dim">No incoming offers.</span>';
+  } else {
+    let html = `<table class="term-table"><thead><tr>
+      <th>HORSE</th><th>FROM</th><th>PRICE</th><th>ACTIONS</th>
+    </tr></thead><tbody>`;
+    allIncoming.forEach(t => {
+      html += `<tr>
+        <td><a href="#horse/${t.horse_id}">${escHtml(t.horse_name)}</a></td>
+        <td class="text-dim">${escHtml(t.from_stable ? t.from_stable.substring(0, 8) : '?')}</td>
+        <td class="text-amber">₵${(t.price || 0).toLocaleString()}</td>
+        <td>
+          <button class="term-btn sm" onclick="window.SU.acceptTrade('${escHtml(t.id)}')">✅ ACCEPT</button>
+          <button class="term-btn danger sm" onclick="window.SU.rejectTrade('${escHtml(t.id)}')">❌ REJECT</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    inEl.innerHTML = html;
+  }
+
+  if (allOutgoing.length === 0) {
+    outEl.innerHTML = '<span class="text-dim">No outgoing offers.</span>';
+  } else {
+    let html = `<table class="term-table"><thead><tr>
+      <th>HORSE</th><th>TO</th><th>PRICE</th><th>ACTIONS</th>
+    </tr></thead><tbody>`;
+    allOutgoing.forEach(t => {
+      html += `<tr>
+        <td><a href="#horse/${t.horse_id}">${escHtml(t.horse_name)}</a></td>
+        <td class="text-dim">${escHtml(t.to_stable ? t.to_stable.substring(0, 8) : '?')}</td>
+        <td class="text-amber">₵${(t.price || 0).toLocaleString()}</td>
+        <td>
+          <button class="term-btn danger sm" onclick="window.SU.cancelTrade('${escHtml(t.id)}')">CANCEL</button>
+        </td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    outEl.innerHTML = html;
+  }
+}
+
+async function createTrade() {
+  const horseID = $('#trade-horse').value;
+  const fromStable = $('#trade-from').value;
+  const toStable = $('#trade-to').value;
+  const price = parseInt($('#trade-price').value) || 0;
+  const msgEl = $('#trade-create-msg');
+
+  if (!horseID || !fromStable || !toStable) {
+    msgEl.textContent = 'ERROR: Fill all fields';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  if (fromStable === toStable) {
+    msgEl.textContent = 'ERROR: Cannot trade with yourself. Geoffrussy is watching.';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  try {
+    await api('/trades', {
+      method: 'POST',
+      body: { horseID, fromStable, toStable, price },
+    });
+    msgEl.textContent = 'Trade offer sent!';
+    msgEl.style.color = 'var(--fg)';
+    await loadTradeOffers();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function acceptTrade(tradeId) {
+  if (!confirm('Accept this trade offer?')) return;
+  try {
+    await api(`/trades/${tradeId}/accept`, { method: 'POST' });
+    await loadTradeOffers();
+  } catch (e) {
+    alert(`Accept error: ${e.message}`);
+  }
+}
+
+async function rejectTrade(tradeId) {
+  if (!confirm('Reject this trade offer?')) return;
+  try {
+    await api(`/trades/${tradeId}/reject`, { method: 'POST' });
+    await loadTradeOffers();
+  } catch (e) {
+    alert(`Reject error: ${e.message}`);
+  }
+}
+
+async function cancelTrade(tradeId) {
+  if (!confirm('Cancel this trade offer?')) return;
+  try {
+    await api(`/trades/${tradeId}`, { method: 'DELETE' });
+    await loadTradeOffers();
+  } catch (e) {
+    alert(`Cancel error: ${e.message}`);
+  }
+}
+
+// ─── LEADERBOARD PAGE ──────────────────────────────────────────────────────
+async function loadLeaderboard() {
+  try {
+    const data = await api('/horses');
+    allHorses = Array.isArray(data) ? data : [];
+  } catch (e) {
+    allHorses = [];
+  }
+
+  renderLeaderboard();
+}
+
+function renderLeaderboard() {
+  const tableEl = $('#leaderboard-table');
+
+  let filtered = [...allHorses];
+  if (leaderboardFilter === 'active') {
+    filtered = filtered.filter(h => !h.retired);
+  } else if (leaderboardFilter === 'retired') {
+    filtered = filtered.filter(h => h.retired);
+  }
+
+  if (filtered.length === 0) {
+    tableEl.innerHTML = '<div class="text-dim">No horses match the current filter.</div>';
+    return;
+  }
+
+  const sorted = filtered.sort((a, b) => (b.elo || 1200) - (a.elo || 1200));
+
+  let html = `<table class="term-table"><thead><tr>
+    <th>#</th><th>HORSE</th><th>ELO</th><th>W/L/R</th><th>WIN%</th><th>TRAITS</th><th>GEN</th><th>FITNESS</th><th>FATIGUE</th>
+  </tr></thead><tbody>`;
+
+  sorted.forEach((h, i) => {
+    const rank = i + 1;
+    const winPct = h.races > 0 ? ((h.wins / h.races) * 100).toFixed(1) : '0.0';
+    let cls = '';
+
+    if (h.retired) cls = ' class="retired"';
+    else if (h.is_legendary) cls = ' class="legendary"';
+
+    const isE008 = h.name && (h.name.includes('E-008') || h.lot_number === 6);
+    if (isE008) cls = ' class="glitch-e008"';
+
+    const rankDisplay = rank <= 3
+      ? `<span class="${rank === 1 ? 'result-place gold' : rank === 2 ? 'result-place silver' : 'result-place bronze'}">${rank}</span>`
+      : rank;
+
+    const traitCount = (h.traits || []).length;
+
+    html += `<tr${cls}>
+      <td>${rankDisplay}</td>
+      <td><a href="#horse/${h.id}">${h.is_legendary ? '★ ' : ''}${escHtml(h.name)}</a></td>
+      <td style="font-weight:bold">${Math.round(h.elo || 1200)}</td>
+      <td>${h.wins}/${h.losses}/${h.races}</td>
+      <td class="text-amber">${winPct}%</td>
+      <td class="text-dim">${traitCount}</td>
+      <td class="text-dim">G${h.generation}</td>
+      <td>${(h.current_fitness || 0).toFixed(2)}</td>
+      <td>${renderFatigueGauge(h.fatigue || 0)}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  tableEl.innerHTML = html;
+}
+
+// ─── ACHIEVEMENTS PAGE ─────────────────────────────────────────────────────
+async function loadAchievements() {
+  const gridEl = $('#achievements-grid');
+  gridEl.innerHTML = '<span class="loading cursor-blink">Loading achievements...</span>';
+
+  // Collect all unlocked achievements across stables
+  let unlockedMap = {};
+  try {
+    for (const s of allStables.slice(0, 20)) {
+      try {
+        const achs = await api(`/stables/${s.id}/achievements`);
+        if (Array.isArray(achs)) {
+          achs.forEach(a => {
+            if (!unlockedMap[a.id] && !unlockedMap[a.name]) {
+              unlockedMap[a.id || a.name] = { ...a, stableName: s.name };
+            }
+          });
+        }
+      } catch(e) {}
+    }
+  } catch(e) {}
+
+   // Also check horse achievements
+   try {
+     for (const h of allHorses.slice(0, 20)) {
+       try {
+         const resp = await api(`/horses/${h.id}/achievements`);
+         // Server returns { newAchievements: [...], allAchievements: [...] }
+         const achs = Array.isArray(resp) ? resp : (resp && Array.isArray(resp.allAchievements) ? resp.allAchievements : []);
+         achs.forEach(a => {
+           if (!unlockedMap[a.id] && !unlockedMap[a.name]) {
+             unlockedMap[a.id || a.name] = { ...a, horseName: h.name };
+           }
+         });
+       } catch(e) {}
+     }
+   } catch(e) {}
+
+  // Render grid
+  let html = '';
+  ACHIEVEMENT_DEFS.forEach(def => {
+    const unlocked = unlockedMap[def.id] || null;
+    const isUnlocked = !!unlocked;
+    const cardCls = isUnlocked ? 'ach-card unlocked' : 'ach-card locked';
+    const rarCls = `ach-rarity-${def.rarity}`;
+    const borderColor = {
+      common: 'var(--fg)',
+      rare: 'var(--blue)',
+      epic: 'var(--purple)',
+      legendary: 'var(--gold)',
+    }[def.rarity] || 'var(--fg)';
+
+    html += `<div class="${cardCls}" style="border-color:${isUnlocked ? borderColor : 'var(--border)'};">
+      <div class="ach-icon">${isUnlocked ? def.icon : '🔒'}</div>
+      <div class="ach-name" style="color:${isUnlocked ? borderColor : 'var(--fg-dim)'}">${escHtml(def.name)}</div>
+      <div class="ach-desc">${escHtml(def.desc)}</div>
+      <div class="ach-rarity ${rarCls}">${def.rarity.toUpperCase()}</div>
+      ${isUnlocked && unlocked.stableName ? `<div class="text-dim" style="font-size:9px;margin-top:2px;">Unlocked by: ${escHtml(unlocked.stableName)}</div>` : ''}
+      ${isUnlocked && unlocked.horseName ? `<div class="text-dim" style="font-size:9px;margin-top:2px;">Horse: ${escHtml(unlocked.horseName)}</div>` : ''}
+    </div>`;
+  });
+
+  gridEl.innerHTML = html || '<span class="text-dim">No achievement definitions found.</span>';
+}
+
+// ─── EVENT LISTENERS ───────────────────────────────────────────────────────
+function bindEvents() {
+  window.addEventListener('hashchange', navigate);
+
+  // Stable
+  $('#btn-create-stable').addEventListener('click', createStable);
+  $('#new-stable-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') createStable();
+  });
+
+  // Breeding
+  $('#btn-breed').addEventListener('click', breedHorses);
+
+  // Racing
+  $('#btn-start-race').addEventListener('click', startRace);
+  $('#btn-quick-race').addEventListener('click', quickRace);
+
+  // Market
+  $('#btn-create-listing').addEventListener('click', createListing);
+
+  // Tournament
+  $('#btn-create-tourney').addEventListener('click', createTournament);
+
+  // Trading
+  $('#btn-create-trade').addEventListener('click', createTrade);
+
+  // Season advance
+  $('#btn-advance-season').addEventListener('click', advanceSeason);
+
+  // Leaderboard filters
+  $$('.filter-bar button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      $$('.filter-bar button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      leaderboardFilter = btn.dataset.filter;
+      renderLeaderboard();
+    });
+  });
+}
+
+// ─── EXPOSE FUNCTIONS FOR INLINE ONCLICK ───────────────────────────────────
+window.SU = {
+  viewStable,
+  buyListing,
+  cancelListing,
+  trainHorse,
+  viewTournament,
+  registerForTournament,
+  runTournamentRound,
+  acceptTrade,
+  rejectTrade,
+  cancelTrade,
+};
+
+// ─── INITIALIZATION ────────────────────────────────────────────────────────
+function init() {
+  runBootSequence();
+
+  initTicker();
+
+  flickerWarningBanner();
+
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // Refresh ticker periodically
+  setInterval(initTicker, 30000);
+
+  bindEvents();
+
+  // Connect WebSocket (delayed to let boot finish)
+  setTimeout(connectWebSocket, 2500);
+
+  // Initial navigation
+  setTimeout(() => {
+    navigate();
+  }, 100);
+
+  // Refresh weather periodically
+  setInterval(fetchWeather, 60000);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+})();
+</script>
+
+</body>
+</html>
