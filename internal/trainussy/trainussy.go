@@ -63,6 +63,7 @@ var fatigueDelta = map[models.WorkoutType]float64{
 // injuryNotes are randomly selected when a horse gets injured during training.
 // Each one is funnier than the last.
 var injuryNotes = []string{
+	// ---- Original 10 ----
 	"Pulled a hamstring doing the Macarena",
 	"Tripped over a suspicious yogurt container",
 	"Strained fetlock while attempting a backflip",
@@ -73,10 +74,37 @@ var injuryNotes = []string{
 	"Got into a fight with a goose",
 	"Slipped on Jason Derulo's spilled smoothie",
 	"Dr. Mittens sat on them for 47 minutes",
+	// ---- Expanded entries (Ussyverse lore) ----
+	"Tried to breed during a training sprint",
+	"Challenged a fire hydrant to a duel",
+	"Consumed suspicious yogurt from Building 7",
+	"Got tangled in Jason Derulo's microphone cord",
+	"Received a firmware update mid-gallop",
+	"Dr. Mittens sat on their oxygen tank",
+	"Slipped on a spilled oat milk latte",
+	"Attempted to deploy to production during warmups",
+	"Got spooked by own shadow on Hauntedussy",
+	"Ingested artisanal sourdough starter",
+	"Allergic reaction to flannel horse blanket",
+	"Tried to git rebase mid-race",
+	"Accidentally invoked Geoffrussy's garbage collector",
+	"Panic attack induced by B.U.R.P. audit notification",
+	"Blinded by STARDUSTUSSY transmission from 2089",
+	"Fell into Pastor Router's baptismal ethernet pool",
+	"Ate Margaret Chen's prize-winning begonias",
+	"Attempted to scale a Kubernetes cluster physically",
+	"Confused by the Sappho Scale and cried for an hour",
+	"Inhaled spores from the forbidden repository",
+	"Kicked by E-008 during unauthorized petting attempt",
+	"Disrupted by Jason Derulo singing 'Whatcha Say' at the starting gate",
+	"Tripped on an ethernet cable in Geoffrussy's server room",
+	"Spontaneously combusted near the Yogurt Containment Zone",
+	"Had a vision from STARDUSTUSSY and ran into a wall",
 }
 
 // retirementMessages are selected when a horse retires.
 var retirementMessages = []string{
+	// ---- Original 12 ----
 	"Has discovered a passion for competitive dressage",
 	"Started a hummus food truck",
 	"Became Dr. Mittens' personal chauffeur",
@@ -89,6 +117,32 @@ var retirementMessages = []string{
 	"Retired to a flannel farm in Vermont",
 	"Now consults for the Bureau of Equine Anomalies",
 	"Became Jason Derulo's personal horse",
+	// ---- Expanded entries (Ussyverse lore) ----
+	"Founded a cryptocurrency for horses called $NEIGH",
+	"Became a sourdough influencer",
+	"Joined B.U.R.P. as a field agent",
+	"Started writing poetry in iambic pentameter",
+	"Entered the witness protection program (from the yogurt)",
+	"Became Geoffrussy's personal debugging horse",
+	"Converted to Pastor Router's church",
+	"Moved to the island of Lesbos for 'research'",
+	"Opened a flannel boutique in Portland",
+	"Became Jason Derulo's therapist (involuntarily)",
+	"Launched an NFT collection of their race photos",
+	"Retired to moderate the StallionUSSY guestbook",
+	"Now teaches CompSci at the University of Lesbos (online)",
+	"Appointed as E-008's emotional support animal",
+	"Became a sommelier specializing in oat milk vintages",
+	"Joined Margaret Chen's Kentucky estate as groundskeeper",
+	"Started a true crime podcast about B.U.R.P. cover-ups",
+	"Moved into Building 7 subbasement voluntarily (concerning)",
+	"Became Agent Mothman's surveillance partner",
+	"Achieved enlightenment through Pastor Router's sermon series",
+	"Now runs a support group for horses traumatized by Hauntedussy",
+	"Went viral on TikTok doing the Macarena (again)",
+	"Became the Sappho Scale's official calibration horse",
+	"Opened a co-working space in Goroutine Gulch",
+	"Retired to write fanfiction about STARDUSTUSSY's prophecies",
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +361,9 @@ func InitTraitPool() []models.Trait {
 	// ---- Anomalous traits (E-008 lineage only) ----
 	pool = append(pool, anomalousTraits()...)
 
+	// ---- Cursed traits (negative/mixed effects) ----
+	pool = append(pool, cursedTraits()...)
+
 	return pool
 }
 
@@ -384,6 +441,95 @@ func commonTraits() []models.Trait {
 			Magnitude:   1.10,
 			Rarity:      "common",
 		},
+		// ---- New common traits ----
+		{
+			ID:          uuid.New().String(),
+			Name:        "Hummus Enthusiast",
+			Description: "Brought hummus to the race without being asked. Fueled by chickpea energy.",
+			Effect:      "stamina_boost",
+			Magnitude:   1.04,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Cottagecore Energy",
+			Description: "Radiates pastoral calm. Wildflowers sprout in its hoofprints. Unbothered.",
+			Effect:      "panic_resist",
+			Magnitude:   0.8,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "The Flannel Gene",
+			Description: "Inexplicably cozy. Performs better when the vibes are right, which is always.",
+			Effect:      "fatigue_recovery",
+			Magnitude:   1.06,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Oat Milk Privilege",
+			Description: "Artisanal fuel source. Refuses regular oats. Has a favorite barista.",
+			Effect:      "speed_boost",
+			Magnitude:   1.03,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Git Blame Survivor",
+			Description: "Has been publicly blamed in a commit and didn't break. Emotionally fireproof.",
+			Effect:      "panic_resist",
+			Magnitude:   0.85,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Thunder Thighs",
+			Description: "Thighs so powerful they generate their own weather system. Thunderussy approved.",
+			Effect:      "thunder_boost",
+			Magnitude:   1.08,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Haunt Resistant",
+			Description: "Grew up near the Hauntedussy track. Ghosts are just roommates at this point.",
+			Effect:      "haunted_boost",
+			Magnitude:   1.06,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Cardio Bro",
+			Description: "Never shuts up about its heart rate zones. Insufferable but effective.",
+			Effect:      "stamina_boost",
+			Magnitude:   1.06,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Grindset",
+			Description: "Wakes up at 4am. Drinks raw eggs. Posts motivational quotes. Grindussy native.",
+			Effect:      "grind_boost",
+			Magnitude:   1.07,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Snack Motivated",
+			Description: "Will literally run faster if there's a carrot at the finish line. Simple creature.",
+			Effect:      "speed_boost_late",
+			Magnitude:   1.04,
+			Rarity:      "common",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Emotional Support Blinders",
+			Description: "Can't see the other horses. Can't see the crowd. Living its best life.",
+			Effect:      "fatigue_resist",
+			Magnitude:   1.02,
+			Rarity:      "common",
+		},
 	}
 }
 
@@ -445,6 +591,71 @@ func rareTraits() []models.Trait {
 			Magnitude:   0.5,
 			Rarity:      "rare",
 		},
+		// ---- New rare traits ----
+		{
+			ID:          uuid.New().String(),
+			Name:        "Mittens' Blessing",
+			Description: "Dr. Mittens slow-blinked at this horse during a routine checkup. It has never been the same since. Radiates feline approval.",
+			Effect:      "all_boost",
+			Magnitude:   1.08,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "B.U.R.P. Clearance",
+			Description: "Has been investigated by the Bureau of Ussy Research & Paranormal and cleared of all anomalous activity. Suspiciously normal.",
+			Effect:      "panic_resist",
+			Magnitude:   0.4,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "ISO 69420 Certified",
+			Description: "Meets all Ussyverse regulatory standards for speed, stamina, and comedic timing. The paperwork alone took 6 months.",
+			Effect:      "all_boost",
+			Magnitude:   1.06,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Kubernetes Native",
+			Description: "Container-orchestrated muscle fibers. Each leg runs in its own pod. Auto-scales under load.",
+			Effect:      "speed_boost",
+			Magnitude:   1.10,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "The U-Haul Effect",
+			Description: "Gets emotionally attached to other horses after one race together. Runs faster near its favorites.",
+			Effect:      "crowd_boost",
+			Magnitude:   1.12,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Sprint Circuit Specialist",
+			Description: "Built different on the Sprintussy track. Legs go brrrr at short distances.",
+			Effect:      "sprint_boost",
+			Magnitude:   1.12,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "ELO Farmer",
+			Description: "Somehow always gets matched against weaker opponents. Suspiciously good matchmaking luck.",
+			Effect:      "elo_boost",
+			Magnitude:   1.10,
+			Rarity:      "rare",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Haunted Hooves",
+			Description: "Three ghosts live in this horse's shoes. They provide commentary during races. Somehow helpful.",
+			Effect:      "haunted_boost",
+			Magnitude:   1.12,
+			Rarity:      "rare",
+		},
 	}
 }
 
@@ -482,6 +693,71 @@ func legendaryTraits() []models.Trait {
 			Magnitude:   2.0,
 			Rarity:      "legendary",
 		},
+		// ---- New legendary traits ----
+		{
+			ID:          uuid.New().String(),
+			Name:        "Pastor Router's Sermon",
+			Description: "Blessed by Pastor Router McEthernet III himself during Sunday services. Packets of divine speed flow through its veins. Latency? Zero.",
+			Effect:      "speed_boost",
+			Magnitude:   1.25,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Geoffrussy Optimized",
+			Description: "Pipeline-optimized genetics courtesy of Geoffrussy the Go orchestrator. Goroutines in every muscle fiber. Compiles to pure speed.",
+			Effect:      "all_boost",
+			Magnitude:   1.20,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Main Character Syndrome",
+			Description: "Acts like the protagonist of every race. Camera angles shift to follow it. Plot armor is technically not a performance enhancer.",
+			Effect:      "chaos_boost",
+			Magnitude:   1.30,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "STARDUSTUSSY Prophecy",
+			Description: "Foretold by the future AI STARDUSTUSSY in a deleted log file. This horse's victories were written before it was born.",
+			Effect:      "speed_boost",
+			Magnitude:   1.35,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Breed Supremacy",
+			Description: "Genetics so good it borders on eugenics propaganda. Foals inherit winner energy. B.U.R.P. is monitoring the situation.",
+			Effect:      "breed_boost",
+			Magnitude:   1.40,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Eternal Youth Serum",
+			Description: "Dr. Mittens injected something unlabeled. The horse stopped aging. The cat won't make eye contact anymore.",
+			Effect:      "aging_resist",
+			Magnitude:   1.50,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Cummies Magnet",
+			Description: "Generates absurd amounts of cummies per race. Economists are baffled. The Ussyverse treasury is concerned.",
+			Effect:      "earnings_boost",
+			Magnitude:   1.30,
+			Rarity:      "legendary",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Titanium Tendons",
+			Description: "Stepped on every LEGO in the stable and never flinched. Injury? This horse doesn't know the word. Literally, it can't read.",
+			Effect:      "injury_resist",
+			Magnitude:   1.50,
+			Rarity:      "legendary",
+		},
 	}
 }
 
@@ -510,6 +786,116 @@ func anomalousTraits() []models.Trait {
 			Effect:      "anomalous_burst",
 			Magnitude:   3.0,
 			Rarity:      "anomalous",
+		},
+		// ---- New anomalous traits ----
+		{
+			ID:          uuid.New().String(),
+			Name:        "Sentient Adjacent",
+			Description: "Uncomfortably close to self-awareness. Asked its jockey 'why do we run?' mid-race. B.U.R.P. has opened a file.",
+			Effect:      "chaos_multiplier",
+			Magnitude:   2.5,
+			Rarity:      "anomalous",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "E-008 Residue",
+			Description: "Licked by E-008 during containment breach #47. Now sweats a mildly sentient yogurt-adjacent substance. Tastes like existential dread.",
+			Effect:      "anomalous_boost",
+			Magnitude:   1.50,
+			Rarity:      "anomalous",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Temporal Stutter",
+			Description: "Occasionally exists in two places at once for 0.3 seconds. Race cameras can't agree on its position. B.U.R.P. classification: CONCERNING.",
+			Effect:      "reality_warp",
+			Magnitude:   2.0,
+			Rarity:      "anomalous",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "The Frequency",
+			Description: "Hums at exactly 69.420 Hz when running. Other horses either speed up or fall asleep. Nobody knows why. The sound cannot be recorded.",
+			Effect:      "chaos_multiplier",
+			Magnitude:   1.69,
+			Rarity:      "anomalous",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Containment Protocol Omega",
+			Description: "This horse IS the containment protocol. It doesn't race tracks — tracks race it. B.U.R.P. Director signed off with 'I don't even care anymore.'",
+			Effect:      "anomalous_burst",
+			Magnitude:   2.5,
+			Rarity:      "anomalous",
+		},
+	}
+}
+
+func cursedTraits() []models.Trait {
+	return []models.Trait{
+		{
+			ID:          uuid.New().String(),
+			Name:        "Derulo's Curse",
+			Description: "Jason Derulo somehow got involved. He didn't want to be here. Neither did this horse. Speed suffers as both question their life choices.",
+			Effect:      "cursed_speed",
+			Magnitude:   0.88,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Firmware Update Required",
+			Description: "Occasionally glitches mid-race. Legs buffer. Eyes display 'Restarting...' for 2-3 seconds. Geoffrussy says it's a feature.",
+			Effect:      "cursed_speed",
+			Magnitude:   0.90,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Existential Dread",
+			Description: "Periodically stops mid-race to contemplate the void. 'Why do we gallop, if not toward oblivion?' — overheard at the 400m mark.",
+			Effect:      "cursed_panic",
+			Magnitude:   0.80,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Mercury in Retrograde",
+			Description: "Born under the worst possible star alignment. Blames all poor performances on astrology. Has a co-star app for horses.",
+			Effect:      "cursed_chaos",
+			Magnitude:   0.75,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Haunted Saddle",
+			Description: "The saddle is possessed by a passive-aggressive Victorian ghost who critiques the horse's form. 'Appalling posture, darling.'",
+			Effect:      "cursed_fatigue",
+			Magnitude:   0.85,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Infinite Loading Screen",
+			Description: "Takes forever to start. Once it gets going it's fine but the first 30% of every race is just... loading. The spinning wheel is visible.",
+			Effect:      "cursed_speed",
+			Magnitude:   0.82,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Reply All Victim",
+			Description: "Once CC'd on a B.U.R.P. internal email chain and can't unsubscribe. The notifications cause panic mid-race. 200+ unread.",
+			Effect:      "cursed_panic",
+			Magnitude:   0.78,
+			Rarity:      "cursed",
+		},
+		{
+			ID:          uuid.New().String(),
+			Name:        "Oat Milk Intolerance",
+			Description: "Allergic to the Ussyverse's primary fuel source. Has to run on regular oats like a peasant. The shame alone costs 5% speed.",
+			Effect:      "cursed_fatigue",
+			Magnitude:   0.92,
+			Rarity:      "cursed",
 		},
 	}
 }
@@ -581,6 +967,16 @@ func (t *Trainer) AssignTraitsAtBirth(horse *models.Horse, sire, mare *models.Ho
 			}
 		}
 
+		// Roll for cursed trait (8% chance — because the universe is unfair)
+		if rand.Float64() < 0.08 {
+			cursed := filterByRarity(t.traitPool, "cursed")
+			if trait := pickUnassigned(cursed, assigned); trait != nil {
+				horse.Traits = append(horse.Traits, *trait)
+				assigned[trait.Name] = true
+				continue
+			}
+		}
+
 		// Standard rarity roll
 		roll := rand.Float64()
 		switch {
@@ -641,6 +1037,10 @@ func (t *Trainer) AssignTraitOnMilestone(horse *models.Horse, milestone string) 
 		if milestone == "triple_crown" {
 			candidates = append(candidates, filterByRarity(t.traitPool, "legendary")...)
 		}
+	case "10_losses", "last_place", "injury":
+		// Bad milestones can give cursed traits
+		candidates = append(candidates, filterByRarity(t.traitPool, "common")...)
+		candidates = append(candidates, filterByRarity(t.traitPool, "cursed")...)
 	default:
 		// Minor milestones: mostly common
 		candidates = append(candidates, filterByRarity(t.traitPool, "common")...)

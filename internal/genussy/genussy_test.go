@@ -468,7 +468,7 @@ func TestCreateLegendary_AllSixLots(t *testing.T) {
 }
 
 func TestCreateLegendary_InvalidLot(t *testing.T) {
-	for _, lot := range []int{0, -1, 7, 100} {
+	for _, lot := range []int{0, -1, 13, 100} {
 		horse := CreateLegendary(lot)
 		if horse != nil {
 			t.Errorf("CreateLegendary(%d) should return nil for invalid lot", lot)
@@ -613,7 +613,7 @@ func TestCreateLegendary_E008Genome(t *testing.T) {
 
 func TestCreateLegendary_UniqueIDs(t *testing.T) {
 	ids := make(map[string]bool)
-	for lot := 1; lot <= 6; lot++ {
+	for lot := 1; lot <= 12; lot++ {
 		horse := CreateLegendary(lot)
 		if horse == nil {
 			t.Fatalf("Lot %d returned nil", lot)

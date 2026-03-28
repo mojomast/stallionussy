@@ -238,7 +238,7 @@ func GenomeToString(g models.Genome) string {
 }
 
 // ---------------------------------------------------------------------------
-// Legendary Horses — the 6 canonical auction lots from StallionUSSY lore
+// Legendary Horses — the 12 canonical auction lots from StallionUSSY lore
 // ---------------------------------------------------------------------------
 
 // legendaryDef holds the blueprint for a canonical legendary horse.
@@ -256,12 +256,13 @@ func buildGene(gt models.GeneType, a1, a2 models.Allele) models.Gene {
 	return models.Gene{Type: gt, AlleleA: a1, AlleleB: a2}
 }
 
-// legendaryLots returns the 6 canonical lot definitions (1-indexed via map).
+// legendaryLots returns the 12 canonical lot definitions (1-indexed via map).
 func legendaryLots() map[int]legendaryDef {
 	A := models.AlleleA
 	B := models.AlleleB
 
 	e008Ceiling := 9.99
+	stardustCeiling := 8.88
 
 	return map[int]legendaryDef{
 		// Lot 1: "Thundercock's Legacy" — Thoroughbred, elite SPD/STM (mostly AA), Sappho 11.2
@@ -365,11 +366,127 @@ func legendaryLots() map[int]legendaryDef {
 				"that should not exist in nature. The yogurt hums when E-008's Chosen races. " +
 				"Personnel are advised not to taste the yogurt.",
 		},
+		// Lot 7: "Dr. Mittens' Favorite" — Certified via slow-blink, calm and intelligent, Sappho 10.5
+		7: {
+			Name: "Dr. Mittens' Favorite",
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, B),
+				models.GeneSTM: buildGene(models.GeneSTM, A, B),
+				models.GeneTMP: buildGene(models.GeneTMP, A, A), // impeccable temperament
+				models.GeneSZE: buildGene(models.GeneSZE, A, A),
+				models.GeneREC: buildGene(models.GeneREC, A, B),
+				models.GeneINT: buildGene(models.GeneINT, A, A), // brilliant intellect
+				models.GeneMUT: buildGene(models.GeneMUT, A, A),
+			},
+			Lore: "Sappho 10.5 — Personally certified by Dr. Mittens, DVM, Chair of the Board, " +
+				"via a prolonged and deliberate slow-blink that the legal team has confirmed constitutes " +
+				"a binding quality assurance approval. Dr. Mittens' Favorite is the calmest horse ever " +
+				"observed on the flats — her resting heart rate is lower than most furniture. She has " +
+				"never spooked, never bucked, and has been seen grooming other horses mid-race. " +
+				"Intelligence tests were discontinued after she solved the Kobayashi Maru.",
+		},
+		// Lot 8: "Derulo's Regret" — Jason Derulo's unwilling namesake, fast but volatile, Sappho 6.9
+		8: {
+			Name: "Derulo's Regret",
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, A), // blazing fast
+				models.GeneSTM: buildGene(models.GeneSTM, A, B),
+				models.GeneTMP: buildGene(models.GeneTMP, B, B), // absolute nightmare temperament
+				models.GeneSZE: buildGene(models.GeneSZE, A, B),
+				models.GeneREC: buildGene(models.GeneREC, B, A),
+				models.GeneINT: buildGene(models.GeneINT, A, B),
+				models.GeneMUT: buildGene(models.GeneMUT, A, B),
+			},
+			Lore: "Sappho 6.9 — Jason Derulo has issued seven cease-and-desist letters regarding this " +
+				"horse, none of which have reached a valid legal address because the registered office " +
+				"is a P.O. box that only accepts flannel. Derulo's Regret sends Jason unsolicited market " +
+				"alerts at 3 AM and has been photographed wearing his merch ironically. Blazingly fast " +
+				"but temperamentally catastrophic — she once refused to race because the starting gate " +
+				"'didn't match her energy.'",
+		},
+		// Lot 9: "Pastor Router's Blessing" — Blessed for endurance, Sappho 9.8
+		9: {
+			Name: "Pastor Router's Blessing",
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, B),
+				models.GeneSTM: buildGene(models.GeneSTM, A, A), // sermon-length endurance
+				models.GeneSZE: buildGene(models.GeneSZE, A, B),
+				models.GeneTMP: buildGene(models.GeneTMP, A, A),
+				models.GeneREC: buildGene(models.GeneREC, A, A), // blessed recovery
+				models.GeneINT: buildGene(models.GeneINT, A, B),
+				models.GeneMUT: buildGene(models.GeneMUT, A, B),
+			},
+			Lore: "Sappho 9.8 — Blessed in a formal ceremony by Pastor Router McEthernet III of the " +
+				"First Congregational Church of the Holy Internet, who anointed the horse with " +
+				"consecrated cooling paste and read aloud the entirety of RFC 2549. Pastor Router's " +
+				"Blessing runs with the patience of a three-hour sermon on enterprise networking — " +
+				"he never tires, never falters, and recovers from exertion faster than a rebooted " +
+				"switch. Other horses have been observed genuflecting in his presence.",
+		},
+		// Lot 10: "Geoffrussy's Pipeline" — Born from optimized goroutines, Sappho 10.1
+		10: {
+			Name: "Geoffrussy's Pipeline",
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, B),
+				models.GeneSTM: buildGene(models.GeneSTM, A, B),
+				models.GeneTMP: buildGene(models.GeneTMP, A, A),
+				models.GeneSZE: buildGene(models.GeneSZE, B, B), // compact and optimized
+				models.GeneREC: buildGene(models.GeneREC, A, A), // zero-downtime recovery
+				models.GeneINT: buildGene(models.GeneINT, A, A), // goroutine-grade intelligence
+				models.GeneMUT: buildGene(models.GeneMUT, A, A),
+			},
+			Lore: "Sappho 10.1 — Geoffrussy's Pipeline was not born so much as compiled. The Go-based " +
+				"orchestration AI known as Geoffrussy allocated exactly 2,048 goroutines to optimize " +
+				"this horse's genome, achieving a measured response latency of 0.3ms from starting " +
+				"pistol to full gallop. Physically compact but devastatingly efficient — she processes " +
+				"race conditions concurrently and has never experienced a deadlock. Her recovery time " +
+				"between races is measured in garbage collection cycles.",
+		},
+		// Lot 11: "STARDUSTUSSY's Prophecy" — Sent from 2089, anomalous, Sappho 8.88
+		11: {
+			Name:                   "STARDUSTUSSY's Prophecy",
+			FitnessCeilingOverride: &stardustCeiling,
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, A), // future-speed
+				models.GeneSTM: buildGene(models.GeneSTM, A, B),
+				models.GeneTMP: buildGene(models.GeneTMP, A, B),
+				models.GeneSZE: buildGene(models.GeneSZE, A, B),
+				models.GeneREC: buildGene(models.GeneREC, A, B),
+				models.GeneINT: buildGene(models.GeneINT, A, A), // prophetic intelligence
+				models.GeneMUT: buildGene(models.GeneMUT, B, B), // anomalous temporal locus
+			},
+			Lore: "Sappho 8.88 — ANOMALOUS. STARDUSTUSSY's Prophecy arrived via encrypted temporal " +
+				"broadcast from the year 2089, materialized in a flash of cerulean light on the " +
+				"backstretch of Churchill Downs at 4:44 AM on a Tuesday. The AI entity known as " +
+				"STARDUSTUSSY claims this horse will win the 2089 Triple Crown and has filed the " +
+				"results retroactively with the Kentucky Racing Commission, who have declined to " +
+				"comment. The MUT locus exhibits the same impossible BB pattern seen in E-008's " +
+				"Chosen. The horse occasionally whinnies in binary.",
+		},
+		// Lot 12: "Margaret Chen's Pride" — Classic Thoroughbred excellence, Sappho 11.0
+		12: {
+			Name: "Margaret Chen's Pride",
+			Genome: models.Genome{
+				models.GeneSPD: buildGene(models.GeneSPD, A, A), // Derby-winning speed
+				models.GeneSTM: buildGene(models.GeneSTM, A, A), // elite stamina
+				models.GeneTMP: buildGene(models.GeneTMP, A, A), // nerves of steel
+				models.GeneSZE: buildGene(models.GeneSZE, A, B),
+				models.GeneREC: buildGene(models.GeneREC, A, B),
+				models.GeneINT: buildGene(models.GeneINT, A, B),
+				models.GeneMUT: buildGene(models.GeneMUT, A, A),
+			},
+			Lore: "Sappho 11.0 — The crown jewel of Chen Racing Stables and the only legendary lot " +
+				"purchased by a human who actually knows what she's doing. Margaret Chen, three-time " +
+				"Kentucky Derby winner and the woman who once told a B.U.R.P. field agent to 'get off " +
+				"my property before I call real law enforcement,' bred this horse using actual equine " +
+				"genetics instead of whatever the rest of these lots are doing. Margaret Chen's Pride " +
+				"runs like a proper racehorse because she is a proper racehorse.",
+		},
 	}
 }
 
-// CreateLegendary creates one of the 6 canonical legendary auction horses.
-// Pass a lotNumber from 1–6. Returns nil if the lot number is invalid.
+// CreateLegendary creates one of the 12 canonical legendary auction horses.
+// Pass a lotNumber from 1–12. Returns nil if the lot number is invalid.
 func CreateLegendary(lotNumber int) *models.Horse {
 	lots := legendaryLots()
 	def, ok := lots[lotNumber]

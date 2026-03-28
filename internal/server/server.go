@@ -82,7 +82,7 @@ func NewServer() *Server {
 		s.trainer.AssignTraitsAtBirth(h, h, nil)
 	}
 
-	log.Printf("server: seeded 6 legendary horses into stable %q (%s)", houseOfUSSY.Name, houseOfUSSY.ID)
+	log.Printf("server: seeded 12 legendary horses into stable %q (%s)", houseOfUSSY.Name, houseOfUSSY.ID)
 
 	// Register all routes.
 	s.routes()

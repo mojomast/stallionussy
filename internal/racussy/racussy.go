@@ -255,6 +255,18 @@ func SimulateRace(race *models.Race, horses []*models.Horse, seed ...uint64) *mo
 //
 // Trait effects are applied per-tick per-horse after base deltaP calculation.
 // Hauntedussy track has additional special events (ghost sightings, light flickers).
+//
+// Post-trait events (Ussyverse expansion):
+//   - SECOND WIND: 1% when past 70% and struggling, deltaP *= 1.5
+//   - CAFFEINE KICK: INT AA only, 0.5%, deltaP *= 1.3
+//   - FROSTUSSY SLIP: Frostussy + SZE BB, 3%, deltaP *= 0.3
+//   - THUNDERUSSY LIGHTNING STRIKE: Thunderussy global, 1%, deltaP *= 0.6 all
+//   - MUDUSSY SPLATTER: Mudussy, 2%, deltaP *= 0.7
+//   - CROWD SURGE: 1st place past 80%, 0.5%, deltaP *= 1.2
+//   - DERULO SIGHTING: any, 0.1%, deltaP = 0
+//   - MITTENS NAP: any, 0.2%, deltaP *= 0.4
+//   - DIVINE PACKET: Thunderussy, 0.3%, deltaP *= 1.4
+//   - GEOFFRUSSY OPTIMIZATION: INT AA/AB, final 20%, 0.3%, deltaP *= 1.25
 func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather models.Weather, seed ...uint64) *models.Race {
 	// -----------------------------------------------------------------------
 	// Set up RNG — deterministic if seed provided, otherwise random.
@@ -305,6 +317,15 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			lightsFlicker = true
 		}
 
+		// ------------------------------------------------------------------
+		// Thunderussy global event: "THUNDERUSSY LIGHTNING STRIKE" — 1%
+		// per tick, affects ALL unfinished horses (deltaP *= 0.6).
+		// ------------------------------------------------------------------
+		thunderStrike := false
+		if trackType == models.TrackThunderussy && rng.Float64() < 0.01 {
+			thunderStrike = true
+		}
+
 		for i := range race.Entries {
 			entry := &race.Entries[i]
 
@@ -331,6 +352,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			stmScore := geneScore(horse.Genome, models.GeneSTM)
 			szeExpr := geneExpress(horse.Genome, models.GeneSZE)
 			tmpExpr := geneExpress(horse.Genome, models.GeneTMP)
+			intExpr := geneExpress(horse.Genome, models.GeneINT)
 
 			// ------ Base speed (metres-per-tick before modifiers) ------
 			baseSpeed := CalcBaseSpeed(horse, trackType)
@@ -373,6 +395,14 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 				fatigue = 0
 			}
 
+			// Apply cursed_fatigue traits (increases fatigue).
+			// Magnitude is ~0.8, so (2.0 - 0.8) = 1.2x fatigue multiplier.
+			for _, trait := range horse.Traits {
+				if trait.Effect == "cursed_fatigue" {
+					fatigue *= (2.0 - trait.Magnitude)
+				}
+			}
+
 			// ------ Chaos (random jitter per tick) ------
 			var chaosSigma float64
 			if trackType == models.TrackMudussy {
@@ -388,6 +418,14 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			for _, trait := range horse.Traits {
 				if trait.Effect == "chaos_multiplier" {
 					chaosSigma *= trait.Magnitude
+				}
+			}
+
+			// ------ Apply cursed_chaos trait (increases chaos) ------
+			// Magnitude is ~0.85, so (2.0 - 0.85) = 1.15x chaos multiplier.
+			for _, trait := range horse.Traits {
+				if trait.Effect == "cursed_chaos" {
+					chaosSigma *= (2.0 - trait.Magnitude)
 				}
 			}
 
@@ -446,6 +484,14 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 				}
 			}
 
+			// Apply cursed_panic traits (increases panic chance).
+			// Magnitude is 0.85-0.95, so (2.0 - mag) yields 1.05-1.15x multiplier.
+			for _, trait := range horse.Traits {
+				if trait.Effect == "cursed_panic" {
+					panicChance *= (2.0 - trait.Magnitude)
+				}
+			}
+
 			if panicChance > 0 && rng.Float64() < panicChance {
 				deltaP = 0
 				eventText = "PANIC"
@@ -501,6 +547,30 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 						deltaP *= trait.Magnitude
 					}
 
+				case "thunder_boost":
+					if trackType == models.TrackThunderussy {
+						deltaP *= trait.Magnitude
+					}
+
+				case "haunted_boost":
+					if trackType == models.TrackHauntedussy {
+						deltaP *= trait.Magnitude
+					}
+
+				case "grind_boost":
+					if trackType == models.TrackGrindussy {
+						deltaP *= trait.Magnitude
+					}
+
+				case "sprint_boost":
+					if trackType == models.TrackSprintussy {
+						deltaP *= trait.Magnitude
+					}
+
+				case "cursed_speed":
+					// Speed penalty — magnitude is 0.85-0.95, reducing deltaP.
+					deltaP *= trait.Magnitude
+
 				case "crowd_boost":
 					// Boost if 6 or more entries in the race.
 					if totalEntries >= 6 {
@@ -544,8 +614,133 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 						eventText = "REALITY FRACTURE"
 					}
 
+				// elo_boost and earnings_boost are handled outside the race engine
+				// (in ELO/earnings calculations). No-ops here to avoid default.
+				case "elo_boost", "earnings_boost":
+					// No race-time effect — handled in post-race processing.
+
 					// stamina_boost, fatigue_resist, panic_resist, weather_immune,
-					// chaos_multiplier are handled above in their respective sections.
+					// chaos_multiplier, cursed_panic, cursed_fatigue, cursed_chaos
+					// are handled above in their respective sections.
+				}
+			}
+
+			// ------------------------------------------------------------------
+			// NEW EVENTS (post-trait) — the Ussyverse expands
+			// ------------------------------------------------------------------
+
+			// ------ Event: SECOND WIND ------
+			// Any horse past 70% of the distance AND struggling (speed < 50% base).
+			// 1% per tick. The crowd gasps as the horse finds one last gear.
+			if entry.Position > 0.7*distance && deltaP < baseSpeed*0.5 {
+				if rng.Float64() < 0.01 {
+					deltaP *= 1.5
+					if eventText == "" {
+						eventText = "SECOND WIND"
+					}
+				}
+			}
+
+			// ------ Event: CAFFEINE KICK ------
+			// INT AA horses only. 0.5% per tick. They found a discarded oat milk
+			// latte on the track. Dr. Mittens left it there. Allegedly.
+			if intExpr == "AA" && rng.Float64() < 0.005 {
+				deltaP *= 1.3
+				if eventText == "" {
+					eventText = "CAFFEINE KICK"
+				}
+			}
+
+			// ------ Event: FROSTUSSY SLIP ------
+			// Frostussy track only, SZE BB (lean build = no grip), 3% per tick.
+			// The horse's hooves betray it on the ice. Devastating.
+			if trackType == models.TrackFrostussy && szeExpr == "BB" {
+				if rng.Float64() < 0.03 {
+					deltaP *= 0.3
+					if eventText == "" {
+						eventText = "FROSTUSSY SLIP"
+					}
+				}
+			}
+
+			// ------ Event: THUNDERUSSY LIGHTNING STRIKE (global) ------
+			// Applied to ALL unfinished horses when thunderStrike fires.
+			// deltaP *= 0.6 — the lightning terrifies everyone.
+			if thunderStrike {
+				deltaP *= 0.6
+				if eventText == "" {
+					eventText = "THUNDERUSSY LIGHTNING STRIKE"
+				}
+			}
+
+			// ------ Event: MUDUSSY SPLATTER ------
+			// Mudussy track, 2% per tick. Face full of mud. Glorious.
+			if trackType == models.TrackMudussy && rng.Float64() < 0.02 {
+				deltaP *= 0.7
+				if eventText == "" {
+					eventText = "MUDUSSY SPLATTER"
+				}
+			}
+
+			// ------ Event: CROWD SURGE ------
+			// Horse in 1st place, past 80%, 0.5% per tick.
+			// The crowd's energy is PALPABLE. It propels the leader forward.
+			if entry.Position > 0.8*distance {
+				// Determine if this horse is currently in 1st (highest position).
+				isLeader := true
+				for j := range race.Entries {
+					if j != i && !race.Entries[j].Finished && race.Entries[j].Position > entry.Position {
+						isLeader = false
+						break
+					}
+				}
+				if isLeader && rng.Float64() < 0.005 {
+					deltaP *= 1.2
+					if eventText == "" {
+						eventText = "CROWD SURGE"
+					}
+				}
+			}
+
+			// ------ Event: DERULO SIGHTING ------
+			// Any track, 0.1% per tick. Jason Derulo is spotted in the crowd.
+			// The horse STOPS. Dead. Just stares. He insists he's not here.
+			if rng.Float64() < 0.001 {
+				deltaP = 0
+				if eventText == "" {
+					eventText = "DERULO SIGHTING"
+				}
+			}
+
+			// ------ Event: MITTENS NAP ------
+			// Any horse, 0.2% per tick. Dr. Mittens has materialized on the
+			// horse's back and fallen asleep. The horse dare not disturb her.
+			if rng.Float64() < 0.002 {
+				deltaP *= 0.4
+				if eventText == "" {
+					eventText = "MITTENS NAP"
+				}
+			}
+
+			// ------ Event: DIVINE PACKET ------
+			// Thunderussy only, 0.3% per tick. Pastor Router McEthernet III
+			// sends a divine network packet. The blessing finds its target.
+			if trackType == models.TrackThunderussy && rng.Float64() < 0.003 {
+				deltaP *= 1.4
+				if eventText == "" {
+					eventText = "DIVINE PACKET"
+				}
+			}
+
+			// ------ Event: GEOFFRUSSY OPTIMIZATION ------
+			// INT AA or AB, final 20% of distance, 0.3% per tick.
+			// Geoffrussy's pipeline optimizes the horse's route to the finish.
+			if (intExpr == "AA" || intExpr == "AB") && entry.Position > 0.8*distance {
+				if rng.Float64() < 0.003 {
+					deltaP *= 1.25
+					if eventText == "" {
+						eventText = "GEOFFRUSSY OPTIMIZATION"
+					}
 				}
 			}
 
@@ -654,6 +849,9 @@ func CalcPostRaceFatigue(horse *models.Horse, race *models.Race, finishPlace int
 //   - Frostussy slip: "[TICK] HORSE_NAME: SLIPPING ON ICE!"
 //   - Thunderussy lightning: "[TICK] LIGHTNING STRIKES the track!"
 //   - Anomalous events: ANOMALOUS RESONANCE, THE YOGURT ERUPTS, REALITY FRACTURE
+//   - Ussyverse events: SECOND WIND, CAFFEINE KICK, FROSTUSSY SLIP,
+//     THUNDERUSSY LIGHTNING STRIKE, MUDUSSY SPLATTER, CROWD SURGE,
+//     DERULO SIGHTING, MITTENS NAP, DIVINE PACKET, GEOFFRUSSY OPTIMIZATION
 //   - Photo finish: "[TICK] PHOTO FINISH between X and Y!"
 //   - Final results with dramatic flair
 func GenerateRaceNarrative(race *models.Race) []string {
@@ -779,18 +977,29 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 		"PANIC": 3, "GHOST SIGHTING": 2, "ICE SLIP": 2,
 		"ANOMALOUS ACCELERATION": 4, "ANOMALOUS RESONANCE": 2,
 		"THE YOGURT ERUPTS": 2, "REALITY FRACTURE": 2,
+		"SECOND WIND": 2, "CAFFEINE KICK": 2, "FROSTUSSY SLIP": 3,
+		"MUDUSSY SPLATTER": 3, "CROWD SURGE": 2, "DERULO SIGHTING": 2,
+		"MITTENS NAP": 2, "DIVINE PACKET": 2, "GEOFFRUSSY OPTIMIZATION": 2,
 	}
 	eventMinGap := map[string]int{
 		"PANIC": 15, "GHOST SIGHTING": 30, "ICE SLIP": 20,
 		"ANOMALOUS ACCELERATION": 10,
+		"SECOND WIND":            20, "CAFFEINE KICK": 25, "FROSTUSSY SLIP": 15,
+		"MUDUSSY SPLATTER": 15, "CROWD SURGE": 20, "DERULO SIGHTING": 50,
+		"MITTENS NAP": 30, "DIVINE PACKET": 25, "GEOFFRUSSY OPTIMIZATION": 20,
 	}
 	eventCapMsg := map[string]string{
-		"PANIC":          "💀 %s has entered a permanent state of existential dread. They've stopped responding to stimuli.",
-		"GHOST SIGHTING": "😨 %s refuses to look anywhere but straight ahead now. Pure survival mode.",
-		"ICE SLIP":       "🧊 %s has given up on traction entirely and is basically just sliding.",
+		"PANIC":            "💀 %s has entered a permanent state of existential dread. They've stopped responding to stimuli.",
+		"GHOST SIGHTING":   "😨 %s refuses to look anywhere but straight ahead now. Pure survival mode.",
+		"ICE SLIP":         "🧊 %s has given up on traction entirely and is basically just sliding.",
+		"FROSTUSSY SLIP":   "🧊 %s has accepted their fate as a horse-shaped ice cube. All four hooves are decorative at this point.",
+		"MUDUSSY SPLATTER": "🟤 %s is now 60%% mud by volume. Scientists are debating if this still qualifies as a horse.",
+		"MITTENS NAP":      "😺 Dr. Mittens has taken PERMANENT residence on %s's back. The horse has accepted its new overlord.",
+		"DERULO SIGHTING":  "🎤 %s can no longer function in Jason Derulo's presence. The star power is simply too much.",
 	}
 	globalEventMax := map[string]int{
-		"THE LIGHTS FLICKER": 3,
+		"THE LIGHTS FLICKER":           3,
+		"THUNDERUSSY LIGHTNING STRIKE": 3,
 	}
 
 	// Track last time we gave a general "pack update"
@@ -979,6 +1188,94 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 			case "REALITY FRACTURE":
 				if canReport("REALITY FRACTURE") {
 					add(t, fmt.Sprintf("🌌 [%.1fs] %s: REALITY FRACTURE!! Space FOLDS — the horse BLINKS forward through a rip in spacetime! WHAT DID WE JUST WITNESS?!", ts, name), "event-e008")
+				}
+
+			case "SECOND WIND":
+				if canReport("SECOND WIND") {
+					msgs := []string{
+						fmt.Sprintf("💨 [%.1fs] %s: SECOND WIND! From the depths of exhaustion — a SURGE! The crowd is on their FEET!", ts, name),
+						fmt.Sprintf("🔥 [%.1fs] %s REFUSES TO DIE! Somehow they've found another gear! Where was THIS energy hiding?!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["SECOND WIND"]%len(msgs)], "event-burst")
+				}
+
+			case "CAFFEINE KICK":
+				if canReport("CAFFEINE KICK") {
+					msgs := []string{
+						fmt.Sprintf("☕ [%.1fs] %s: CAFFEINE KICK! They found a discarded oat milk latte on the track! INSTANT ENERGY! Dr. Mittens left it there. Allegedly.", ts, name),
+						fmt.Sprintf("☕ [%.1fs] %s just inhaled someone's abandoned cold brew! Their eyes are ENORMOUS! They're VIBRATING!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["CAFFEINE KICK"]%len(msgs)], "event-burst")
+				}
+
+			case "FROSTUSSY SLIP":
+				if canReport("FROSTUSSY SLIP") {
+					msgs := []string{
+						fmt.Sprintf("🧊 [%.1fs] %s: FROSTUSSY SLIP! All four hooves go out from under them! They're SKATING not racing!", ts, name),
+						fmt.Sprintf("❄️ [%.1fs] %s hits a patch of black ice and goes FULL BAMBI! Legs everywhere! The crowd winces!", ts, name),
+						fmt.Sprintf("🧊 [%.1fs] %s's hooves BETRAY them on the ice! That lean build has ZERO grip! They're pinwheeling!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["FROSTUSSY SLIP"]%len(msgs)], "event-weather")
+				}
+
+			case "THUNDERUSSY LIGHTNING STRIKE":
+				if canReportGlobal("THUNDERUSSY LIGHTNING STRIKE") {
+					add(t, fmt.Sprintf("⚡ [%.1fs] THUNDERUSSY LIGHTNING STRIKE!! A bolt from the heavens SLAMS the track! Every horse RECOILS! Pastor Router's grid trembles! ALL horses lose speed!", ts), "event-weather")
+				}
+
+			case "MUDUSSY SPLATTER":
+				if canReport("MUDUSSY SPLATTER") {
+					msgs := []string{
+						fmt.Sprintf("🟤 [%.1fs] %s: MUDUSSY SPLATTER! A wall of mud EXPLODES into their face! They can't see! They can't BREATHE!", ts, name),
+						fmt.Sprintf("🟤 [%.1fs] %s just ate a TIDAL WAVE of Mudussy sludge! That horse is now 40%% mud by volume!", ts, name),
+						fmt.Sprintf("💩 [%.1fs] %s gets OBLITERATED by a mud geyser from the track! The crowd is ALSO covered! Nobody is happy!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["MUDUSSY SPLATTER"]%len(msgs)], "event-weather")
+				}
+
+			case "CROWD SURGE":
+				if canReport("CROWD SURGE") {
+					msgs := []string{
+						fmt.Sprintf("📣 [%.1fs] %s: CROWD SURGE! The fans ROAR! The energy is ELECTRIC! The leader feeds off the adulation!", ts, name),
+						fmt.Sprintf("🎉 [%.1fs] The crowd is going ABSOLUTELY FERAL for %s! The noise is DEAFENING! It's propelling them forward!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["CROWD SURGE"]%len(msgs)], "event-burst")
+				}
+
+			case "DERULO SIGHTING":
+				if canReport("DERULO SIGHTING") {
+					msgs := []string{
+						fmt.Sprintf("🎤 [%.1fs] %s: DERULO SIGHTING! Jason Derulo is in the crowd! The horse STOPS DEAD to stare! He insists he's not here! \"Jason Derulo!\" he whispers, unable to help himself.", ts, name),
+						fmt.Sprintf("🎤 [%.1fs] %s has FROZEN! Is that... JASON DERULO?! In the VIP box?! He's wearing a disguise but it's CLEARLY him! The horse is MESMERIZED!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["DERULO SIGHTING"]%len(msgs)], "event-panic")
+				}
+
+			case "MITTENS NAP":
+				if canReport("MITTENS NAP") {
+					msgs := []string{
+						fmt.Sprintf("😺 [%.1fs] %s: MITTENS NAP! Dr. Mittens has materialized on the horse's back and FALLEN ASLEEP! The horse dare not disturb her! Speed PLUMMETS out of respect!", ts, name),
+						fmt.Sprintf("🐱 [%.1fs] A soft *poof* and Dr. Mittens APPEARS on %s's hindquarters, curling into a perfect circle! The horse slows to a reverent tippy-tap! You do NOT wake the doctor!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["MITTENS NAP"]%len(msgs)], "event-ghost")
+				}
+
+			case "DIVINE PACKET":
+				if canReport("DIVINE PACKET") {
+					msgs := []string{
+						fmt.Sprintf("📡 [%.1fs] %s: DIVINE PACKET! A golden beam of pure 802.11ax descends from the clouds! Pastor Router McEthernet III has sent his BLESSING! Speed BOOST!", ts, name),
+						fmt.Sprintf("🙏 [%.1fs] %s receives a DIVINE PACKET from Pastor Router! The horse's latency drops to ZERO! They're running on GOD'S OWN BANDWIDTH!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["DIVINE PACKET"]%len(msgs)], "event-burst")
+				}
+
+			case "GEOFFRUSSY OPTIMIZATION":
+				if canReport("GEOFFRUSSY OPTIMIZATION") {
+					msgs := []string{
+						fmt.Sprintf("⚙️ [%.1fs] %s: GEOFFRUSSY OPTIMIZATION! The Go orchestrator has optimized their race line! Goroutines DEPLOYED! The path to the finish is CALCULATED!", ts, name),
+						fmt.Sprintf("🔧 [%.1fs] Geoffrussy's pipeline kicks in for %s! runtime.GOMAXPROCS set to MAXIMUM! The horse's route is now O(1) to the finish line!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["GEOFFRUSSY OPTIMIZATION"]%len(msgs)], "event-burst")
 				}
 			}
 

@@ -501,7 +501,7 @@ func TestInitTraitPool_HasAllRarities(t *testing.T) {
 		rarities[tr.Rarity]++
 	}
 
-	for _, r := range []string{"common", "rare", "legendary", "anomalous"} {
+	for _, r := range []string{"common", "rare", "legendary", "anomalous", "cursed"} {
 		if rarities[r] == 0 {
 			t.Errorf("trait pool missing rarity %q", r)
 		}

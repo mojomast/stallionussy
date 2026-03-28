@@ -747,6 +747,10 @@ select.term-input option {
 .narrative-log .event-ghost { color: var(--purple); font-style: italic; }
 .narrative-log .event-normal { color: var(--fg-dim); }
 .narrative-log .event-announcer { color: var(--fg); font-weight: bold; }
+.narrative-log .event-derulo { color: #FF69B4; font-style: italic; }
+.narrative-log .event-mittens { color: #DDA0DD; font-style: italic; }
+.narrative-log .event-divine { color: #FFD700; font-weight: bold; }
+.narrative-log .event-geoffrussy { color: #00CED1; font-weight: bold; }
 
 /* Narrative line entrance animation */
 .narrative-log > div {
@@ -2002,6 +2006,15 @@ function onNarrativeTick(msg) {
 function getEventClass(text) {
   if (!text) return 'event-normal';
   const upper = text.toUpperCase();
+  // New specific events (check before generic patterns to avoid false matches)
+  if (upper.includes('DERULO SIGHTING') || upper.includes('JASON DERULO')) return 'event-derulo';
+  if (upper.includes('MITTENS NAP') || upper.includes('DR. MITTENS') && upper.includes('NAP')) return 'event-mittens';
+  if (upper.includes('DIVINE PACKET') || upper.includes('PASTOR ROUTER')) return 'event-divine';
+  if (upper.includes('GEOFFRUSSY OPTIMIZATION') || upper.includes('GEOFFRUSSY')) return 'event-geoffrussy';
+  if (upper.includes('SECOND WIND') || upper.includes('CAFFEINE KICK')) return 'event-burst';
+  if (upper.includes('FROSTUSSY SLIP') || upper.includes('THUNDERUSSY LIGHTNING') || upper.includes('MUDUSSY SPLATTER')) return 'event-weather';
+  if (upper.includes('CROWD SURGE')) return 'event-burst';
+  // Original event patterns
   if (upper.includes('PANIC') || upper.includes('STUMBLE') || upper.includes('CRASH') || upper.includes('MELTDOWN') || upper.includes('SPOOKED')) return 'event-panic';
   if (upper.includes('E-008') || upper.includes('GLITCH') || upper.includes('ANOMAL') || upper.includes('YOGURT') || upper.includes('REALITY FRACTURE') || upper.includes('RESONANCE')) return 'event-e008';
   if (upper.includes('GHOST') || upper.includes('HAUNT') || upper.includes('PHANTOM') || upper.includes('LIGHTS FLICKER') || upper.includes('SPECTRAL')) return 'event-ghost';

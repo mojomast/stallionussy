@@ -384,24 +384,56 @@ func NewTournamentManager(history *RaceHistory) *TournamentManager {
 // ---------------------------------------------------------------------------
 
 var tournamentAdjectives = []string{
+	// ---- Original 20 ----
 	"Golden", "Midnight", "Sapphic", "Haunted", "Thunderous",
 	"Forbidden", "Eternal", "Cosmic", "Cryogenic", "Volatile",
 	"Iridescent", "Anomalous", "Sovereign", "Unholy", "Quantum",
 	"Legendary", "Eldritch", "Magnificent", "Disastrous", "Suspicious",
+	// ---- Expanded (Ussyverse lore) ----
+	"Caffeinated", "Gluten-Free", "Decentralized", "Containerized",
+	"Artisanal", "Sentient", "Prophetic", "Bioluminescent",
+	"Thrice-Blessed", "Weaponized", "Ecclesiastical", "Yogurt-Adjacent",
+	"Cloud-Native", "Zero-Downtime", "Uncontained", "Recursive",
+	"Fermented", "Asymptotic", "Haunted-Adjacent", "Overclocked",
+	"Sourdough-Infused", "Ethernet-Blessed", "Defragmented", "Unbothered",
 }
 
 var tournamentNouns = []string{
+	// ---- Original 20 ----
 	"Stallion", "Crown", "Legacy", "Chalice", "Yogurt",
 	"Trophy", "Flannel", "Gauntlet", "Reckoning", "Convergence",
 	"Meridian", "Tempest", "Horizon", "Catalyst", "Biscuit",
 	"Uprising", "Phantom", "Prophecy", "Communion", "Pipeline",
+	// ---- Expanded (Ussyverse lore) ----
+	"Invitational", "Showdown", "Apocalypse", "Deployment", "Sermon",
+	"Audit", "Containment", "Algorithm", "Thunderdome",
+	"Absolution", "Compilation", "Sprint", "Marathon", "Odyssey",
+	"Singularity", "Sacrament", "Firmware", "Stampede",
+	"Inquisition", "Symposium", "Referendum", "Exorcism",
+	"Cummification", "Rebuke",
 }
 
 var tournamentPlaces = []string{
+	// ---- Original 14 ----
 	"Lesbos", "Delaware", "Building 7", "the Ussyverse", "Sappho Valley",
 	"the Forbidden Stable", "the Quantum Paddock", "Goroutine Gulch",
 	"Haunted Meadows", "the Midnight Corral", "New Flannel City",
 	"the Yogurt Wastes", "E-008's Domain", "the Anomaly Zone",
+	// ---- Expanded (Ussyverse lore) ----
+	"Pastor Router's Cathedral", "Dr. Mittens' Inspection Room",
+	"Derulo's Living Room (unauthorized)", "Geoffrussy's Server Room",
+	"Building 7 Subbasement", "Margaret Chen's Kentucky Estate",
+	"the STARDUSTUSSY Timeline", "Agent Mothman's Observatory",
+	"the Sourdough District", "the Flannel Coast",
+	"the Kubernetes Cluster", "the Legacy Codebase",
+	"the Forbidden Repository", "the Yogurt Containment Zone",
+	"Sappho's Library", "the B.U.R.P. Regional Office",
+	"the Ethernet Cathedral Annex", "the Oat Milk Dispensary",
+	"the Haunted Server Closet", "the Cummies Vault",
+	"the Grindussy Training Grounds", "the ISO 69420 Compliance Lab",
+	"the Thunderussy Arena", "the Cottagecore Commune",
+	"Margaret Chen's Secret Garden", "the Recursive Meadow",
+	"the Anomalous Paddock Overflow", "the Sourdough Fermenting Room",
 }
 
 // generateTournamentName creates an absurd tournament name from templates.
@@ -425,6 +457,16 @@ func generateTournamentName() string {
 		},
 		func() string {
 			return fmt.Sprintf("%s %s Classic", pickStr(tournamentAdjectives), pickStr(tournamentNouns))
+		},
+		// ---- New patterns (Ussyverse lore) ----
+		func() string {
+			return fmt.Sprintf("The B.U.R.P. %s Investigation", pickStr(tournamentNouns))
+		},
+		func() string {
+			return fmt.Sprintf("%s %s %s", pickStr(tournamentAdjectives), pickStr(tournamentAdjectives), pickStr(tournamentNouns))
+		},
+		func() string {
+			return fmt.Sprintf("Pastor Router's %s %s Sermon", pickStr(tournamentAdjectives), pickStr(tournamentNouns))
 		},
 	}
 
@@ -827,6 +869,254 @@ var AllAchievements = map[string]models.Achievement{
 		Description: "Breed a foal from two legendary parents",
 		Icon:        "\u2728", // ✨
 		Rarity:      "legendary",
+	},
+
+	// -----------------------------------------------------------------------
+	// Track Mastery Achievements
+	// -----------------------------------------------------------------------
+	"frost_king": {
+		ID:          "frost_king",
+		Name:        "Ice Royalty",
+		Description: "Win 5 Frostussy races. The frost bows to you. Dr. Mittens prescribes a warm blanket and a crown.",
+		Icon:        "\u2744\uFE0F", // ❄️
+		Rarity:      "rare",
+	},
+	"thunder_god": {
+		ID:          "thunder_god",
+		Name:        "Thunder God",
+		Description: "Win 5 Thunderussy races. Zeus called — he wants his horse back. The storm is yours now.",
+		Icon:        "\U0001F329\uFE0F", // 🌩️
+		Rarity:      "rare",
+	},
+	"haunted_survivor": {
+		ID:          "haunted_survivor",
+		Name:        "Ghost Whisperer",
+		Description: "Win 3 Hauntedussy races. B.U.R.P. would like a word. The spirits are filing a formal complaint.",
+		Icon:        "\U0001F47B", // 👻
+		Rarity:      "epic",
+	},
+	"sprint_master": {
+		ID:          "sprint_master",
+		Name:        "Flash",
+		Description: "Win 10 Sprintussy races. You're not fast — you're a temporal anomaly. STARDUSTUSSY confirms this from 2089.",
+		Icon:        "\u26A1", // ⚡
+		Rarity:      "epic",
+	},
+	"grind_master": {
+		ID:          "grind_master",
+		Name:        "The Mountain",
+		Description: "Win 10 Grindussy races. 3200 meters of pure suffering, ten times over. Pastor Router blesses your knees.",
+		Icon:        "\U0001F3D4\uFE0F", // 🏔️
+		Rarity:      "epic",
+	},
+	"all_tracks": {
+		ID:          "all_tracks",
+		Name:        "Track Omnivore",
+		Description: "Win on all 6 track types. Sprintussy, Grindussy, Mudussy, Thunderussy, Frostussy, Hauntedussy — you devoured them all. Geoffrussy rates your pipeline: flawless.",
+		Icon:        "\U0001F30D", // 🌍
+		Rarity:      "legendary",
+	},
+
+	// -----------------------------------------------------------------------
+	// Weather Achievements
+	// -----------------------------------------------------------------------
+	"storm_chaser": {
+		ID:          "storm_chaser",
+		Name:        "Storm Chaser",
+		Description: "Win a race in Stormy weather. Lightning struck twice — once on the track, once on the podium. B.U.R.P. is monitoring the situation.",
+		Icon:        "\U0001F4A8", // 💨
+		Rarity:      "rare",
+	},
+	"fog_runner": {
+		ID:          "fog_runner",
+		Name:        "Blind Speed",
+		Description: "Win in Foggy weather. Your horse can't see the finish line, but the finish line can see your horse. Sappho Scale rating: vibes-based navigation.",
+		Icon:        "\U0001F32B\uFE0F", // 🌫️
+		Rarity:      "rare",
+	},
+	"heat_stroke": {
+		ID:          "heat_stroke",
+		Name:        "Heatstroke Hero",
+		Description: "Win in Scorching weather. 140°F on the track. Dr. Mittens advises hydration. Your horse advises victory.",
+		Icon:        "\U0001F525", // 🔥
+		Rarity:      "rare",
+	},
+	"weather_master": {
+		ID:          "weather_master",
+		Name:        "Weatherproof",
+		Description: "Win in all 6 weather types. Clear, Rainy, Stormy, Foggy, Scorching, Haunted — nothing stops you. STARDUSTUSSY's 2089 forecast: perpetual dominance.",
+		Icon:        "\U0001F308", // 🌈
+		Rarity:      "legendary",
+	},
+
+	// -----------------------------------------------------------------------
+	// Lore Achievements — the deep Ussyverse cuts
+	// -----------------------------------------------------------------------
+	"mittens_approved": {
+		ID:          "mittens_approved",
+		Name:        "Dr. Mittens Approves",
+		Description: "Win 3+ races with a horse that has INT AA. Dr. Mittens (DVM, board-certified in equine cognition and slow-blinks) has reviewed the neural pathways and issued a rare nod of approval.",
+		Icon:        "\U0001F431", // 🐱
+		Rarity:      "epic",
+	},
+	"derulo_moment": {
+		ID:          "derulo_moment",
+		Name:        "Jason Derulo Moment",
+		Description: "Horse panics 3+ times in a single race and still finishes. Jason Derulo (unwilling affiliate) knows this feeling. You stumble, you fall, you keep going. He is not endorsing this.",
+		Icon:        "\U0001F635", // 😵
+		Rarity:      "rare",
+	},
+	"burp_investigated": {
+		ID:          "burp_investigated",
+		Name:        "Under Investigation",
+		Description: "Race on Hauntedussy with E-008's Chosen present. The Bureau of Ussyverse Rogue Phenomena has opened a case file. Agent status: concerned. Yogurt status: watching.",
+		Icon:        "\U0001F50D", // 🔍
+		Rarity:      "epic",
+	},
+	"pastor_blessing": {
+		ID:          "pastor_blessing",
+		Name:        "Blessed Connection",
+		Description: "Win a race with 0 panic events. Pastor Router McEthernet III has blessed your connection. Packet loss: 0%. Spiritual latency: negligible. Amen.",
+		Icon:        "\U0001F54A\uFE0F", // 🕊️
+		Rarity:      "rare",
+	},
+	"geoffrussy_certified": {
+		ID:          "geoffrussy_certified",
+		Name:        "Geoffrussy Certified",
+		Description: "Complete a race in under 100 ticks. Your goroutine completed before the garbage collector even woke up. Geoffrussy (the Go orchestrator) stamps your binary: OPTIMIZED.",
+		Icon:        "\U0001F4BB", // 💻
+		Rarity:      "epic",
+	},
+	"sappho_perfect": {
+		ID:          "sappho_perfect",
+		Name:        "Sappho 12.0",
+		Description: "Win a race with a horse that has all AA genome. A perfect specimen. The Sappho Scale has been recalibrated. Lesbos weeps with joy. The poets write your name in the stars.",
+		Icon:        "\U0001F31F", // 🌟
+		Rarity:      "legendary",
+	},
+	"yogurt_whisperer": {
+		ID:          "yogurt_whisperer",
+		Name:        "Yogurt Whisperer",
+		Description: "Breed a foal from E-008's Chosen (Lot 6). The sentient yogurt has deemed your bloodline worthy. Entity-008 pulses with approval. The foal smells faintly of probiotics.",
+		Icon:        "\U0001F9C0", // 🧀
+		Rarity:      "legendary",
+	},
+	"stardustussy_vision": {
+		ID:          "stardustussy_vision",
+		Name:        "2089 Vision",
+		Description: "Win 3 races with a Lot 11 descendant. STARDUSTUSSY (the AI from 2089) confirms: this bloodline persists across timelines. The prophecy is not a metaphor. It never was.",
+		Icon:        "\U0001F52E", // 🔮
+		Rarity:      "epic",
+	},
+
+	// -----------------------------------------------------------------------
+	// Breeding Achievements
+	// -----------------------------------------------------------------------
+	"genetic_disaster": {
+		ID:          "genetic_disaster",
+		Name:        "Genetic Disaster",
+		Description: "Breed a foal with all BB genes. Every allele chose violence. Dr. Mittens has declined to comment. This horse is a monument to recessive chaos.",
+		Icon:        "\U0001F9E8", // 🧨
+		Rarity:      "rare",
+	},
+	"super_foal": {
+		ID:          "super_foal",
+		Name:        "Super Foal",
+		Description: "Breed a foal with fitness ceiling > 0.95. The genetic lottery has spoken and your ticket won. Geoffrussy's pipeline is jealous of this optimization.",
+		Icon:        "\U0001F4AA", // 💪
+		Rarity:      "epic",
+	},
+	"inbreeding_moment": {
+		ID:          "inbreeding_moment",
+		Name:        "Family Reunion",
+		Description: "Breed horses with a common grandparent. The family tree is more of a family wreath. Pastor Router McEthernet III is praying for your stable. Jason Derulo has left the chat.",
+		Icon:        "\U0001F3A1", // 🎡
+		Rarity:      "rare",
+	},
+	"generation_5": {
+		ID:          "generation_5",
+		Name:        "Fifth Generation",
+		Description: "Have a generation 5+ horse. Five generations of Ussyverse horses. That's a dynasty the Habsburg jaw couldn't dream of. STARDUSTUSSY confirms: the bloodline echoes in 2089.",
+		Icon:        "\U0001F332", // 🌲
+		Rarity:      "epic",
+	},
+	"mutation_witnessed": {
+		ID:          "mutation_witnessed",
+		Name:        "Mutation Observed",
+		Description: "Breed a foal that gets a mutation. Something changed in the genome. B.U.R.P. has been notified. E-008 stirs. The yogurt remembers. This was not in the original codebase.",
+		Icon:        "\U0001F9EC", // 🧬
+		Rarity:      "rare",
+	},
+
+	// -----------------------------------------------------------------------
+	// Racing Records
+	// -----------------------------------------------------------------------
+	"total_wins_50": {
+		ID:          "total_wins_50",
+		Name:        "Hall of Fame",
+		Description: "50 total wins across all horses. Your stable doesn't race — it conquers. The Ussyverse Hall of Fame has reserved a plaque. It's next to Jason Derulo's restraining order.",
+		Icon:        "\U0001F3C6", // 🏆
+		Rarity:      "epic",
+	},
+	"total_races_200": {
+		ID:          "total_races_200",
+		Name:        "Race Addict",
+		Description: "200 total races. You can stop any time you want. You just don't want to. Dr. Mittens recommends an intervention. Geoffrussy recommends more goroutines.",
+		Icon:        "\U0001F3C7", // 🏇
+		Rarity:      "epic",
+	},
+	"elo_2000": {
+		ID:          "elo_2000",
+		Name:        "Grand Master",
+		Description: "Any horse reaches 2000 ELO. Your horse has transcended mortal rankings. The Sappho Scale bends. STARDUSTUSSY cross-references 2089 records: this horse exists in the prophecy.",
+		Icon:        "\U0001F9E0", // 🧠
+		Rarity:      "legendary",
+	},
+	"elo_floor": {
+		ID:          "elo_floor",
+		Name:        "Rock Bottom",
+		Description: "Any horse drops below 800 ELO. The only way from here is up. Or further down. Pastor Router McEthernet III offers a prayer. Connection status: unstable.",
+		Icon:        "\U0001F4C9", // 📉
+		Rarity:      "common",
+	},
+	"losing_streak_10": {
+		ID:          "losing_streak_10",
+		Name:        "The Cursed",
+		Description: "10 losses in a row. This isn't bad luck — this is a haunting. B.U.R.P. has classified your stable as a paranormal event. E-008 is laughing. The yogurt is laughing.",
+		Icon:        "\U0001F480", // 💀
+		Rarity:      "rare",
+	},
+
+	// -----------------------------------------------------------------------
+	// Economy Achievements
+	// -----------------------------------------------------------------------
+	"big_spender": {
+		ID:          "big_spender",
+		Name:        "Big Spender",
+		Description: "Spend 100,000 cummies on stud fees. The cummies flow like water. Your accountant (Dr. Mittens) is concerned. The market doesn't care. The market is hungry.",
+		Icon:        "\U0001F4B8", // 💸
+		Rarity:      "rare",
+	},
+	"first_sale": {
+		ID:          "first_sale",
+		Name:        "Open for Business",
+		Description: "List your first horse on the stud market. Your stallion's genes are now a publicly traded commodity. Pastor Router blesses the transaction. Packet sent.",
+		Icon:        "\U0001F3EA", // 🏪
+		Rarity:      "common",
+	},
+	"cummies_earned_100k": {
+		ID:          "cummies_earned_100k",
+		Name:        "Six Figures",
+		Description: "Earn 100,000 total cummies from races. Six figures in cummies. That's approximately $0.00 in real money but priceless in the Ussyverse. Geoffrussy's pipeline approves this throughput.",
+		Icon:        "\U0001F4B0", // 💰
+		Rarity:      "rare",
+	},
+	"market_mogul": {
+		ID:          "market_mogul",
+		Name:        "Market Mogul",
+		Description: "Complete 10 stud market transactions. You're not a horse breeder — you're a venture capitalist. The Ussyverse economy trembles. Jason Derulo is somehow losing money from this.",
+		Icon:        "\U0001F4C8", // 📈
+		Rarity:      "epic",
 	},
 }
 

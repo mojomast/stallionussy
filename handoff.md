@@ -1,44 +1,38 @@
 # Handoff
 
-## Completed: Unit tests for trainussy and marketussy packages
+## Completed: Added new trait effect handlers in race simulation engine
 
-## Next Task: TBD (no devplan.md exists — check for pending tasks)
+## Next Task: TBD (check devplan.md for pending tasks)
 
 ## Context:
-Created comprehensive unit test suites for two core packages:
+Added handling for 10 new trait effects in `SimulateRaceWithWeather` in racussy.go. All changes build and pass tests.
 
-### trainussy_test.go (52 tests)
-- **NewTrainer**: initialization, trait pool population
-- **Train()**: all 6 workout types (Sprint, Endurance, MentalRep, MudRun, RestDay, General)
-- **XP calculation**: base values for all workouts, INT gene bonuses (AA=1.5x, AB=1.2x), fatigue penalties (>50 halved, >80 quartered)
-- **Fitness gain**: diminishing returns formula, zero ceiling edge case, gene bonuses for Sprint/Endurance/MudRun/MentalRep (AB/BB get +20%), no bonus for AA
-- **Fitness/fatigue clamping**: ceiling cap, fatigue 0-100 bounds, RestDay reduces fatigue
-- **GetTrainingHistory**: empty state, session recording, returns defensive copy
-- **RecoverFatigue**: basic recovery, floor at zero
-- **Trait system**: InitTraitPool has all 4 rarities, traits have required fields, AssignTraitsAtBirth (assigns 1-3, no duplicates, nil parents OK), AssignTraitOnMilestone (stochastic 30%)
-- **Trait helpers**: filterByRarity, isAnomalousEligible (LotNumber=6, anomalous trait), isLegendaryEligible (IsLegendary, LotNumber>0, legendary trait)
-- **Aging**: Youth (+2% ceiling), Prime (no change), Veteran (-1%), Elder (-3%), Ancient (-5%), E-008 doesn't age, fitness capped after ceiling drop
-- **LifeStage**: all 6 stages including Eternal for E-008
-- **Retirement**: E-008 never retires, already retired, low ceiling (<0.2), 50+ races + low ELO, healthy horse doesn't retire, RetireHorse sets lore
+### New Trait Effects Added:
 
-### marketussy_test.go (41 tests)
-- **NewMarket**: initialization
-- **CreateListing**: success, pedigree (founder vs bred), nil horse error, empty ownerID error, zero/negative price errors
-- **GetListing**: found, not found
-- **ListActiveListings**: empty, filters inactive, sorted by SapphoScore descending
-- **PurchaseBreeding**: success, 2% burn calculation (large and small prices), deactivates listing, can't buy twice, not found, empty buyerID, can't buy own listing
-- **DelistStud**: success, not found, wrong owner, already inactive
-- **Transaction history**: empty, records, returns copy
-- **GetTotalBurned**: initially zero, accumulates across purchases
-- **CalcSapphoScore**: normal horse (exact formula verification), perfect=12.0, terrible=0, no races, E-008=NaN, high ceiling clamped, capped at 12, low ELO clamped
-- **ELOUpdate**: equal ratings (±16), doesn't mutate horses, upset win (>16 swing), expected win (<16 swing), zero-sum symmetry
+**In the trait effects switch statement:**
+1. `thunder_boost` — deltaP *= magnitude on TrackThunderussy
+2. `haunted_boost` — deltaP *= magnitude on TrackHauntedussy
+3. `grind_boost` — deltaP *= magnitude on TrackGrindussy
+4. `sprint_boost` — deltaP *= magnitude on TrackSprintussy
+5. `cursed_speed` — deltaP *= magnitude (0.85-0.95, a speed penalty)
+6. `elo_boost` — no-op in race engine (handled in post-race ELO calculations)
+7. `earnings_boost` — no-op in race engine (handled in post-race earnings calculations)
 
-### Key implementation notes:
-- Used General workout (no gene bonus) for clean diminishing-returns testing, since BB genome triggers +20% bonus on Sprint/Endurance/MudRun/MentalRep
-- Used float tolerance (1e-15) for near-ceiling fitness gain comparison due to floating-point precision
-- Stochastic tests (traits, milestones) use multiple iterations to verify probabilistic behavior without flaky false negatives
+**In dedicated loops (outside the switch):**
+8. `cursed_panic` — loop after panic_resist: panicChance *= (2.0 - magnitude), increasing panic chance
+9. `cursed_fatigue` — loop after fatigue_resist: fatigue *= (2.0 - magnitude), increasing fatigue
+10. `cursed_chaos` — loop after chaos_multiplier: chaosSigma *= (2.0 - magnitude), increasing chaos
+
+### Previous work (by earlier Ralphs):
+- Integrated cursed traits into trait assignment system (AssignTraitsAtBirth, AssignTraitOnMilestone)
+- Updated web UI to handle 10 new race events (CSS + getEventClass)
+- Added 10 new race simulation events (SECOND WIND, CAFFEINE KICK, etc.)
+- Expanded flavor text pools in trainussy.go and tournussy.go
+- Added 6 new legendary horses (Lots 7-12) with Ussyverse lore
+- Expanded nameussy word lists 3x and added 3 new name patterns
+- Expanded trait system to 63 traits with cursed tier in trainussy.go
+- Unit tests for trainussy (52 tests) and marketussy (41 tests)
+- Added 32 new achievements to AllAchievements map (52 total)
 
 ## Files Modified:
-- `internal/trainussy/trainussy_test.go` (new, ~570 lines, 52 tests)
-- `internal/marketussy/marketussy_test.go` (new, ~490 lines, 41 tests)
-- `handoff.md` (updated)
+- `internal/racussy/racussy.go` — Added 10 new trait effect handlers (5 in switch, 2 no-ops in switch, 3 in dedicated loops)

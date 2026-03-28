@@ -125,7 +125,7 @@ type Horse struct {
 	ELO            float64   `json:"elo"`          // Matchmaking rating, starts at 1200
 	OwnerID        string    `json:"owner_id"`     // Player who owns this horse
 	IsLegendary    bool      `json:"is_legendary"` // True for canonical legendary lots
-	LotNumber      int       `json:"lot_number"`   // 0 = normal, 1-6 = legendary lot index
+	LotNumber      int       `json:"lot_number"`   // 0 = normal, 1-12 = legendary lot index
 	CreatedAt      time.Time `json:"created_at"`
 	Lore           string    `json:"lore"`    // Flavor text / backstory
 	Traits         []Trait   `json:"traits"`  // Quirks and special abilities

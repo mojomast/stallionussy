@@ -230,11 +230,11 @@ func (sm *StableManager) syncHorseToStable(horse *models.Horse) {
 // Legendary seeding
 // ---------------------------------------------------------------------------
 
-// SeedLegendaries creates all 6 canonical legendary horses (lots 1-6) using
+// SeedLegendaries creates all 12 canonical legendary horses (lots 1-12) using
 // genussy.CreateLegendary and adds each to the specified stable. Horses are
 // also registered in the global registry.
 func (sm *StableManager) SeedLegendaries(stableID string) {
-	for lot := 1; lot <= 6; lot++ {
+	for lot := 1; lot <= 12; lot++ {
 		horse := genussy.CreateLegendary(lot)
 		if horse == nil {
 			continue
