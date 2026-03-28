@@ -204,6 +204,87 @@ CREATE TABLE IF NOT EXISTS market_transactions (
 
 CREATE INDEX IF NOT EXISTS idx_market_transactions_buyer_id  ON market_transactions (buyer_id);
 CREATE INDEX IF NOT EXISTS idx_market_transactions_seller_id ON market_transactions (seller_id);
+
+-- ===========================================================================
+-- Auctions (Live Horse Auctions)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS auctions (
+    id               TEXT PRIMARY KEY,
+    seller_id        TEXT NOT NULL DEFAULT '',
+    seller_name      TEXT NOT NULL DEFAULT '',
+    stable_id        TEXT NOT NULL DEFAULT '',
+    horse_id         TEXT NOT NULL DEFAULT '',
+    horse_name       TEXT NOT NULL DEFAULT '',
+    starting_bid     BIGINT NOT NULL DEFAULT 0,
+    current_bid      BIGINT NOT NULL DEFAULT 0,
+    bidder_id        TEXT NOT NULL DEFAULT '',
+    bidder_name      TEXT NOT NULL DEFAULT '',
+    bid_count        INT NOT NULL DEFAULT 0,
+    bid_history      JSONB NOT NULL DEFAULT '[]',
+    status           TEXT NOT NULL DEFAULT 'open',
+    duration         INT NOT NULL DEFAULT 120,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at     TIMESTAMPTZ,
+    geoffrussy_tax   BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_auctions_status    ON auctions (status);
+CREATE INDEX IF NOT EXISTS idx_auctions_seller_id ON auctions (seller_id);
+CREATE INDEX IF NOT EXISTS idx_auctions_horse_id  ON auctions (horse_id);
+
+-- ===========================================================================
+-- Race Replays (persistent full race data for replay sharing)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS race_replays (
+    race_id      TEXT PRIMARY KEY,
+    track_type   TEXT NOT NULL DEFAULT '',
+    distance     INT NOT NULL DEFAULT 0,
+    purse        BIGINT NOT NULL DEFAULT 0,
+    entries      INT NOT NULL DEFAULT 0,
+    weather      TEXT NOT NULL DEFAULT '',
+    winner_id    TEXT NOT NULL DEFAULT '',
+    winner_name  TEXT NOT NULL DEFAULT '',
+    data         JSONB NOT NULL DEFAULT '{}',
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_race_replays_created_at ON race_replays (created_at DESC);
+
+-- ===========================================================================
+-- Alliances (Stable Guilds)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS alliances (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    tag         TEXT NOT NULL,
+    leader_id   TEXT NOT NULL DEFAULT '',
+    motto       TEXT NOT NULL DEFAULT '',
+    treasury    BIGINT NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_alliances_leader_id ON alliances (leader_id);
+
+-- ===========================================================================
+-- Alliance Members
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS alliance_members (
+    alliance_id TEXT NOT NULL REFERENCES alliances(id) ON DELETE CASCADE,
+    user_id     TEXT NOT NULL,
+    username    TEXT NOT NULL DEFAULT '',
+    stable_id   TEXT NOT NULL DEFAULT '',
+    role        TEXT NOT NULL DEFAULT 'member',
+    joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (alliance_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_alliance_members_user_id ON alliance_members (user_id);
+
+-- ===========================================================================
+-- Add injury column to horses (JSONB, nullable)
+-- ===========================================================================
+ALTER TABLE horses ADD COLUMN IF NOT EXISTS injury JSONB;
 `
 
 // RunMigrations executes the schema DDL against the provided database

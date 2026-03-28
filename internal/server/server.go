@@ -68,6 +68,9 @@ type Server struct {
 	achievementRepo repository.AchievementRepository
 	trainingRepo    repository.TrainingSessionRepository
 	marketTxRepo    repository.MarketTransactionRepository
+	auctionRepo     repository.AuctionRepository
+	replayRepo      repository.RaceReplayRepository
+	allianceRepo    repository.AllianceRepository
 
 	// Auth (nil when running without DB).
 	auth        *authussy.AuthService
@@ -76,6 +79,10 @@ type Server struct {
 	// Head-to-head challenges (in-memory store).
 	challenges  map[string]*models.Challenge
 	challengeMu sync.RWMutex
+
+	// Live auctions (in-memory store).
+	auctions  map[string]*models.Auction
+	auctionMu sync.RWMutex
 
 	// Race betting pools (in-memory store).
 	bettingPools map[string]*models.BettingPool // raceID -> pool
@@ -94,6 +101,10 @@ type Server struct {
 	// rivalries[winnerID][loserID] = win count.
 	rivalries map[string]map[string]int
 	rivalryMu sync.RWMutex
+
+	// Stable alliances / guilds (in-memory store).
+	alliances  map[string]*models.Alliance // allianceID -> alliance
+	allianceMu sync.RWMutex
 }
 
 // NewServer initializes all subsystems, seeds the legendary horses into a
@@ -120,6 +131,7 @@ func NewServer(db *postgres.DB) *Server {
 		mux:          http.NewServeMux(),
 		raceCache:    make(map[string]*raceResult),
 		challenges:   make(map[string]*models.Challenge),
+		auctions:     make(map[string]*models.Auction),
 		bettingPools: make(map[string]*models.BettingPool),
 		currentSeason: &models.Season{
 			ID:        1,
@@ -130,6 +142,7 @@ func NewServer(db *postgres.DB) *Server {
 		pastSeasons: []models.Season{},
 		progress:    make(map[string]*models.PlayerProgress),
 		rivalries:   make(map[string]map[string]int),
+		alliances:   make(map[string]*models.Alliance),
 	}
 
 	// If a DB connection is provided, wire up persistence and auth.
@@ -145,6 +158,9 @@ func NewServer(db *postgres.DB) *Server {
 		s.achievementRepo = postgres.NewAchievementRepo(db)
 		s.trainingRepo = postgres.NewTrainingSessionRepo(db)
 		s.marketTxRepo = postgres.NewMarketTransactionRepo(db)
+		s.auctionRepo = postgres.NewAuctionRepo(db)
+		s.replayRepo = postgres.NewReplayRepo(db)
+		s.allianceRepo = postgres.NewAllianceRepo(db)
 
 		// Create auth service.
 		jwtSecret := os.Getenv("JWT_SECRET")
@@ -174,6 +190,12 @@ func NewServer(db *postgres.DB) *Server {
 	// Start the challenge expiry cleanup goroutine.
 	go s.challengeExpiryLoop()
 
+	// Start the auction expiry loop goroutine.
+	go s.auctionExpiryLoop()
+
+	// Start the replay cleanup goroutine (deletes replays older than 7 days, hourly).
+	go s.replayCleanupLoop()
+
 	// Set up the chat command callback so the hub can forward commands
 	// (e.g. /send, /trade) to the server for processing.
 	s.hub.OnChatCommand = func(senderUserID, senderUsername, command string, args map[string]interface{}) {
@@ -190,6 +212,12 @@ func NewServer(db *postgres.DB) *Server {
 			s.handleChatDecline(senderUserID, senderUsername, args)
 		case "bet":
 			s.handleChatBet(senderUserID, senderUsername, args)
+		case "auction":
+			s.handleChatAuction(senderUserID, senderUsername, args)
+		case "w", "whisper", "msg", "pm":
+			s.handleChatWhisper(senderUserID, senderUsername, args)
+		case "alliance":
+			s.handleChatAlliance(senderUserID, senderUsername, args)
 		}
 	}
 
@@ -267,6 +295,7 @@ func (s *Server) routes() {
 	// --- Racing ---
 	s.mux.HandleFunc("POST /api/races", s.handleCreateRace)
 	s.mux.HandleFunc("GET /api/races/quick", s.handleQuickRace)
+	s.mux.HandleFunc("GET /api/races/recent", s.handleListRecentReplays)
 	s.mux.HandleFunc("GET /api/races/{id}", s.handleGetRaceReplay)
 
 	// --- Race History ---
@@ -298,6 +327,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/challenges/{id}/decline", s.handleDeclineChallenge)
 	s.mux.HandleFunc("GET /api/challenges", s.handleListChallenges)
 
+	// --- Auctions (Live Horse Auctions) ---
+	s.mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
+	s.mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
+	s.mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	s.mux.HandleFunc("POST /api/auctions/{id}/bid", s.handlePlaceAuctionBid)
+	s.mux.HandleFunc("DELETE /api/auctions/{id}", s.handleCancelAuction)
+
 	// --- Betting ---
 	s.mux.HandleFunc("POST /api/betting/pools", s.handleOpenBettingPool)
 	s.mux.HandleFunc("GET /api/betting/pools/{raceID}", s.handleGetBettingPool)
@@ -306,6 +342,20 @@ func (s *Server) routes() {
 
 	// --- Season / Aging ---
 	s.mux.HandleFunc("POST /api/advance-season", s.handleAdvanceSeason)
+
+	// --- Alliances (Stable Guilds) ---
+	s.mux.HandleFunc("GET /api/alliances", s.handleListAlliances)
+	s.mux.HandleFunc("POST /api/alliances", s.handleCreateAlliance)
+	s.mux.HandleFunc("GET /api/alliances/{id}", s.handleGetAlliance)
+	s.mux.HandleFunc("POST /api/alliances/{id}/join", s.handleJoinAlliance)
+	s.mux.HandleFunc("POST /api/alliances/{id}/leave", s.handleLeaveAlliance)
+	s.mux.HandleFunc("POST /api/alliances/{id}/kick", s.handleKickFromAlliance)
+	s.mux.HandleFunc("POST /api/alliances/{id}/donate", s.handleDonateToAlliance)
+	s.mux.HandleFunc("DELETE /api/alliances/{id}", s.handleDisbandAlliance)
+
+	// --- Horse Injury & Age ---
+	s.mux.HandleFunc("POST /api/horses/{id}/heal", s.handleHealHorse)
+	s.mux.HandleFunc("GET /api/horses/{id}/age-info", s.handleGetHorseAgeInfo)
 
 	// --- Leaderboard ---
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleGetLeaderboard)
@@ -486,6 +536,50 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 	if horse.Retired {
 		writeError(w, http.StatusBadRequest, "horse is retired and cannot train")
 		return
+	}
+
+	// Training while injured: 50% chance to worsen the injury.
+	if horse.Injury != nil && horse.Injury.Severity != models.SeverityCareerEnding {
+		if rand.Float64() < 0.50 {
+			// Worsen the injury by one severity level.
+			switch horse.Injury.Severity {
+			case models.SeverityMinor:
+				horse.Injury.Severity = models.SeverityModerate
+				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeverityModerate)
+				horse.Injury.Description = "Training aggravated the injury! " + horse.Injury.Description
+			case models.SeverityModerate:
+				horse.Injury.Severity = models.SeveritySevere
+				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeveritySevere)
+				horse.Injury.Description = "Training made it much worse! " + horse.Injury.Description
+			case models.SeveritySevere:
+				horse.Injury.Severity = models.SeverityCareerEnding
+				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeverityCareerEnding)
+				horse.Injury.Description = "CATASTROPHIC: Training destroyed what was left. Career over."
+				// Force retirement for career-ending injuries.
+				trainussy.RetireHorse(horse, "Career-ending injury sustained during training")
+			}
+
+			s.syncHorseToStable(horse)
+			s.persistHorse(r.Context(), horse)
+
+			// Broadcast the worsened injury.
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type":      "injury_worsened",
+				"horseName": horse.Name,
+				"horseID":   horse.ID,
+				"severity":  string(horse.Injury.Severity),
+				"text":      fmt.Sprintf("🤕 %s trained while injured and made it WORSE! Now: %s (%s)", horse.Name, horse.Injury.Severity, horse.Injury.Type),
+				"ts":        time.Now().Unix(),
+			})
+
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"warning":  "Training while injured worsened the condition!",
+				"horse":    horse,
+				"severity": horse.Injury.Severity,
+			})
+			return
+		}
+		// 50% chance: training proceeds normally despite injury (lucky).
 	}
 
 	var req struct {
@@ -1013,6 +1107,23 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		narrative[i] = nl.Text
 	}
 
+	// 3b. Roll for random events (15% chance per race).
+	randomEvent := rollRandomEvent(horses, race, weather)
+	if randomEvent != nil {
+		// Apply the event effects and add to narrative.
+		eventNarrative := applyRandomEvent(randomEvent, horses, race, &purse)
+		narrative = append(narrative, eventNarrative...)
+
+		// Broadcast the random event via WebSocket.
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":        "random_event",
+			"event":       randomEvent,
+			"raceID":      race.ID,
+			"description": randomEvent.Description,
+			"ts":          time.Now().Unix(),
+		})
+	}
+
 	// 4. Build horse lookup map.
 	horseMap := make(map[string]*models.Horse, len(horses))
 	for _, h := range horses {
@@ -1141,6 +1252,53 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		horse.Fatigue += fatigue
 		if horse.Fatigue > 100 {
 			horse.Fatigue = 100
+		}
+
+		// Decrement injury cooldown if the horse has a non-career-ending injury.
+		if horse.Injury != nil && horse.Injury.Severity != models.SeverityCareerEnding {
+			horse.Injury.RacesLeft--
+			if horse.Injury.RacesLeft <= 0 {
+				// Injury healed naturally!
+				narrative = append(narrative, fmt.Sprintf("💪 %s has fully recovered from %s!", horse.Name, horse.Injury.Type))
+				horse.Injury = nil
+			}
+		}
+
+		// Post-race injury check: base 3% + 5% for Elder/Ancient + 2% per 20 fatigue over 60.
+		if horse.Injury == nil && !horse.Retired {
+			injuryChance := 0.03
+			ageBracket := getAgeBracket(horse.Age)
+			if ageBracket == "Elder" || ageBracket == "Ancient" {
+				injuryChance += 0.05
+			}
+			if horse.Fatigue > 60 {
+				extraFatigue := (horse.Fatigue - 60) / 20.0
+				injuryChance += extraFatigue * 0.02
+			}
+			if rand.Float64() < injuryChance {
+				injury := rollInjury(horse)
+				horse.Injury = injury
+				narrative = append(narrative, fmt.Sprintf("🤕 INJURY: %s suffered a %s (%s)! %s",
+					horse.Name, injury.Type, injury.Severity, injury.Description))
+
+				// Career-ending injury forces retirement.
+				if injury.Severity == models.SeverityCareerEnding {
+					trainussy.RetireHorse(horse, fmt.Sprintf("Career-ending %s", injury.Type))
+					narrative = append(narrative, fmt.Sprintf("💀 %s's career is OVER. Forced retirement due to %s.",
+						horse.Name, injury.Type))
+				}
+
+				// Broadcast injury event.
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type":        "horse_injured",
+					"horseName":   horse.Name,
+					"horseID":     horse.ID,
+					"injuryType":  string(injury.Type),
+					"severity":    string(injury.Severity),
+					"description": injury.Description,
+					"ts":          time.Now().Unix(),
+				})
+			}
 		}
 
 		// Record race result in history.
@@ -1382,6 +1540,7 @@ const maxRaceCacheSize = 200
 
 // cacheRaceResult stores a race result for later replay retrieval.
 // Older entries are evicted when the cache exceeds maxRaceCacheSize.
+// Also persists the result to the database for long-term storage.
 func (s *Server) cacheRaceResult(raceID string, result *raceResult) {
 	s.raceCacheMu.Lock()
 	defer s.raceCacheMu.Unlock()
@@ -1399,22 +1558,41 @@ func (s *Server) cacheRaceResult(raceID string, result *raceResult) {
 			}
 		}
 	}
+
+	// Persist to DB for long-term storage.
+	s.persistRaceReplay(raceID, result)
 }
 
 // handleGetRaceReplay returns a cached race result for replay.
+// Falls back to the database if not found in the in-memory cache.
 func (s *Server) handleGetRaceReplay(w http.ResponseWriter, r *http.Request) {
 	raceID := r.PathValue("id")
 
+	// First, check in-memory cache.
 	s.raceCacheMu.RLock()
 	result, ok := s.raceCache[raceID]
 	s.raceCacheMu.RUnlock()
 
-	if !ok {
-		writeError(w, http.StatusNotFound, "race not found or expired")
+	if ok {
+		writeJSON(w, http.StatusOK, result)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, result)
+	// Fallback: try loading from the database.
+	if s.replayRepo != nil {
+		replay, err := s.replayRepo.GetReplay(r.Context(), raceID)
+		if err == nil && replay != nil && len(replay.Data) > 0 {
+			var dbResult raceResult
+			if err := json.Unmarshal(replay.Data, &dbResult); err == nil {
+				// Re-cache for future hits.
+				s.cacheRaceResult(raceID, &dbResult)
+				writeJSON(w, http.StatusOK, &dbResult)
+				return
+			}
+		}
+	}
+
+	writeError(w, http.StatusNotFound, "race not found or expired")
 }
 
 // broadcastRaceReplay sends tick-by-tick telemetry to WebSocket clients with
@@ -4793,6 +4971,33 @@ func (s *Server) loadFromDB() {
 	}
 
 	log.Printf("server: loadFromDB: completed — %d stables loaded from database", len(dbStables))
+
+	// 6. Load alliances into the in-memory store.
+	if s.allianceRepo != nil {
+		dbAlliances, err := s.allianceRepo.ListAlliances(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load alliances: %v", err)
+		} else {
+			for _, a := range dbAlliances {
+				// Load members for each alliance.
+				members, err := s.allianceRepo.ListMembers(ctx, a.ID)
+				if err != nil {
+					log.Printf("server: loadFromDB: failed to load members for alliance %s: %v", a.ID, err)
+				} else {
+					a.Members = make([]models.AllianceMember, len(members))
+					for i, m := range members {
+						a.Members[i] = *m
+					}
+				}
+				s.allianceMu.Lock()
+				s.alliances[a.ID] = a
+				s.allianceMu.Unlock()
+			}
+			if len(dbAlliances) > 0 {
+				log.Printf("server: loadFromDB: loaded %d alliances", len(dbAlliances))
+			}
+		}
+	}
 }
 
 // ===========================================================================
@@ -5589,4 +5794,1871 @@ func (s *Server) handleRetireHorse(w http.ResponseWriter, r *http.Request) {
 		"retiredChampion": horse.RetiredChampion,
 		"message":         fmt.Sprintf("%s has been retired. %s", horse.Name, reason),
 	})
+}
+
+// ===========================================================================
+// Live Auction System — HTTP Handlers
+// ===========================================================================
+
+// handleListAuctions returns all active auctions (status open or ending).
+// GET /api/auctions
+func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
+	s.auctionMu.RLock()
+	defer s.auctionMu.RUnlock()
+
+	active := make([]*models.Auction, 0)
+	for _, a := range s.auctions {
+		if a.Status == models.AuctionStatusOpen || a.Status == models.AuctionStatusEnding {
+			active = append(active, a)
+		}
+	}
+
+	// Sort by expires_at ascending (soonest ending first).
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].ExpiresAt.Before(active[j].ExpiresAt)
+	})
+
+	writeJSON(w, http.StatusOK, active)
+}
+
+// handleCreateAuction creates a new auction for a horse owned by the auth'd user.
+// POST /api/auctions
+func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required — Dr. Mittens demands credentials")
+		return
+	}
+
+	var req struct {
+		HorseID     string `json:"horseID"`
+		StartingBid int64  `json:"startingBid"`
+		Duration    int    `json:"duration"` // seconds, default 120
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.HorseID == "" {
+		writeError(w, http.StatusBadRequest, "horseID is required")
+		return
+	}
+	if req.StartingBid < 1 {
+		writeError(w, http.StatusBadRequest, "startingBid must be at least 1 cummies")
+		return
+	}
+	if req.Duration <= 0 {
+		req.Duration = 120 // Default 2 minutes
+	}
+	if req.Duration > 600 {
+		req.Duration = 600 // Max 10 minutes
+	}
+
+	// Verify ownership.
+	if !s.userOwnsHorse(claims.UserID, req.HorseID) {
+		writeError(w, http.StatusForbidden, "you can only auction your own horses — no horse theft in B.U.R.P. territory")
+		return
+	}
+
+	// Get horse details.
+	horse, err := s.stables.GetHorse(req.HorseID)
+	if err != nil || horse == nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+	if horse.Retired {
+		writeError(w, http.StatusBadRequest, "retired horses cannot be auctioned — they've earned their rest")
+		return
+	}
+
+	// Check horse is not already in an active auction.
+	s.auctionMu.RLock()
+	for _, a := range s.auctions {
+		if a.HorseID == req.HorseID && (a.Status == models.AuctionStatusOpen || a.Status == models.AuctionStatusEnding) {
+			s.auctionMu.RUnlock()
+			writeError(w, http.StatusConflict, "this horse is already in an active auction")
+			return
+		}
+	}
+	s.auctionMu.RUnlock()
+
+	// Find the seller's stable.
+	sellerStable := s.getStableForUser(claims.UserID)
+	if sellerStable == nil {
+		writeError(w, http.StatusBadRequest, "you need a stable to auction horses")
+		return
+	}
+
+	now := time.Now()
+	auction := &models.Auction{
+		ID:          uuid.New().String(),
+		SellerID:    claims.UserID,
+		SellerName:  claims.Username,
+		StableID:    sellerStable.ID,
+		HorseID:     req.HorseID,
+		HorseName:   horse.Name,
+		StartingBid: req.StartingBid,
+		CurrentBid:  0,
+		BidderID:    "",
+		BidderName:  "",
+		BidCount:    0,
+		BidHistory:  []models.AuctionBid{},
+		Status:      models.AuctionStatusOpen,
+		Duration:    req.Duration,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Duration(req.Duration) * time.Second),
+	}
+
+	// Store in memory.
+	s.auctionMu.Lock()
+	s.auctions[auction.ID] = auction
+	s.auctionMu.Unlock()
+
+	// Persist to DB.
+	s.persistAuction(r.Context(), auction)
+
+	log.Printf("server: auction %s created by %s for horse %s (%s) — starting at %d cummies",
+		auction.ID, claims.Username, horse.Name, horse.ID, req.StartingBid)
+
+	// Broadcast auction creation.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":    "auction_created",
+		"auction": auction,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🔨 NEW AUCTION: %s is selling %s! Starting bid: %d cummies. Ends in %ds. Place your bids!",
+			claims.Username, horse.Name, req.StartingBid, req.Duration),
+		"ts": now.Unix(),
+	})
+
+	writeJSON(w, http.StatusCreated, auction)
+}
+
+// handleGetAuction returns a single auction by ID.
+// GET /api/auctions/{id}
+func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
+	auctionID := r.PathValue("id")
+
+	s.auctionMu.RLock()
+	auction, ok := s.auctions[auctionID]
+	s.auctionMu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "auction not found — perhaps it was a ghost auction from E-008's realm")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, auction)
+}
+
+// handlePlaceAuctionBid places a bid on an active auction.
+// POST /api/auctions/{id}/bid
+func (s *Server) handlePlaceAuctionBid(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	auctionID := r.PathValue("id")
+
+	var req struct {
+		Amount int64 `json:"amount"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Amount <= 0 {
+		writeError(w, http.StatusBadRequest, "bid amount must be positive")
+		return
+	}
+
+	s.auctionMu.Lock()
+	auction, exists := s.auctions[auctionID]
+	if !exists {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusNotFound, "auction not found")
+		return
+	}
+
+	// Validate auction is still open.
+	if auction.Status != models.AuctionStatusOpen && auction.Status != models.AuctionStatusEnding {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, "this auction is no longer accepting bids")
+		return
+	}
+
+	// Can't bid on your own auction.
+	if auction.SellerID == claims.UserID {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you cannot bid on your own auction — Pastor Router McEthernet III frowns upon self-dealing")
+		return
+	}
+
+	// Bid must meet or exceed starting bid.
+	if req.Amount < auction.StartingBid {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("bid must be at least %d cummies (starting bid)", auction.StartingBid))
+		return
+	}
+
+	// Bid must be higher than current bid.
+	if req.Amount <= auction.CurrentBid {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("bid must exceed current bid of %d cummies", auction.CurrentBid))
+		return
+	}
+
+	// Check bidder has enough cummies.
+	bidderStable := s.getStableForUser(claims.UserID)
+	if bidderStable == nil {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you need a stable to place bids")
+		return
+	}
+	if bidderStable.Cummies < req.Amount {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies — you have %d but need %d", bidderStable.Cummies, req.Amount))
+		return
+	}
+
+	// Escrow: deduct bid amount from bidder.
+	bidderStable.Cummies -= req.Amount
+	s.persistStable(r.Context(), bidderStable)
+
+	// Refund previous bidder (if any).
+	previousBidderID := auction.BidderID
+	previousBidAmount := auction.CurrentBid
+	if previousBidderID != "" && previousBidAmount > 0 {
+		prevStable := s.getStableForUser(previousBidderID)
+		if prevStable != nil {
+			prevStable.Cummies += previousBidAmount
+			s.persistStable(r.Context(), prevStable)
+			log.Printf("server: auction %s — refunded %d cummies to %s",
+				auctionID, previousBidAmount, auction.BidderName)
+		}
+	}
+
+	// Record the bid.
+	now := time.Now()
+	bid := models.AuctionBid{
+		BidderID:   claims.UserID,
+		BidderName: claims.Username,
+		Amount:     req.Amount,
+		Timestamp:  now,
+	}
+	auction.BidHistory = append(auction.BidHistory, bid)
+	auction.CurrentBid = req.Amount
+	auction.BidderID = claims.UserID
+	auction.BidderName = claims.Username
+	auction.BidCount++
+
+	// Anti-snipe: if less than 30s remaining, extend by 30s.
+	timeLeft := time.Until(auction.ExpiresAt)
+	if timeLeft < 30*time.Second {
+		auction.ExpiresAt = now.Add(30 * time.Second)
+		auction.Status = models.AuctionStatusEnding
+		log.Printf("server: auction %s — anti-snipe extension! New expiry: %s",
+			auctionID, auction.ExpiresAt.Format(time.RFC3339))
+	}
+
+	s.auctionMu.Unlock()
+
+	// Persist updated auction.
+	s.persistAuction(r.Context(), auction)
+
+	log.Printf("server: auction %s — bid of %d cummies by %s (bid #%d)",
+		auctionID, req.Amount, claims.Username, auction.BidCount)
+
+	// Broadcast bid event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":    "auction_bid",
+		"auction": auction,
+		"bid":     bid,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("💰 %s bid %d cummies on %s! (bid #%d)",
+			claims.Username, req.Amount, auction.HorseName, auction.BidCount),
+		"ts": now.Unix(),
+	})
+
+	// Notify previous bidder they were outbid.
+	if previousBidderID != "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":      "auction_outbid",
+			"auctionID": auctionID,
+			"horseName": auction.HorseName,
+			"newBid":    req.Amount,
+			"newBidder": claims.Username,
+			"oldBidder": auction.BidHistory[len(auction.BidHistory)-2].BidderName,
+			"refund":    previousBidAmount,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, auction)
+}
+
+// handleCancelAuction cancels an auction (only if no bids have been placed).
+// DELETE /api/auctions/{id}
+func (s *Server) handleCancelAuction(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	auctionID := r.PathValue("id")
+
+	s.auctionMu.Lock()
+	auction, exists := s.auctions[auctionID]
+	if !exists {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusNotFound, "auction not found")
+		return
+	}
+
+	// Only the seller can cancel.
+	if auction.SellerID != claims.UserID {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusForbidden, "only the seller can cancel this auction")
+		return
+	}
+
+	// Can only cancel if no bids.
+	if auction.BidCount > 0 {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, "cannot cancel an auction with active bids — the people have spoken")
+		return
+	}
+
+	// Can only cancel open auctions.
+	if auction.Status != models.AuctionStatusOpen {
+		s.auctionMu.Unlock()
+		writeError(w, http.StatusBadRequest, "can only cancel open auctions")
+		return
+	}
+
+	auction.Status = models.AuctionStatusCancelled
+	auction.CompletedAt = time.Now()
+	s.auctionMu.Unlock()
+
+	// Persist.
+	s.persistAuction(r.Context(), auction)
+
+	log.Printf("server: auction %s cancelled by %s", auctionID, claims.Username)
+
+	// Broadcast cancellation.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":    "auction_cancelled",
+		"auction": auction,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("❌ %s cancelled the auction for %s.", claims.Username, auction.HorseName),
+		"ts":   time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": "auction cancelled",
+		"auction": auction,
+	})
+}
+
+// ===========================================================================
+// Auction Expiry Loop
+// ===========================================================================
+
+// auctionExpiryLoop runs every 5 seconds to check for expired auctions,
+// transfer horses to winners, and apply the Geoffrussy Tax.
+func (s *Server) auctionExpiryLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+		s.auctionMu.Lock()
+
+		for _, auction := range s.auctions {
+			// Only process open/ending auctions that have expired.
+			if (auction.Status != models.AuctionStatusOpen && auction.Status != models.AuctionStatusEnding) ||
+				now.Before(auction.ExpiresAt) {
+				continue
+			}
+
+			ctx := context.Background()
+
+			if auction.BidCount > 0 && auction.BidderID != "" {
+				// SOLD — transfer horse to winner.
+				auction.Status = models.AuctionStatusSold
+				auction.CompletedAt = now
+
+				// Calculate 5% Geoffrussy Tax (burned from economy).
+				tax := auction.CurrentBid * 5 / 100
+				sellerPayout := auction.CurrentBid - tax
+				auction.GeoffrussyTax = tax
+
+				// Pay the seller (minus tax). Bid was already escrowed.
+				sellerStable := s.getStableForUser(auction.SellerID)
+				if sellerStable != nil {
+					sellerStable.Cummies += sellerPayout
+					s.persistStable(ctx, sellerStable)
+				}
+
+				// Transfer the horse from seller's stable to buyer's stable.
+				buyerStable := s.getStableForUser(auction.BidderID)
+				if buyerStable != nil && sellerStable != nil {
+					if err := s.stables.MoveHorse(auction.HorseID, sellerStable.ID, buyerStable.ID); err != nil {
+						log.Printf("server: auction %s — failed to move horse: %v", auction.ID, err)
+					} else {
+						// Update horse owner ID.
+						if horse, err := s.stables.GetHorse(auction.HorseID); err == nil && horse != nil {
+							horse.OwnerID = buyerStable.OwnerID
+							s.persistHorse(ctx, horse)
+						}
+						log.Printf("server: auction %s SOLD — %s goes to %s for %d cummies (tax: %d)",
+							auction.ID, auction.HorseName, auction.BidderName, auction.CurrentBid, tax)
+					}
+				}
+
+				s.persistAuction(ctx, auction)
+
+				// Broadcast sold event.
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type":    "auction_sold",
+					"auction": auction,
+				})
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type": "chat_system",
+					"text": fmt.Sprintf("🏇 SOLD! %s won the auction for %s — %d cummies! (Geoffrussy Tax: %d cummies burned 🔥)",
+						auction.BidderName, auction.HorseName, auction.CurrentBid, tax),
+					"ts": now.Unix(),
+				})
+			} else {
+				// EXPIRED — no bids, horse stays with seller.
+				auction.Status = models.AuctionStatusExpired
+				auction.CompletedAt = now
+
+				s.persistAuction(ctx, auction)
+
+				log.Printf("server: auction %s expired — %s returned to %s (no bids)",
+					auction.ID, auction.HorseName, auction.SellerName)
+
+				// Broadcast expiry.
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type":    "auction_expired",
+					"auction": auction,
+				})
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type": "chat_system",
+					"text": fmt.Sprintf("⏰ Auction for %s expired with no bids. Better luck next time, %s.",
+						auction.HorseName, auction.SellerName),
+					"ts": now.Unix(),
+				})
+			}
+		}
+
+		s.auctionMu.Unlock()
+	}
+}
+
+// ===========================================================================
+// Whisper Chat Command
+// ===========================================================================
+
+// handleChatWhisper processes the /w, /whisper, /msg, /pm chat commands.
+// Usage: /w @username message text here
+// The "target" and "text" fields are extracted from the args map, which is
+// populated by the frontend's chat command parser.
+func (s *Server) handleChatWhisper(senderUserID, senderUsername string, args map[string]interface{}) {
+	target, _ := args["target"].(string)
+	text, _ := args["text"].(string)
+
+	// Strip leading @ from target if present.
+	target = strings.TrimPrefix(target, "@")
+
+	if target == "" || text == "" {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type": "whisper_error",
+			"text": "Usage: /w @username message",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Don't allow whispering yourself.
+	if strings.EqualFold(senderUsername, target) {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type": "whisper_error",
+			"text": "You can't whisper to yourself, weirdo.",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Find the target client by username.
+	targetClient := s.hub.GetClientByUsername(target)
+	if targetClient == nil {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type": "whisper_error",
+			"text": fmt.Sprintf("User '%s' is not online.", target),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	now := time.Now()
+
+	// Send whisper to target user (all their connections).
+	s.hub.SendToUser(targetClient.UserID, map[string]interface{}{
+		"type":       "whisper",
+		"from":       senderUsername,
+		"fromUserID": senderUserID,
+		"text":       text,
+		"ts":         now.Unix(),
+	})
+
+	// Echo back to sender as confirmation.
+	s.hub.SendToUser(senderUserID, map[string]interface{}{
+		"type":     "whisper_sent",
+		"to":       targetClient.Username,
+		"toUserID": targetClient.UserID,
+		"text":     text,
+		"ts":       now.Unix(),
+	})
+}
+
+// ===========================================================================
+// Auction Chat Command
+// ===========================================================================
+
+// handleChatAuction processes the /auction chat command.
+// Usage: /auction <horseID> <startingBid> [duration]
+func (s *Server) handleChatAuction(senderUserID, senderUsername string, args map[string]interface{}) {
+	horseID, _ := args["horseID"].(string)
+	if horseID == "" {
+		horseID, _ = args["horse"].(string)
+	}
+	startingBidF, _ := args["startingBid"].(float64)
+	startingBid := int64(startingBidF)
+	if startingBid == 0 {
+		amtF, _ := args["amount"].(float64)
+		startingBid = int64(amtF)
+	}
+	durationF, _ := args["duration"].(float64)
+	duration := int(durationF)
+
+	if horseID == "" || startingBid <= 0 {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚠️ %s — Usage: /auction <horseID> <startingBid> [duration]", senderUsername),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	if duration <= 0 {
+		duration = 120
+	}
+	if duration > 600 {
+		duration = 600
+	}
+
+	// Verify ownership.
+	if !s.userOwnsHorse(senderUserID, horseID) {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚠️ %s — You don't own that horse!", senderUsername),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || horse == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚠️ %s — Horse not found.", senderUsername),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	if horse.Retired {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚠️ %s — %s is retired and cannot be auctioned.", senderUsername, horse.Name),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Check not already in auction.
+	s.auctionMu.RLock()
+	for _, a := range s.auctions {
+		if a.HorseID == horseID && (a.Status == models.AuctionStatusOpen || a.Status == models.AuctionStatusEnding) {
+			s.auctionMu.RUnlock()
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — %s is already in an active auction!", senderUsername, horse.Name),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+	}
+	s.auctionMu.RUnlock()
+
+	sellerStable := s.getStableForUser(senderUserID)
+	if sellerStable == nil {
+		return
+	}
+
+	now := time.Now()
+	auction := &models.Auction{
+		ID:          uuid.New().String(),
+		SellerID:    senderUserID,
+		SellerName:  senderUsername,
+		StableID:    sellerStable.ID,
+		HorseID:     horseID,
+		HorseName:   horse.Name,
+		StartingBid: startingBid,
+		CurrentBid:  0,
+		BidHistory:  []models.AuctionBid{},
+		Status:      models.AuctionStatusOpen,
+		Duration:    duration,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(time.Duration(duration) * time.Second),
+	}
+
+	s.auctionMu.Lock()
+	s.auctions[auction.ID] = auction
+	s.auctionMu.Unlock()
+
+	s.persistAuction(context.Background(), auction)
+
+	log.Printf("server: auction %s created via chat by %s for %s — starting at %d cummies",
+		auction.ID, senderUsername, horse.Name, startingBid)
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":    "auction_created",
+		"auction": auction,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🔨 NEW AUCTION: %s is selling %s! Starting bid: %d cummies. Ends in %ds. Place your bids!",
+			senderUsername, horse.Name, startingBid, duration),
+		"ts": now.Unix(),
+	})
+}
+
+// ===========================================================================
+// Auction Persistence Helper
+// ===========================================================================
+
+// persistAuction creates or updates an auction in the database. No-op when DB is nil.
+func (s *Server) persistAuction(ctx context.Context, auction *models.Auction) {
+	if s.auctionRepo == nil {
+		return
+	}
+	if err := s.auctionRepo.CreateAuction(ctx, auction); err != nil {
+		if err2 := s.auctionRepo.UpdateAuction(ctx, auction); err2 != nil {
+			log.Printf("server: persistAuction %s: create=%v update=%v", auction.ID, err, err2)
+		}
+	}
+}
+
+// ===========================================================================
+// Race Replay Persistence
+// ===========================================================================
+
+// persistRaceReplay saves a full race result to the database for long-term
+// replay storage. No-op when the replay repo is nil.
+func (s *Server) persistRaceReplay(raceID string, result *raceResult) {
+	if s.replayRepo == nil {
+		return
+	}
+
+	// Marshal the full result to JSON for the data column.
+	data, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("server: persistRaceReplay marshal error for %s: %v", raceID, err)
+		return
+	}
+
+	// Extract winner info from the race entries.
+	winnerID := ""
+	winnerName := ""
+	if result.Race != nil {
+		for _, entry := range result.Race.Entries {
+			if entry.FinishPlace == 1 {
+				winnerID = entry.HorseID
+				winnerName = entry.HorseName
+				break
+			}
+		}
+	}
+
+	replay := &models.RaceReplay{
+		RaceID:     raceID,
+		TrackType:  string(result.Race.TrackType),
+		Distance:   result.Race.Distance,
+		Purse:      result.Race.Purse,
+		Entries:    len(result.Race.Entries),
+		Weather:    string(result.Weather),
+		WinnerID:   winnerID,
+		WinnerName: winnerName,
+		Data:       data,
+		CreatedAt:  time.Now(),
+	}
+
+	ctx := context.Background()
+	if err := s.replayRepo.SaveReplay(ctx, replay); err != nil {
+		log.Printf("server: persistRaceReplay %s: %v", raceID, err)
+	}
+}
+
+// handleListRecentReplays returns recent race replays for the race history UI.
+func (s *Server) handleListRecentReplays(w http.ResponseWriter, r *http.Request) {
+	limit := 20
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 100 {
+			limit = n
+		}
+	}
+
+	// If DB is available, fetch from there.
+	if s.replayRepo != nil {
+		replays, err := s.replayRepo.ListRecentReplays(r.Context(), limit)
+		if err != nil {
+			log.Printf("server: handleListRecentReplays DB error: %v", err)
+			// Fall through to in-memory fallback.
+		} else {
+			writeJSON(w, http.StatusOK, replays)
+			return
+		}
+	}
+
+	// Fallback: build list from in-memory cache.
+	s.raceCacheMu.RLock()
+	results := make([]map[string]interface{}, 0, len(s.raceCache))
+	for raceID, result := range s.raceCache {
+		winnerID := ""
+		winnerName := ""
+		if result.Race != nil {
+			for _, entry := range result.Race.Entries {
+				if entry.FinishPlace == 1 {
+					winnerID = entry.HorseID
+					winnerName = entry.HorseName
+					break
+				}
+			}
+		}
+		results = append(results, map[string]interface{}{
+			"raceID":     raceID,
+			"trackType":  string(result.Race.TrackType),
+			"distance":   result.Race.Distance,
+			"purse":      result.Race.Purse,
+			"entries":    len(result.Race.Entries),
+			"weather":    string(result.Weather),
+			"winnerID":   winnerID,
+			"winnerName": winnerName,
+			"createdAt":  result.Race.CreatedAt,
+		})
+	}
+	s.raceCacheMu.RUnlock()
+
+	// Sort by createdAt descending and limit.
+	sort.Slice(results, func(i, j int) bool {
+		ti, _ := results[i]["createdAt"].(time.Time)
+		tj, _ := results[j]["createdAt"].(time.Time)
+		return ti.After(tj)
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
+
+// replayCleanupLoop periodically deletes race replays older than 7 days.
+// Runs every hour. No-op when the replay repo is nil.
+func (s *Server) replayCleanupLoop() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if s.replayRepo == nil {
+			continue
+		}
+		cutoff := time.Now().Add(-7 * 24 * time.Hour)
+		count, err := s.replayRepo.DeleteOldReplays(context.Background(), cutoff)
+		if err != nil {
+			log.Printf("server: replayCleanupLoop error: %v", err)
+		} else if count > 0 {
+			log.Printf("server: replayCleanupLoop deleted %d old replays", count)
+		}
+	}
+}
+
+// ===========================================================================
+// Stable Alliances / Guild System — HTTP Handlers
+// ===========================================================================
+
+// persistAlliance creates or updates an alliance in the database. No-op when DB is nil.
+func (s *Server) persistAlliance(ctx context.Context, alliance *models.Alliance) {
+	if s.allianceRepo == nil {
+		return
+	}
+	if err := s.allianceRepo.CreateAlliance(ctx, alliance); err != nil {
+		if err2 := s.allianceRepo.UpdateAlliance(ctx, alliance); err2 != nil {
+			log.Printf("server: persistAlliance %s: create=%v update=%v", alliance.ID, err, err2)
+		}
+	}
+}
+
+// getUserAllianceID returns the alliance ID a user belongs to, or empty string.
+func (s *Server) getUserAllianceID(userID string) string {
+	s.allianceMu.RLock()
+	defer s.allianceMu.RUnlock()
+	for _, a := range s.alliances {
+		for _, m := range a.Members {
+			if m.UserID == userID {
+				return a.ID
+			}
+		}
+	}
+	return ""
+}
+
+// handleListAlliances returns all alliances.
+func (s *Server) handleListAlliances(w http.ResponseWriter, r *http.Request) {
+	s.allianceMu.RLock()
+	result := make([]*models.Alliance, 0, len(s.alliances))
+	for _, a := range s.alliances {
+		result = append(result, a)
+	}
+	s.allianceMu.RUnlock()
+
+	// Sort by creation time (newest first).
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleCreateAlliance creates a new alliance. Costs 500 cummies.
+func (s *Server) handleCreateAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+		Tag  string `json:"tag"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.Name == "" || req.Tag == "" {
+		writeError(w, http.StatusBadRequest, "name and tag are required")
+		return
+	}
+	if len(req.Tag) < 2 || len(req.Tag) > 5 {
+		writeError(w, http.StatusBadRequest, "tag must be 2-5 characters")
+		return
+	}
+
+	// Check if user is already in an alliance.
+	if alID := s.getUserAllianceID(claims.UserID); alID != "" {
+		writeError(w, http.StatusBadRequest, "you are already in an alliance — leave first")
+		return
+	}
+
+	// Deduct 500 cummies.
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you need a stable first")
+		return
+	}
+	if stable.Cummies < 500 {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("creating an alliance costs 500 cummies (you have %d)", stable.Cummies))
+		return
+	}
+	stable.Cummies -= 500
+	s.persistStable(r.Context(), stable)
+
+	// Pick a random lore motto.
+	motto := models.AllianceLoreMottos[rand.IntN(len(models.AllianceLoreMottos))]
+
+	alliance := &models.Alliance{
+		ID:        uuid.New().String(),
+		Name:      req.Name,
+		Tag:       strings.ToUpper(req.Tag),
+		LeaderID:  claims.UserID,
+		Motto:     motto,
+		Treasury:  0,
+		CreatedAt: time.Now(),
+		Members: []models.AllianceMember{
+			{
+				AllianceID: "", // filled below
+				UserID:     claims.UserID,
+				Username:   claims.Username,
+				StableID:   stable.ID,
+				Role:       models.AllianceRoleLeader,
+				JoinedAt:   time.Now(),
+			},
+		},
+	}
+	alliance.Members[0].AllianceID = alliance.ID
+
+	// Store in memory.
+	s.allianceMu.Lock()
+	s.alliances[alliance.ID] = alliance
+	s.allianceMu.Unlock()
+
+	// Persist to DB.
+	ctx := r.Context()
+	s.persistAlliance(ctx, alliance)
+	if s.allianceRepo != nil {
+		_ = s.allianceRepo.AddMember(ctx, &alliance.Members[0])
+	}
+
+	// Broadcast creation.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ NEW ALLIANCE: [%s] %s founded by %s! \"%s\"",
+			alliance.Tag, alliance.Name, claims.Username, motto),
+		"ts": time.Now().Unix(),
+	})
+
+	log.Printf("server: alliance %q [%s] created by %s", alliance.Name, alliance.Tag, claims.Username)
+	writeJSON(w, http.StatusCreated, alliance)
+}
+
+// handleGetAlliance returns a single alliance with its members.
+func (s *Server) handleGetAlliance(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.allianceMu.RLock()
+	alliance, ok := s.alliances[id]
+	s.allianceMu.RUnlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, alliance)
+}
+
+// handleJoinAlliance adds the requesting user to an alliance.
+func (s *Server) handleJoinAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	// Check if already in an alliance.
+	if alID := s.getUserAllianceID(claims.UserID); alID != "" {
+		writeError(w, http.StatusBadRequest, "you are already in an alliance — leave first")
+		return
+	}
+
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you need a stable first")
+		return
+	}
+
+	s.allianceMu.Lock()
+	alliance, exists := s.alliances[id]
+	if !exists {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+
+	member := models.AllianceMember{
+		AllianceID: alliance.ID,
+		UserID:     claims.UserID,
+		Username:   claims.Username,
+		StableID:   stable.ID,
+		Role:       models.AllianceRoleMember,
+		JoinedAt:   time.Now(),
+	}
+	alliance.Members = append(alliance.Members, member)
+	s.allianceMu.Unlock()
+
+	// Persist.
+	if s.allianceRepo != nil {
+		_ = s.allianceRepo.AddMember(r.Context(), &member)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ %s joined [%s] %s!", claims.Username, alliance.Tag, alliance.Name),
+		"ts":   time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, alliance)
+}
+
+// handleLeaveAlliance removes the requesting user from their alliance.
+func (s *Server) handleLeaveAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	s.allianceMu.Lock()
+	alliance, exists := s.alliances[id]
+	if !exists {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+
+	// Leader can't leave — must disband instead.
+	if alliance.LeaderID == claims.UserID {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusBadRequest, "leaders can't leave — disband the alliance instead (DELETE /api/alliances/{id})")
+		return
+	}
+
+	// Remove member.
+	found := false
+	newMembers := make([]models.AllianceMember, 0, len(alliance.Members))
+	for _, m := range alliance.Members {
+		if m.UserID == claims.UserID {
+			found = true
+			continue
+		}
+		newMembers = append(newMembers, m)
+	}
+	if !found {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you are not in this alliance")
+		return
+	}
+	alliance.Members = newMembers
+	s.allianceMu.Unlock()
+
+	// Persist.
+	if s.allianceRepo != nil {
+		_ = s.allianceRepo.RemoveMember(r.Context(), id, claims.UserID)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ %s left [%s] %s.", claims.Username, alliance.Tag, alliance.Name),
+		"ts":   time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "you have left the alliance"})
+}
+
+// handleKickFromAlliance removes a member (leader/officer only).
+func (s *Server) handleKickFromAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	var req struct {
+		UserID string `json:"userID"`
+	}
+	if err := readJSON(r, &req); err != nil || req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "userID is required")
+		return
+	}
+
+	s.allianceMu.Lock()
+	alliance, exists := s.alliances[id]
+	if !exists {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+
+	// Only leader or officer can kick.
+	callerRole := models.AllianceRole("")
+	for _, m := range alliance.Members {
+		if m.UserID == claims.UserID {
+			callerRole = m.Role
+			break
+		}
+	}
+	if callerRole != models.AllianceRoleLeader && callerRole != models.AllianceRoleOfficer {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusForbidden, "only leaders and officers can kick members")
+		return
+	}
+
+	// Can't kick yourself or the leader.
+	if req.UserID == claims.UserID {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you can't kick yourself")
+		return
+	}
+	if req.UserID == alliance.LeaderID {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you can't kick the leader")
+		return
+	}
+
+	// Remove the member.
+	kickedName := ""
+	newMembers := make([]models.AllianceMember, 0, len(alliance.Members))
+	for _, m := range alliance.Members {
+		if m.UserID == req.UserID {
+			kickedName = m.Username
+			continue
+		}
+		newMembers = append(newMembers, m)
+	}
+	if kickedName == "" {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "that user is not in this alliance")
+		return
+	}
+	alliance.Members = newMembers
+	s.allianceMu.Unlock()
+
+	// Persist.
+	if s.allianceRepo != nil {
+		_ = s.allianceRepo.RemoveMember(r.Context(), id, req.UserID)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ %s was kicked from [%s] %s by %s!", kickedName, alliance.Tag, alliance.Name, claims.Username),
+		"ts":   time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("%s has been kicked", kickedName)})
+}
+
+// handleDonateToAlliance transfers cummies from the player's stable to the alliance treasury.
+func (s *Server) handleDonateToAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	var req struct {
+		Amount int64 `json:"amount"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Amount <= 0 {
+		writeError(w, http.StatusBadRequest, "positive amount is required")
+		return
+	}
+
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you need a stable first")
+		return
+	}
+	if stable.Cummies < req.Amount {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies (have %d, need %d)", stable.Cummies, req.Amount))
+		return
+	}
+
+	s.allianceMu.Lock()
+	alliance, exists := s.alliances[id]
+	if !exists {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+
+	// Verify membership.
+	isMember := false
+	for _, m := range alliance.Members {
+		if m.UserID == claims.UserID {
+			isMember = true
+			break
+		}
+	}
+	if !isMember {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusForbidden, "you are not a member of this alliance")
+		return
+	}
+
+	// Transfer cummies.
+	stable.Cummies -= req.Amount
+	alliance.Treasury += req.Amount
+	s.allianceMu.Unlock()
+
+	// Persist.
+	s.persistStable(r.Context(), stable)
+	s.persistAlliance(r.Context(), alliance)
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("💰 %s donated ₵%d to [%s] %s! Treasury: ₵%d",
+			claims.Username, req.Amount, alliance.Tag, alliance.Name, alliance.Treasury),
+		"ts": time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":  fmt.Sprintf("donated ₵%d to %s", req.Amount, alliance.Name),
+		"treasury": alliance.Treasury,
+	})
+}
+
+// handleDisbandAlliance deletes an alliance, returning treasury evenly to members.
+func (s *Server) handleDisbandAlliance(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	id := r.PathValue("id")
+
+	s.allianceMu.Lock()
+	alliance, exists := s.alliances[id]
+	if !exists {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusNotFound, "alliance not found")
+		return
+	}
+
+	// Only the leader can disband.
+	if alliance.LeaderID != claims.UserID {
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusForbidden, "only the leader can disband the alliance")
+		return
+	}
+
+	// Distribute treasury evenly to all members.
+	if len(alliance.Members) > 0 && alliance.Treasury > 0 {
+		share := alliance.Treasury / int64(len(alliance.Members))
+		for _, m := range alliance.Members {
+			memberStable := s.getStableForUser(m.UserID)
+			if memberStable != nil {
+				memberStable.Cummies += share
+				s.persistStable(r.Context(), memberStable)
+			}
+		}
+	}
+
+	allianceName := alliance.Name
+	allianceTag := alliance.Tag
+	delete(s.alliances, id)
+	s.allianceMu.Unlock()
+
+	// Persist deletion.
+	if s.allianceRepo != nil {
+		_ = s.allianceRepo.DeleteAlliance(r.Context(), id)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("💀 [%s] %s has been DISBANDED by %s! The treasury was split among members.",
+			allianceTag, allianceName, claims.Username),
+		"ts": time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": fmt.Sprintf("alliance %s has been disbanded", allianceName)})
+}
+
+// ===========================================================================
+// Alliance Chat Commands
+// ===========================================================================
+
+// handleChatAlliance processes /alliance chat commands.
+// Sub-commands: create <name> <tag>, join <id>, leave, donate <amount>
+func (s *Server) handleChatAlliance(senderUserID, senderUsername string, args map[string]interface{}) {
+	subCmd, _ := args["sub"].(string)
+	if subCmd == "" {
+		subCmd, _ = args["action"].(string)
+	}
+
+	switch strings.ToLower(subCmd) {
+	case "create":
+		name, _ := args["name"].(string)
+		tag, _ := args["tag"].(string)
+		if name == "" || tag == "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Usage: /alliance create <name> <tag>", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		// Check if already in alliance.
+		if alID := s.getUserAllianceID(senderUserID); alID != "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — You're already in an alliance! Leave first.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		stable := s.getStableForUser(senderUserID)
+		if stable == nil || stable.Cummies < 500 {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Creating an alliance costs 500 cummies.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		stable.Cummies -= 500
+		s.persistStable(context.Background(), stable)
+
+		motto := models.AllianceLoreMottos[rand.IntN(len(models.AllianceLoreMottos))]
+		alliance := &models.Alliance{
+			ID:        uuid.New().String(),
+			Name:      name,
+			Tag:       strings.ToUpper(tag),
+			LeaderID:  senderUserID,
+			Motto:     motto,
+			Treasury:  0,
+			CreatedAt: time.Now(),
+			Members: []models.AllianceMember{
+				{
+					AllianceID: "", // filled below
+					UserID:     senderUserID,
+					Username:   senderUsername,
+					StableID:   stable.ID,
+					Role:       models.AllianceRoleLeader,
+					JoinedAt:   time.Now(),
+				},
+			},
+		}
+		alliance.Members[0].AllianceID = alliance.ID
+
+		s.allianceMu.Lock()
+		s.alliances[alliance.ID] = alliance
+		s.allianceMu.Unlock()
+
+		ctx := context.Background()
+		s.persistAlliance(ctx, alliance)
+		if s.allianceRepo != nil {
+			_ = s.allianceRepo.AddMember(ctx, &alliance.Members[0])
+		}
+
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚔️ NEW ALLIANCE: [%s] %s founded by %s! \"%s\"",
+				alliance.Tag, alliance.Name, senderUsername, motto),
+			"ts": time.Now().Unix(),
+		})
+
+	case "join":
+		allianceID, _ := args["id"].(string)
+		if allianceID == "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Usage: /alliance join <allianceID>", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		if alID := s.getUserAllianceID(senderUserID); alID != "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — You're already in an alliance! Leave first.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		stable := s.getStableForUser(senderUserID)
+		if stable == nil {
+			return
+		}
+
+		s.allianceMu.Lock()
+		alliance, exists := s.alliances[allianceID]
+		if !exists {
+			s.allianceMu.Unlock()
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Alliance not found.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		member := models.AllianceMember{
+			AllianceID: alliance.ID,
+			UserID:     senderUserID,
+			Username:   senderUsername,
+			StableID:   stable.ID,
+			Role:       models.AllianceRoleMember,
+			JoinedAt:   time.Now(),
+		}
+		alliance.Members = append(alliance.Members, member)
+		s.allianceMu.Unlock()
+
+		if s.allianceRepo != nil {
+			_ = s.allianceRepo.AddMember(context.Background(), &member)
+		}
+
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚔️ %s joined [%s] %s!", senderUsername, alliance.Tag, alliance.Name),
+			"ts":   time.Now().Unix(),
+		})
+
+	case "leave":
+		alID := s.getUserAllianceID(senderUserID)
+		if alID == "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — You're not in any alliance.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		s.allianceMu.Lock()
+		alliance := s.alliances[alID]
+		if alliance == nil {
+			s.allianceMu.Unlock()
+			return
+		}
+		if alliance.LeaderID == senderUserID {
+			s.allianceMu.Unlock()
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Leaders can't leave. Disband the alliance instead.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		newMembers := make([]models.AllianceMember, 0, len(alliance.Members))
+		for _, m := range alliance.Members {
+			if m.UserID != senderUserID {
+				newMembers = append(newMembers, m)
+			}
+		}
+		alliance.Members = newMembers
+		s.allianceMu.Unlock()
+
+		if s.allianceRepo != nil {
+			_ = s.allianceRepo.RemoveMember(context.Background(), alID, senderUserID)
+		}
+
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚔️ %s left [%s] %s.", senderUsername, alliance.Tag, alliance.Name),
+			"ts":   time.Now().Unix(),
+		})
+
+	case "donate":
+		amountF, _ := args["amount"].(float64)
+		amount := int64(amountF)
+		if amount <= 0 {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Usage: /alliance donate <amount>", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		alID := s.getUserAllianceID(senderUserID)
+		if alID == "" {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — You're not in any alliance.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		stable := s.getStableForUser(senderUserID)
+		if stable == nil || stable.Cummies < amount {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Insufficient cummies.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+
+		s.allianceMu.Lock()
+		alliance := s.alliances[alID]
+		if alliance == nil {
+			s.allianceMu.Unlock()
+			return
+		}
+		stable.Cummies -= amount
+		alliance.Treasury += amount
+		s.allianceMu.Unlock()
+
+		s.persistStable(context.Background(), stable)
+		s.persistAlliance(context.Background(), alliance)
+
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("💰 %s donated ₵%d to [%s] %s! Treasury: ₵%d",
+				senderUsername, amount, alliance.Tag, alliance.Name, alliance.Treasury),
+			"ts": time.Now().Unix(),
+		})
+
+	default:
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("⚠️ %s — Usage: /alliance <create|join|leave|donate> [args]", senderUsername),
+			"ts":   time.Now().Unix(),
+		})
+	}
+}
+
+// ===========================================================================
+// Horse Aging, Injury, and Retirement — Handlers & Helpers
+// ===========================================================================
+
+// getAgeBracket returns the age bracket name for a given age.
+// Foal (0-2), Prime (3-5), Veteran (6-8), Elder (9-11), Ancient (12+)
+func getAgeBracket(age int) string {
+	switch {
+	case age <= 2:
+		return "Foal"
+	case age <= 5:
+		return "Prime"
+	case age <= 8:
+		return "Veteran"
+	case age <= 11:
+		return "Elder"
+	default:
+		return "Ancient"
+	}
+}
+
+// injuryLoreDescriptions maps injury types to their lore descriptions.
+var injuryLoreDescriptions = map[models.InjuryType]string{
+	models.InjuryMuscleStrain:     "A pulled muscle from trying to look cool at the finish line.",
+	models.InjuryTendonTear:       "Something went *snap* and it wasn't the crowd's enthusiasm.",
+	models.InjuryHoofCrack:        "The hoof has a crack so dramatic it needs its own backstory.",
+	models.InjuryYogurtPoisoning:  "Someone left expired yogurt in the feed room. Again.",
+	models.InjuryExistentialDread: "The horse has realized it's in a simulation and refuses to run.",
+	models.InjuryHauntedByE008:    "E-008's spectral presence follows this horse, whispering forbidden race strategies.",
+}
+
+// rollInjury generates a random injury for a horse after a race.
+func rollInjury(horse *models.Horse) *models.Injury {
+	// Pick random injury type.
+	types := []models.InjuryType{
+		models.InjuryMuscleStrain,
+		models.InjuryTendonTear,
+		models.InjuryHoofCrack,
+		models.InjuryYogurtPoisoning,
+		models.InjuryExistentialDread,
+		models.InjuryHauntedByE008,
+	}
+	injType := types[rand.IntN(len(types))]
+
+	// Pick severity: weighted — minor 50%, moderate 30%, severe 15%, career-ending 5%.
+	roll := rand.Float64()
+	var severity models.InjurySeverity
+	switch {
+	case roll < 0.50:
+		severity = models.SeverityMinor
+	case roll < 0.80:
+		severity = models.SeverityModerate
+	case roll < 0.95:
+		severity = models.SeveritySevere
+	default:
+		severity = models.SeverityCareerEnding
+	}
+
+	desc := injuryLoreDescriptions[injType]
+
+	return &models.Injury{
+		Type:        injType,
+		Severity:    severity,
+		Description: desc,
+		RacesLeft:   models.InjuryRaceCooldown(severity),
+		OccurredAt:  time.Now(),
+	}
+}
+
+// handleHealHorse heals a horse's injury for a cummies cost.
+func (s *Server) handleHealHorse(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	horseID := r.PathValue("id")
+	if !s.userOwnsHorse(claims.UserID, horseID) {
+		writeError(w, http.StatusForbidden, "you can only heal your own horses")
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || horse == nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	if horse.Injury == nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%s is healthy — no injury to heal", horse.Name))
+		return
+	}
+
+	if horse.Injury.Severity == models.SeverityCareerEnding {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%s has a career-ending injury that cannot be healed. The dream is over.", horse.Name))
+		return
+	}
+
+	cost := models.InjuryHealCost(horse.Injury.Severity)
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "stable not found")
+		return
+	}
+	if stable.Cummies < cost {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("healing costs ₵%d (you have ₵%d)", cost, stable.Cummies))
+		return
+	}
+
+	// Deduct cost and heal.
+	oldInjury := *horse.Injury
+	stable.Cummies -= cost
+	horse.Injury = nil
+
+	s.syncHorseToStable(horse)
+	s.persistHorse(r.Context(), horse)
+	s.persistStable(r.Context(), stable)
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("💊 %s healed %s from %s (%s) for ₵%d!",
+			claims.Username, horse.Name, oldInjury.Type, oldInjury.Severity, cost),
+		"ts": time.Now().Unix(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message": fmt.Sprintf("%s has been healed!", horse.Name),
+		"cost":    cost,
+		"horse":   horse,
+	})
+}
+
+// handleGetHorseAgeInfo returns age bracket, injury status, and retirement eligibility.
+func (s *Server) handleGetHorseAgeInfo(w http.ResponseWriter, r *http.Request) {
+	horseID := r.PathValue("id")
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || horse == nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	bracket := getAgeBracket(horse.Age)
+
+	// Age bracket effects.
+	effects := ""
+	switch bracket {
+	case "Foal":
+		effects = "Learning the ropes. -10% speed, +20% training XP gain."
+	case "Prime":
+		effects = "Peak performance. No modifiers. Let's ride."
+	case "Veteran":
+		effects = "Experienced but slowing. -5% speed, +10% tactical awareness."
+	case "Elder":
+		effects = "Getting creaky. -15% speed, +5% injury chance, wisdom bonus."
+	case "Ancient":
+		effects = "Living legend. -25% speed, +5% injury chance, double prestige XP."
+	}
+
+	resp := map[string]interface{}{
+		"horseID":            horse.ID,
+		"horseName":          horse.Name,
+		"age":                horse.Age,
+		"ageBracket":         bracket,
+		"ageBracketEffects":  effects,
+		"retired":            horse.Retired,
+		"retiredChampion":    horse.RetiredChampion,
+		"retirementEligible": horse.Age >= 9 || horse.Wins >= 10,
+		"injury":             horse.Injury,
+	}
+
+	if horse.Injury != nil {
+		resp["healCost"] = models.InjuryHealCost(horse.Injury.Severity)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ===========================================================================
+// Random Events System — 20 mid-race events
+// ===========================================================================
+
+// allRandomEvents defines the 20 random events that can occur during races.
+var allRandomEvents = []models.RandomEvent{
+	// === Speed Buffs ===
+	{ID: "evt_tailwind", Name: "Tailwind Surge", Description: "A sudden gust of wind propels the lead horse forward!", Effect: "speed_buff", Magnitude: 1.15, Target: "leader"},
+	{ID: "evt_energy_drink", Name: "Mystery Energy Drink", Description: "Someone left an unmarked bottle on the track. The nearest horse drank it. IT'S WORKING.", Effect: "speed_buff", Magnitude: 1.20, Target: "random_horse"},
+	{ID: "evt_crowd_cheer", Name: "Thunderous Applause", Description: "The crowd goes WILD! The last-place horse is inspired to give it everything!", Effect: "speed_buff", Magnitude: 1.25, Target: "last_place"},
+
+	// === Speed Debuffs ===
+	{ID: "evt_mud_puddle", Name: "Surprise Mud Puddle", Description: "A massive puddle appeared from nowhere! The leader splashes through and loses momentum.", Effect: "speed_debuff", Magnitude: 0.85, Target: "leader"},
+	{ID: "evt_bee_swarm", Name: "Angry Bee Swarm", Description: "A swarm of bees descends on the pack! One unlucky horse takes the brunt.", Effect: "speed_debuff", Magnitude: 0.80, Target: "random_horse"},
+	{ID: "evt_existential", Name: "Mid-Race Existential Crisis", Description: "A horse suddenly questions the meaning of racing. Is winning even real?", Effect: "speed_debuff", Magnitude: 0.75, Target: "random_horse"},
+
+	// === Chaos Events ===
+	{ID: "evt_track_reversal", Name: "Track Reversal!", Description: "WAIT — THE TRACK IS GOING THE OTHER WAY NOW? Everyone loses their bearings!", Effect: "chaos_shuffle", Magnitude: 0.0, Target: "all_horses"},
+	{ID: "evt_yogurt_rain", Name: "Yogurt Rain", Description: "It's raining yogurt. Nobody asked for this. Everyone is confused.", Effect: "chaos_slow_all", Magnitude: 0.90, Target: "all_horses"},
+	{ID: "evt_e008_apparition", Name: "E-008 Apparition", Description: "The ghost of E-008 manifests on the track! Horses scatter in terror!", Effect: "chaos_shuffle", Magnitude: 0.0, Target: "all_horses"},
+	{ID: "evt_announcer_curse", Name: "Announcer's Curse", Description: "The announcer said 'What could go wrong?' and the universe answered.", Effect: "chaos_slow_all", Magnitude: 0.85, Target: "all_horses"},
+
+	// === Purse Modifiers ===
+	{ID: "evt_sponsor_bonus", Name: "Sponsor Bonus", Description: "CummiesCorp™ just doubled the purse! MONEY MONEY MONEY!", Effect: "purse_double", Magnitude: 2.0, Target: "all_horses"},
+	{ID: "evt_tax_collector", Name: "Geoffrussey Tax Audit", Description: "The Geoffrussey Tax Authority shows up mid-race. 30% purse garnished.", Effect: "purse_reduce", Magnitude: 0.70, Target: "all_horses"},
+	{ID: "evt_treasure_chest", Name: "Buried Treasure", Description: "A horse's hoof strikes a buried treasure chest! +1000 bonus cummies!", Effect: "purse_bonus", Magnitude: 1000, Target: "random_horse"},
+
+	// === Cosmetic / Lore Events ===
+	{ID: "evt_rainbow", Name: "Double Rainbow", Description: "A magnificent double rainbow appears over the track. It means nothing but it's beautiful.", Effect: "cosmetic", Magnitude: 0, Target: "all_horses"},
+	{ID: "evt_commentator", Name: "Guest Commentator", Description: "A very drunk commentator has taken over the mic and is narrating everything wrong.", Effect: "cosmetic", Magnitude: 0, Target: "all_horses"},
+	{ID: "evt_streaker", Name: "Track Streaker", Description: "A naked fan has run onto the track! Security is in pursuit! The horses are unfazed.", Effect: "cosmetic", Magnitude: 0, Target: "all_horses"},
+	{ID: "evt_bird_poop", Name: "Strategic Bird Poop", Description: "A bird has pooped on the leader. Is it good luck? Science says no.", Effect: "cosmetic", Magnitude: 0, Target: "leader"},
+
+	// === Special ===
+	{ID: "evt_clone_glitch", Name: "Clone Glitch", Description: "The simulation glitches! For a brief moment, there appear to be TWO of the same horse!", Effect: "cosmetic", Magnitude: 0, Target: "random_horse"},
+	{ID: "evt_time_warp", Name: "Time Warp", Description: "Time seems to slow down... then speed up! The last-place horse phases forward!", Effect: "speed_buff", Magnitude: 1.30, Target: "last_place"},
+	{ID: "evt_motivational", Name: "Motivational Speech", Description: "A tiny mouse on the railing screams 'BELIEVE IN YOURSELF!' at a random horse. It works.", Effect: "speed_buff", Magnitude: 1.10, Target: "random_horse"},
+}
+
+// rollRandomEvent has a 15% chance to trigger a random event during a race.
+// Returns nil if no event triggers.
+func rollRandomEvent(horses []*models.Horse, race *models.Race, weather models.Weather) *models.RandomEvent {
+	// 15% base chance. +10% on Hauntedussy track. +5% in Haunted weather.
+	chance := 0.15
+	if race.TrackType == models.TrackHauntedussy {
+		chance += 0.10
+	}
+	if weather == models.WeatherHaunted {
+		chance += 0.05
+	}
+
+	if rand.Float64() >= chance {
+		return nil
+	}
+
+	// Pick a random event.
+	event := allRandomEvents[rand.IntN(len(allRandomEvents))]
+	return &event
+}
+
+// applyRandomEvent applies an event's effects to the race and returns narrative lines.
+func applyRandomEvent(event *models.RandomEvent, horses []*models.Horse, race *models.Race, purse *int64) []string {
+	narrative := []string{
+		fmt.Sprintf("⚡ RANDOM EVENT: %s", event.Name),
+		fmt.Sprintf("   %s", event.Description),
+	}
+
+	switch event.Effect {
+	case "speed_buff":
+		target := pickEventTarget(event.Target, horses, race)
+		if target != nil {
+			// Speed buff is cosmetic in post-simulation — we add it to narrative only.
+			// The race is already simulated, but the lore effect is what matters.
+			narrative = append(narrative, fmt.Sprintf("   🏃 %s gets a speed boost! (x%.0f%%)", target.Name, event.Magnitude*100))
+		}
+
+	case "speed_debuff":
+		target := pickEventTarget(event.Target, horses, race)
+		if target != nil {
+			narrative = append(narrative, fmt.Sprintf("   🐌 %s is slowed down! (x%.0f%%)", target.Name, event.Magnitude*100))
+		}
+
+	case "chaos_shuffle":
+		narrative = append(narrative, "   🌀 The entire field is thrown into chaos!")
+
+	case "chaos_slow_all":
+		narrative = append(narrative, fmt.Sprintf("   🌀 All horses affected! Speed reduced to %.0f%%", event.Magnitude*100))
+
+	case "purse_double":
+		*purse *= 2
+		narrative = append(narrative, fmt.Sprintf("   💰 PURSE DOUBLED to ₵%d!", *purse))
+
+	case "purse_reduce":
+		*purse = int64(float64(*purse) * event.Magnitude)
+		narrative = append(narrative, fmt.Sprintf("   📉 Purse reduced to ₵%d!", *purse))
+
+	case "purse_bonus":
+		*purse += int64(event.Magnitude)
+		narrative = append(narrative, fmt.Sprintf("   💎 Bonus ₵%.0f added to the purse! Now ₵%d!", event.Magnitude, *purse))
+
+	case "cosmetic":
+		// Pure lore — no mechanical effect.
+		narrative = append(narrative, "   ✨ (No mechanical effect — just vibes)")
+	}
+
+	return narrative
+}
+
+// pickEventTarget selects a horse based on the event's target type.
+func pickEventTarget(target string, horses []*models.Horse, race *models.Race) *models.Horse {
+	if len(horses) == 0 {
+		return nil
+	}
+
+	switch target {
+	case "random_horse":
+		return horses[rand.IntN(len(horses))]
+
+	case "leader":
+		// Find the horse in 1st place.
+		for _, entry := range race.Entries {
+			if entry.FinishPlace == 1 {
+				for _, h := range horses {
+					if h.ID == entry.HorseID {
+						return h
+					}
+				}
+			}
+		}
+		return horses[0]
+
+	case "last_place":
+		// Find the horse in last place.
+		lastPlace := 0
+		var lastHorseID string
+		for _, entry := range race.Entries {
+			if entry.FinishPlace > lastPlace {
+				lastPlace = entry.FinishPlace
+				lastHorseID = entry.HorseID
+			}
+		}
+		for _, h := range horses {
+			if h.ID == lastHorseID {
+				return h
+			}
+		}
+		return horses[len(horses)-1]
+
+	default:
+		return nil
+	}
 }

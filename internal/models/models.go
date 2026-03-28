@@ -136,6 +136,74 @@ type Horse struct {
 	TrainingXP      float64   `json:"training_xp"`
 	PeakELO         float64   `json:"peak_elo"`
 	LastBredAt      time.Time `json:"lastBredAt,omitempty"` // Breeding cooldown tracker
+	Injury          *Injury   `json:"injury,omitempty"`     // Current injury (nil = healthy)
+}
+
+// ---------------------------------------------------------------------------
+// Horse Injuries — types, severities, and lore
+// ---------------------------------------------------------------------------
+
+// InjuryType identifies the kind of injury a horse has sustained.
+type InjuryType string
+
+const (
+	InjuryMuscleStrain     InjuryType = "muscle_strain"
+	InjuryTendonTear       InjuryType = "tendon_tear"
+	InjuryHoofCrack        InjuryType = "hoof_crack"
+	InjuryYogurtPoisoning  InjuryType = "yogurt_poisoning"
+	InjuryExistentialDread InjuryType = "existential_dread"
+	InjuryHauntedByE008    InjuryType = "haunted_by_e008"
+)
+
+// InjurySeverity indicates how bad an injury is.
+type InjurySeverity string
+
+const (
+	SeverityMinor        InjurySeverity = "minor"         // 1 race cooldown
+	SeverityModerate     InjurySeverity = "moderate"      // 3 race cooldown
+	SeveritySevere       InjurySeverity = "severe"        // 5 race cooldown
+	SeverityCareerEnding InjurySeverity = "career_ending" // Forced retirement
+)
+
+// Injury represents a horse's current injury state.
+type Injury struct {
+	Type        InjuryType     `json:"type"`
+	Severity    InjurySeverity `json:"severity"`
+	Description string         `json:"description"`
+	RacesLeft   int            `json:"races_left"` // Races remaining before recovery (0 = healed)
+	OccurredAt  time.Time      `json:"occurred_at"`
+}
+
+// InjuryHealCost returns the cummies cost to heal an injury by severity.
+func InjuryHealCost(severity InjurySeverity) int64 {
+	switch severity {
+	case SeverityMinor:
+		return 100
+	case SeverityModerate:
+		return 300
+	case SeveritySevere:
+		return 500
+	case SeverityCareerEnding:
+		return 0 // Can't heal career-ending injuries
+	default:
+		return 0
+	}
+}
+
+// InjuryRaceCooldown returns the number of races a horse must sit out by severity.
+func InjuryRaceCooldown(severity InjurySeverity) int {
+	switch severity {
+	case SeverityMinor:
+		return 1
+	case SeverityModerate:
+		return 3
+	case SeveritySevere:
+		return 5
+	case SeverityCareerEnding:
+		return 9999 // Effectively permanent
+	default:
+		return 0
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -601,4 +669,127 @@ type TradeOffer struct {
 	Status       string    `json:"status"` // "Pending", "Accepted", "Rejected", "Cancelled"
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ---------------------------------------------------------------------------
+// Live Auctions
+// ---------------------------------------------------------------------------
+
+// Auction status constants.
+const (
+	AuctionStatusOpen      = "open"      // Accepting bids
+	AuctionStatusEnding    = "ending"    // Anti-snipe extension active (last 30s)
+	AuctionStatusSold      = "sold"      // Winner determined, horse transferred
+	AuctionStatusExpired   = "expired"   // Time ran out with no bids
+	AuctionStatusCancelled = "cancelled" // Seller cancelled before any bids
+)
+
+// Auction represents a live horse auction with real-time bidding.
+type Auction struct {
+	ID            string       `json:"id"`
+	SellerID      string       `json:"sellerID"`    // User ID of the seller
+	SellerName    string       `json:"sellerName"`  // Display name of the seller
+	StableID      string       `json:"stableID"`    // Seller's stable ID
+	HorseID       string       `json:"horseID"`     // The horse being auctioned
+	HorseName     string       `json:"horseName"`   // Cached horse name
+	StartingBid   int64        `json:"startingBid"` // Minimum opening bid in cummies
+	CurrentBid    int64        `json:"currentBid"`  // Current highest bid (0 = no bids yet)
+	BidderID      string       `json:"bidderID"`    // Current highest bidder user ID
+	BidderName    string       `json:"bidderName"`  // Current highest bidder display name
+	BidCount      int          `json:"bidCount"`    // Total number of bids placed
+	BidHistory    []AuctionBid `json:"bidHistory"`  // Full bid history (stored as JSONB)
+	Status        string       `json:"status"`      // open, ending, sold, expired, cancelled
+	Duration      int          `json:"duration"`    // Auction duration in seconds (default 120)
+	CreatedAt     time.Time    `json:"createdAt"`
+	ExpiresAt     time.Time    `json:"expiresAt"`             // When the auction ends (can be extended by anti-snipe)
+	CompletedAt   time.Time    `json:"completedAt,omitempty"` // When the auction was finalized
+	GeoffrussyTax int64        `json:"geoffrussyTax"`         // 5% tax on sale price (burned from economy)
+}
+
+// AuctionBid records a single bid in an auction's history.
+type AuctionBid struct {
+	BidderID   string    `json:"bidderID"`
+	BidderName string    `json:"bidderName"`
+	Amount     int64     `json:"amount"`
+	Timestamp  time.Time `json:"timestamp"`
+}
+
+// ---------------------------------------------------------------------------
+// Stable Alliances / Guild System
+// ---------------------------------------------------------------------------
+
+// AllianceRole identifies a member's rank within an alliance.
+type AllianceRole string
+
+const (
+	AllianceRoleLeader  AllianceRole = "leader"
+	AllianceRoleOfficer AllianceRole = "officer"
+	AllianceRoleMember  AllianceRole = "member"
+)
+
+// Alliance represents a stable alliance (guild).
+type Alliance struct {
+	ID        string           `json:"id"`
+	Name      string           `json:"name"`
+	Tag       string           `json:"tag"`       // Short 2-5 char tag shown in brackets
+	LeaderID  string           `json:"leader_id"` // User ID of the founding leader
+	Motto     string           `json:"motto"`     // Randomly assigned lore motto on creation
+	Treasury  int64            `json:"treasury"`  // Shared cummies pool
+	Members   []AllianceMember `json:"members"`
+	CreatedAt time.Time        `json:"created_at"`
+}
+
+// AllianceMember records a single player's membership in an alliance.
+type AllianceMember struct {
+	AllianceID string       `json:"alliance_id"`
+	UserID     string       `json:"user_id"`
+	Username   string       `json:"username"`
+	StableID   string       `json:"stable_id"`
+	Role       AllianceRole `json:"role"`
+	JoinedAt   time.Time    `json:"joined_at"`
+}
+
+// AllianceLoreMottos are the 8 sacred mottos randomly assigned on creation.
+var AllianceLoreMottos = []string{
+	"We ride at dawn, smeared in yogurt and glory.",
+	"Our stallions fear nothing — except maybe E-008.",
+	"Hooves of thunder, hearts of questionable integrity.",
+	"United by cummies, divided by who gets the good hay.",
+	"Born to breed. Forced to race. Destined to lose spectacularly.",
+	"In the name of the Sire, the Mare, and the Holy Foal.",
+	"One stable to rule them all (and still finish last).",
+	"We didn't choose the stallion life. The stallion life chose poorly.",
+}
+
+// ---------------------------------------------------------------------------
+// Random Events System
+// ---------------------------------------------------------------------------
+
+// RandomEvent describes a mid-race random event that modifies outcomes.
+type RandomEvent struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Effect      string  `json:"effect"` // e.g. "speed_buff", "speed_debuff", "chaos", "cosmetic"
+	Magnitude   float64 `json:"magnitude"`
+	Target      string  `json:"target"` // "random_horse", "all_horses", "leader", "last_place"
+}
+
+// ---------------------------------------------------------------------------
+// Race Replays (persistent full race data for replay sharing)
+// ---------------------------------------------------------------------------
+
+// RaceReplay stores a complete race result for persistent replay sharing.
+// The Data field holds the full JSON-encoded raceResult (race, narrative, weather).
+type RaceReplay struct {
+	RaceID     string    `json:"raceID"`
+	TrackType  string    `json:"trackType"`
+	Distance   int       `json:"distance"`
+	Purse      int64     `json:"purse"`
+	Entries    int       `json:"entries"` // Number of horses in the race
+	Weather    string    `json:"weather"`
+	WinnerID   string    `json:"winnerID"`
+	WinnerName string    `json:"winnerName"`
+	Data       []byte    `json:"-"` // Full JSON-encoded race result (stored as JSONB)
+	CreatedAt  time.Time `json:"createdAt"`
 }

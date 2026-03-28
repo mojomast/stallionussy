@@ -622,6 +622,10 @@ select.term-input option {
 .chat-msg.msg-part { color: #555; font-size: 10px; }
 .chat-msg.msg-mention { background: rgba(0,255,65,0.06); border-left: 2px solid var(--fg); padding-left: 6px; }
 .chat-msg.msg-whisper { color: var(--purple); font-style: italic; }
+.chat-msg.msg-whisper-sent { color: #886; font-style: italic; }
+.chat-msg.msg-whisper-error { color: var(--red); font-style: italic; }
+.chat-user-entry { cursor: pointer; }
+.chat-user-entry:hover { background: rgba(0,255,65,0.06); }
 #chat-input-area { border-top: 1px solid var(--border); background: var(--bg-input); flex-shrink: 0; }
 .chat-prompt { padding: 4px 10px 0 10px; font-size: 10px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; }
 .chat-prompt-user { color: var(--fg); }
@@ -1558,6 +1562,148 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .modal-box h2 { margin-bottom: 12px; }
 .modal-box .modal-close { float: right; cursor: pointer; color: var(--red); font-size: 14px; }
 
+/* ─── AGE BRACKET BADGES ─────────────────────────────────────────────────── */
+.age-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  border: 1px solid;
+  border-radius: 2px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.age-foal   { color: #88ffcc; border-color: #88ffcc; background: rgba(136,255,204,0.08); }
+.age-prime  { color: #00ff41; border-color: #00ff41; background: rgba(0,255,65,0.08); text-shadow: var(--glow-green); }
+.age-veteran { color: var(--amber); border-color: var(--amber); background: rgba(255,176,0,0.08); text-shadow: var(--glow-amber); }
+.age-elder  { color: #ff6b6b; border-color: #ff6b6b; background: rgba(255,107,107,0.08); }
+.age-ancient { color: var(--purple); border-color: var(--purple); background: rgba(191,64,255,0.1); text-shadow: var(--glow-purple); animation: glitch 3s infinite; }
+
+/* ─── INJURY DISPLAY ─────────────────────────────────────────────────────── */
+.injury-badge {
+  display: block;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--red);
+  border-left: 3px solid var(--red);
+  background: rgba(255,0,64,0.06);
+  font-size: 11px;
+}
+.injury-badge .injury-type {
+  color: var(--red);
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+.injury-badge .injury-severity {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  border: 1px solid;
+  border-radius: 2px;
+  margin-left: 6px;
+  text-transform: uppercase;
+}
+.injury-severity.minor    { color: var(--amber); border-color: var(--amber); }
+.injury-severity.moderate { color: #ff8c00; border-color: #ff8c00; }
+.injury-severity.severe   { color: var(--red); border-color: var(--red); }
+.injury-severity.career_ending { color: #ff0040; border-color: #ff0040; background: rgba(255,0,64,0.15); animation: glitch 2s infinite; }
+.injury-badge .injury-desc {
+  color: var(--fg-dim);
+  font-size: 10px;
+  margin-top: 4px;
+  font-style: italic;
+}
+.injury-badge .injury-cooldown {
+  color: var(--amber);
+  font-size: 10px;
+  margin-top: 2px;
+}
+.injury-heal-btn {
+  margin-top: 6px;
+  padding: 3px 10px;
+  font-size: 10px;
+  background: transparent;
+  border: 1px solid var(--fg);
+  color: var(--fg);
+  font-family: inherit;
+  cursor: pointer;
+  letter-spacing: 1px;
+}
+.injury-heal-btn:hover { background: rgba(0,255,65,0.1); text-shadow: var(--glow-green); }
+
+/* ─── RANDOM EVENT TOASTS ────────────────────────────────────────────────── */
+.toast.event    { border-color: var(--cyan); color: var(--cyan); text-shadow: var(--glow-cyan); }
+.toast.danger   { border-color: var(--red); color: var(--red); }
+.toast.legendary { border-color: var(--gold); color: var(--gold); text-shadow: var(--glow-gold); }
+
+/* ─── ALLIANCE STYLES ────────────────────────────────────────────────────── */
+.alliance-card {
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  background: var(--bg-light);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+.alliance-card:hover { border-color: var(--fg-dim); }
+.alliance-card .alliance-tag {
+  display: inline-block;
+  color: var(--amber);
+  font-weight: bold;
+  margin-right: 6px;
+}
+.alliance-card .alliance-name { color: var(--fg); font-weight: bold; }
+.alliance-card .alliance-motto { color: var(--fg-dim); font-size: 10px; font-style: italic; margin-top: 4px; }
+.alliance-card .alliance-meta { color: var(--fg-dim); font-size: 10px; margin-top: 4px; }
+
+.alliance-detail-panel {
+  border: 1px solid var(--fg-dim);
+  padding: 16px;
+  margin-top: 8px;
+  background: var(--bg-light);
+}
+.alliance-detail-panel .alliance-motto-big {
+  color: var(--amber);
+  font-style: italic;
+  font-size: 12px;
+  margin-bottom: 8px;
+  text-shadow: var(--glow-amber);
+}
+.alliance-detail-panel .alliance-treasury {
+  color: var(--gold);
+  font-weight: bold;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.alliance-member-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.alliance-member-row .member-role {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  border: 1px solid;
+  border-radius: 2px;
+  text-transform: uppercase;
+  margin-right: 6px;
+}
+.member-role.leader  { color: var(--gold); border-color: var(--gold); }
+.member-role.officer { color: var(--amber); border-color: var(--amber); }
+.member-role.member  { color: var(--fg-dim); border-color: var(--fg-dim); }
+.my-alliance-panel {
+  border: 1px solid var(--fg-dim);
+  padding: 12px;
+  background: var(--bg-light);
+  margin-bottom: 12px;
+}
+
 /* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .stats-row { flex-direction: column; }
@@ -1720,11 +1866,14 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#breed" data-page="breed">[BREED]</a>
   <a href="#race" data-page="race">[RACE]</a>
   <a href="#market" data-page="market">[MARKET]</a>
+  <a href="#auctions" data-page="auctions">[AUCTION]</a>
   <a href="#tournament" data-page="tournament">[TOURNEY]</a>
   <a href="#trades" data-page="trades">[TRADE]</a>
   <a href="#leaderboard" data-page="leaderboard">[RANKS]</a>
   <a href="#challenges" data-page="challenges">[CHALLENGE]</a>
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
+  <a href="#alliances" data-page="alliances">[ALLIANCE]</a>
+  <a href="#history" data-page="history">[HISTORY]</a>
   <div class="nav-right">
     <span class="season-badge" id="nav-season-badge" style="display:none;"></span>
     <span class="user-info" id="user-display">guest@stallionussy:~$</span>
@@ -1991,6 +2140,66 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
 </div>
 
+<!-- ═══ AUCTION PAGE ════════════════════════════════════════════════════════ -->
+<div class="page" id="page-auctions">
+  <div class="section-hdr">// AUCTIONUSSY — LIVE HORSE AUCTIONS — Monitored by Geoffrussy (5% Tax Burns 🔥)</div>
+
+  <div class="stats-row">
+    <div class="stat-block">
+      <div class="stat-label">🔥 Geoffrussy Tax Burned</div>
+      <div class="stat-val amber fire-text" id="auction-tax-burned">₵0</div>
+    </div>
+    <div class="stat-block">
+      <div class="stat-label">Active Auctions</div>
+      <div class="stat-val" id="auction-active-count">0</div>
+    </div>
+  </div>
+
+  <h3>CREATE AUCTION</h3>
+  <div class="form-row">
+    <label>HORSE:</label>
+    <select class="term-input" id="auction-horse"><option value="">-- SELECT HORSE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>STARTING BID (₵):</label>
+    <input class="term-input" id="auction-start-bid" type="number" value="100" min="1" style="max-width:120px;">
+  </div>
+  <div class="form-row">
+    <label>DURATION (sec):</label>
+    <input class="term-input" id="auction-duration" type="number" value="120" min="30" max="600" style="max-width:120px;">
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn amber" id="btn-create-auction">🔨 START AUCTION</button>
+  </div>
+  <div id="auction-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+  <h3>// LIVE AUCTIONS</h3>
+  <div id="auction-listings">
+    <span class="loading cursor-blink">Scanning auction house...</span>
+  </div>
+</div>
+
+<!-- ═══ AUCTION BID MODAL ═══════════════════════════════════════════════════ -->
+<div id="auction-bid-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)window.SU.closeAuctionModal()">
+  <div class="modal-box">
+    <span class="modal-close" onclick="window.SU.closeAuctionModal()">[X]</span>
+    <h2 class="glow">🔨 AUCTION BID</h2>
+    <div class="section-hdr" id="auction-modal-title">Horse: Loading...</div>
+    <div id="auction-modal-stats" class="mt-8"></div>
+    <div id="auction-modal-timer" class="text-amber mt-8" style="font-size:16px;font-weight:bold;"></div>
+    <div id="auction-modal-current" class="mt-8"></div>
+    <div class="form-row mt-8">
+      <label>YOUR BID (₵):</label>
+      <input class="term-input" id="auction-bid-amount" type="number" min="1" style="max-width:140px;">
+    </div>
+    <button class="term-btn amber mt-8" onclick="window.SU.submitAuctionBid()">💰 PLACE BID</button>
+    <div id="auction-bid-msg" class="text-dim mt-8" style="font-size:11px;"></div>
+    <h3 class="mt-8">// BID HISTORY</h3>
+    <div id="auction-modal-history"></div>
+  </div>
+</div>
+
 <!-- ═══ TOURNAMENT PAGE ═════════════════════════════════════════════════════ -->
 <div class="page" id="page-tournament">
   <div class="section-hdr">// TOURNAMENT ARENA — Sanctioned by the First Congregational Church of the Holy Internet</div>
@@ -2109,6 +2318,18 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
 </div>
 
+<!-- ═══ RACE HISTORY PAGE ═══════════════════════════════════════════════════ -->
+<div class="page" id="page-history">
+  <div class="section-hdr">// RACE HISTORY — Persistent Race Replays — "Every hoofbeat is remembered."</div>
+  <div class="text-dim" style="font-size:10px;margin-bottom:12px;">
+    Click any race to watch the full replay. Replays persist for 7 days.
+  </div>
+
+  <div id="history-list">
+    <span class="loading cursor-blink">Loading race history...</span>
+  </div>
+</div>
+
 <!-- ═══ RACE REPLAY PAGE ═══════════════════════════════════════════════════ -->
 <div class="page" id="page-replay">
   <div class="section-hdr">// RACE REPLAY — <span id="replay-race-id" class="text-dim"></span></div>
@@ -2125,6 +2346,46 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
   <div style="margin-top:12px;">
     <button class="term-btn" onclick="location.hash='#race'">BACK TO RACES</button>
+  </div>
+</div>
+
+<!-- ═══ ALLIANCES PAGE ═══════════════════════════════════════════════════════ -->
+<div class="page" id="page-alliances">
+  <div class="section-hdr">// STABLE ALLIANCES — ⚔️ "United by cummies, divided by who gets the good hay."</div>
+
+  <div class="two-col">
+    <div>
+      <h3>// CREATE ALLIANCE (₵500)</h3>
+      <div class="form-row">
+        <label>NAME:</label>
+        <input class="term-input" id="alliance-name" placeholder="Alliance name" maxlength="32">
+      </div>
+      <div class="form-row">
+        <label>TAG (2-5 chars):</label>
+        <input class="term-input" id="alliance-tag" placeholder="TAG" maxlength="5" style="max-width:80px;">
+      </div>
+      <div class="form-row">
+        <label></label>
+        <button class="term-btn danger" id="btn-create-alliance">⚔️ FOUND ALLIANCE</button>
+      </div>
+      <div id="alliance-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+      <h3>// MY ALLIANCE</h3>
+      <div id="my-alliance-info">
+        <span class="text-dim">You are not in any alliance.</span>
+      </div>
+    </div>
+    <div>
+      <h3>// ALL ALLIANCES</h3>
+      <div id="alliances-list">
+        <span class="loading cursor-blink">Loading alliances...</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="alliance-detail-section" class="hidden" style="margin-top:16px;">
+    <h3>// ALLIANCE DETAIL — <span id="alliance-detail-name" class="text-amber"></span></h3>
+    <div id="alliance-detail-content"></div>
   </div>
 </div>
 
@@ -2650,11 +2911,14 @@ function navigate() {
     case 'breed': loadBreedPage(); break;
     case 'race': loadRacePage(); break;
     case 'market': loadMarket(); break;
+    case 'auctions': loadAuctions(); break;
     case 'tournament': loadTournaments(); break;
     case 'trades': loadTrades(); break;
     case 'leaderboard': loadLeaderboard(); break;
     case 'challenges': loadChallenges(); break;
     case 'achievements': loadAchievements(); break;
+    case 'alliances': loadAlliances(); break;
+    case 'history': loadRaceHistory(); break;
     case 'replay': loadReplay(getPageParam()); break;
   }
 }
@@ -2772,6 +3036,47 @@ function handleWsMessage(msg) {
       // If this is our stable, update displayed balance on dashboard
       break;
 
+    // ─── AUCTION EVENT HANDLERS ─────────────────────────────────────
+    case 'auction_created':
+      showToast(`🔨 NEW AUCTION: ${msg.auction?.horseName || '?'} — Starting bid: ${msg.auction?.startingBid || 0}₵`, 'market');
+      if (getPage() === 'auctions') loadAuctions();
+      break;
+    case 'auction_bid':
+      showToast(`💰 ${msg.bid?.bidderName || '?'} bid ${msg.bid?.amount || 0}₵ on ${msg.auction?.horseName || '?'}`, 'market');
+      onAuctionBidUpdate(msg);
+      break;
+    case 'auction_outbid':
+      showToast(`⚠️ You were outbid on ${msg.horseName || '?'}! New bid: ${msg.newBid || 0}₵ by ${msg.newBidder || '?'}. Refunded ${msg.refund || 0}₵`, 'challenge');
+      break;
+    case 'auction_sold':
+      showToast(`🏇 SOLD! ${msg.auction?.horseName || '?'} → ${msg.auction?.bidderName || '?'} for ${msg.auction?.currentBid || 0}₵ (Tax: ${msg.auction?.geoffrussyTax || 0}₵ 🔥)`, 'achievement');
+      if (getPage() === 'auctions') loadAuctions();
+      break;
+    case 'auction_expired':
+      showToast(`⏰ Auction for ${msg.auction?.horseName || '?'} expired — no bids.`, 'default');
+      if (getPage() === 'auctions') loadAuctions();
+      break;
+    case 'auction_cancelled':
+      showToast(`❌ Auction for ${msg.auction?.horseName || '?'} was cancelled.`, 'default');
+      if (getPage() === 'auctions') loadAuctions();
+      break;
+
+    // Random events & injuries
+    case 'random_event':
+      showToast(`⚡ ${msg.event?.Name || 'RANDOM EVENT'}: ${msg.description || ''}`, 'event');
+      break;
+    case 'horse_injured':
+      showToast(`🤕 ${msg.horseName} injured! ${msg.injuryType} (${msg.severity})`, 'danger');
+      break;
+    case 'injury_worsened':
+      showToast(`😱 ${msg.horseName} training injury WORSENED to ${msg.severity}!`, 'danger');
+      break;
+    case 'horse_retired':
+      if (msg.retiredChampion) {
+        showToast(`🏆 ${msg.horseName} inducted into Hall of Fame!`, 'legendary');
+      }
+      break;
+
     // Chat message types
     case 'chat_msg':
     case 'chat_emote':
@@ -2780,6 +3085,9 @@ function handleWsMessage(msg) {
     case 'chat_trade':
     case 'chat_team':
     case 'users_update':
+    case 'whisper':
+    case 'whisper_sent':
+    case 'whisper_error':
       handleChatWsMessage(msg);
       break;
   }
@@ -3260,6 +3568,297 @@ function copyRaceLink(raceID) {
   });
 }
 
+// ─── RACE HISTORY ─────────────────────────────────────────────────────────
+async function loadRaceHistory() {
+  const container = $('#history-list');
+  if (!container) return;
+
+  container.innerHTML = '<span class="loading cursor-blink">Loading race history...</span>';
+
+  try {
+    const res = await apiFetch('/api/races/recent?limit=50');
+    if (!res.ok) throw new Error('Failed to fetch race history');
+    const replays = await res.json();
+
+    if (!replays || replays.length === 0) {
+      container.innerHTML = '<div class="text-dim">No race replays yet. Run some races first!</div>';
+      return;
+    }
+
+    let html = '<table class="term-table" style="width:100%"><thead><tr>';
+    html += '<th>RACE ID</th><th>TRACK</th><th>DIST</th><th>PURSE</th>';
+    html += '<th>ENTRIES</th><th>WEATHER</th><th>WINNER</th><th>DATE</th><th></th>';
+    html += '</tr></thead><tbody>';
+
+    replays.forEach(r => {
+      const raceID = r.raceID || '';
+      const shortID = raceID.length > 8 ? raceID.slice(0, 8) + '...' : raceID;
+      const trackType = r.trackType || '?';
+      const distance = r.distance || 0;
+      const purse = r.purse || 0;
+      const entries = r.entries || 0;
+      const weather = r.weather || '?';
+      const winner = r.winnerName || '?';
+      const created = r.createdAt ? new Date(r.createdAt).toLocaleString() : '?';
+
+      html += `<tr style="cursor:pointer;" onclick="location.hash='#replay/${encodeURIComponent(raceID)}'">`;
+      html += `<td class="text-dim" title="${escHtml(raceID)}">${escHtml(shortID)}</td>`;
+      html += `<td>${escHtml(trackType)}</td>`;
+      html += `<td>${distance}m</td>`;
+      html += `<td>${purse}₵</td>`;
+      html += `<td>${entries}</td>`;
+      html += `<td>${escHtml(weather)}</td>`;
+      html += `<td class="glow">${escHtml(winner)}</td>`;
+      html += `<td class="text-dim">${escHtml(created)}</td>`;
+      html += `<td><span class="term-btn" style="padding:2px 6px;font-size:10px;">▶ REPLAY</span></td>`;
+      html += `</tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div class="text-dim">Error loading race history: ${escHtml(err.message)}</div>`;
+  }
+}
+
+// ─── ALLIANCES ────────────────────────────────────────────────────────────
+async function loadAlliances() {
+  const listEl = $('#alliances-list');
+  const myInfoEl = $('#my-alliance-info');
+  const detailSection = $('#alliance-detail-section');
+
+  if (listEl) listEl.innerHTML = '<span class="loading cursor-blink">Loading alliances...</span>';
+  if (detailSection) detailSection.classList.add('hidden');
+
+  try {
+    const alliances = await api('/alliances');
+    const allianceList = Array.isArray(alliances) ? alliances : [];
+
+    // Find user's alliance
+    let myAlliance = null;
+    if (currentUser) {
+      myAlliance = allianceList.find(a =>
+        a.members && a.members.some(m => m.user_id === currentUser.id)
+      );
+    }
+
+    // Render "My Alliance" section
+    if (myInfoEl) {
+      if (myAlliance) {
+        const myMember = myAlliance.members.find(m => m.user_id === currentUser.id);
+        const myRole = myMember ? myMember.role : 'member';
+        const isLeader = myRole === 'leader';
+        myInfoEl.innerHTML = `<div class="my-alliance-panel">
+          <div style="font-size:14px;font-weight:bold;">
+            <span class="text-amber">[${escHtml(myAlliance.tag)}]</span> ${escHtml(myAlliance.name)}
+            <span class="member-role ${myRole}">${myRole}</span>
+          </div>
+          <div style="font-size:10px;color:var(--fg-dim);font-style:italic;margin-top:4px;">"${escHtml(myAlliance.motto)}"</div>
+          <div style="font-size:11px;margin-top:6px;">
+            <span class="text-dim">Treasury:</span> <span style="color:var(--gold);">₵${(myAlliance.treasury || 0).toLocaleString()}</span> |
+            <span class="text-dim">Members:</span> ${(myAlliance.members || []).length}
+          </div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="term-btn sm" onclick="window.SU.viewAllianceDetail('${escHtml(myAlliance.id)}')">📋 DETAILS</button>
+            <button class="term-btn sm" onclick="window.SU.openDonateModal('${escHtml(myAlliance.id)}')">💰 DONATE</button>
+            ${!isLeader ? `<button class="term-btn danger sm" onclick="window.SU.leaveAlliance('${escHtml(myAlliance.id)}')">🚪 LEAVE</button>` : ''}
+            ${isLeader ? `<button class="term-btn danger sm" onclick="window.SU.disbandAlliance('${escHtml(myAlliance.id)}')">💀 DISBAND</button>` : ''}
+          </div>
+        </div>`;
+      } else {
+        myInfoEl.innerHTML = '<span class="text-dim">You are not in any alliance. Found one below or create your own!</span>';
+      }
+    }
+
+    // Render all alliances list
+    if (listEl) {
+      if (allianceList.length === 0) {
+        listEl.innerHTML = '<div class="text-dim">No alliances exist yet. Be the first to forge a legacy of questionable decisions!</div>';
+      } else {
+        let html = '';
+        allianceList.forEach(a => {
+          const isMine = myAlliance && myAlliance.id === a.id;
+          const memberCount = (a.members || []).length;
+          html += `<div class="alliance-card${isMine ? ' my-alliance' : ''}" onclick="window.SU.viewAllianceDetail('${escHtml(a.id)}')">
+            <span class="alliance-tag">[${escHtml(a.tag)}]</span>
+            <span class="alliance-name">${escHtml(a.name)}</span>
+            ${isMine ? '<span style="color:var(--fg);font-size:9px;margin-left:6px;">★ YOUR ALLIANCE</span>' : ''}
+            <div class="alliance-motto">"${escHtml(a.motto)}"</div>
+            <div class="alliance-meta">👥 ${memberCount} member${memberCount !== 1 ? 's' : ''} | 💰 Treasury: ₵${(a.treasury || 0).toLocaleString()}</div>
+          </div>`;
+        });
+        listEl.innerHTML = html;
+      }
+    }
+  } catch (err) {
+    if (listEl) listEl.innerHTML = `<div class="text-dim">Error loading alliances: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function viewAllianceDetail(allianceId) {
+  const section = $('#alliance-detail-section');
+  const nameEl = $('#alliance-detail-name');
+  const contentEl = $('#alliance-detail-content');
+  if (!section || !contentEl) return;
+
+  section.classList.remove('hidden');
+  contentEl.innerHTML = '<span class="loading cursor-blink">Loading alliance details...</span>';
+
+  try {
+    const a = await api(`/alliances/${allianceId}`);
+    if (!a) throw new Error('Alliance not found');
+
+    if (nameEl) nameEl.textContent = `[${a.tag}] ${a.name}`;
+
+    const isMyAlliance = currentUser && a.members && a.members.some(m => m.user_id === currentUser.id);
+    const myMember = isMyAlliance ? a.members.find(m => m.user_id === currentUser.id) : null;
+    const isLeader = myMember && myMember.role === 'leader';
+    const isOfficer = myMember && (myMember.role === 'leader' || myMember.role === 'officer');
+
+    let html = `<div class="alliance-detail-panel">
+      <div class="alliance-motto-big">"${escHtml(a.motto)}"</div>
+      <div class="alliance-treasury">💰 Treasury: ₵${(a.treasury || 0).toLocaleString()}</div>
+      <div style="font-size:11px;margin-bottom:4px;">
+        <span class="text-dim">Founded:</span> ${new Date(a.created_at).toLocaleDateString()} |
+        <span class="text-dim">Leader:</span> ${escHtml((a.members || []).find(m => m.role === 'leader')?.username || '???')}
+      </div>`;
+
+    // Join button (only if not a member)
+    if (!isMyAlliance && currentUser) {
+      html += `<div style="margin:8px 0;"><button class="term-btn" onclick="window.SU.joinAlliance('${escHtml(a.id)}')">⚔️ JOIN ALLIANCE</button></div>`;
+    }
+
+    // Members table
+    html += `<h3 style="margin-top:12px;">MEMBERS (${(a.members || []).length})</h3>`;
+    (a.members || []).forEach(m => {
+      html += `<div class="alliance-member-row">
+        <div>
+          <span class="member-role ${m.role}">${m.role}</span>
+          <span>${escHtml(m.username)}</span>
+          <span class="text-dim" style="font-size:9px;margin-left:4px;">(joined ${new Date(m.joined_at).toLocaleDateString()})</span>
+        </div>
+        <div>`;
+      // Kick button (leader/officer can kick non-leaders)
+      if (isOfficer && m.user_id !== currentUser.id && m.role !== 'leader') {
+        html += `<button class="term-btn danger sm" style="font-size:9px;padding:2px 6px;" onclick="window.SU.kickFromAlliance('${escHtml(a.id)}', '${escHtml(m.user_id)}')">KICK</button>`;
+      }
+      html += `</div></div>`;
+    });
+
+    html += '</div>';
+    contentEl.innerHTML = html;
+  } catch (err) {
+    contentEl.innerHTML = `<div class="text-dim">Error: ${escHtml(err.message)}</div>`;
+  }
+}
+
+async function createAlliance() {
+  const nameEl = $('#alliance-name');
+  const tagEl = $('#alliance-tag');
+  const msgEl = $('#alliance-create-msg');
+
+  const name = (nameEl?.value || '').trim();
+  const tag = (tagEl?.value || '').trim();
+
+  if (!name || !tag) {
+    if (msgEl) msgEl.textContent = 'Name and tag are required, you absolute foal.';
+    return;
+  }
+  if (tag.length < 2 || tag.length > 5) {
+    if (msgEl) msgEl.textContent = 'Tag must be 2-5 characters. Even horses can count that high.';
+    return;
+  }
+
+  try {
+    if (msgEl) msgEl.textContent = 'Founding alliance...';
+    await api('/alliances', { method: 'POST', body: { name, tag } });
+    if (msgEl) msgEl.textContent = '⚔️ Alliance founded! Glory awaits (probably).';
+    if (nameEl) nameEl.value = '';
+    if (tagEl) tagEl.value = '';
+    setTimeout(() => loadAlliances(), 500);
+  } catch (err) {
+    if (msgEl) msgEl.textContent = `Error: ${err.message}`;
+  }
+}
+
+async function joinAlliance(allianceId) {
+  try {
+    await api(`/alliances/${allianceId}/join`, { method: 'POST' });
+    showToast('⚔️ You joined the alliance! May your cummies flow freely.', 'default');
+    loadAlliances();
+  } catch (err) {
+    showToast(`Error joining: ${err.message}`, 'danger');
+  }
+}
+
+async function leaveAlliance(allianceId) {
+  if (!confirm('Leave this alliance? Your comrades will weep into their hay.')) return;
+  try {
+    await api(`/alliances/${allianceId}/leave`, { method: 'POST' });
+    showToast('🚪 You left the alliance. The empty stall echoes with regret.', 'default');
+    loadAlliances();
+  } catch (err) {
+    showToast(`Error leaving: ${err.message}`, 'danger');
+  }
+}
+
+async function kickFromAlliance(allianceId, userId) {
+  if (!confirm('Kick this member? They will be cast into the equine wilderness.')) return;
+  try {
+    await api(`/alliances/${allianceId}/kick`, { method: 'POST', body: { user_id: userId } });
+    showToast('🥾 Member kicked! They have been yeeted from the alliance.', 'default');
+    loadAlliances();
+    viewAllianceDetail(allianceId);
+  } catch (err) {
+    showToast(`Error kicking: ${err.message}`, 'danger');
+  }
+}
+
+async function disbandAlliance(allianceId) {
+  if (!confirm('DISBAND this alliance?! The treasury will be split among members. This cannot be undone!')) return;
+  try {
+    await api(`/alliances/${allianceId}`, { method: 'DELETE' });
+    showToast('💀 Alliance disbanded. The yogurt remembers what you have done.', 'danger');
+    loadAlliances();
+  } catch (err) {
+    showToast(`Error disbanding: ${err.message}`, 'danger');
+  }
+}
+
+function openDonateModal(allianceId) {
+  const amount = prompt('How many cummies to donate to the alliance treasury?');
+  if (!amount) return;
+  const num = parseInt(amount, 10);
+  if (isNaN(num) || num <= 0) {
+    showToast('Invalid amount. Even a foal knows numbers.', 'danger');
+    return;
+  }
+  donateToAlliance(allianceId, num);
+}
+
+async function donateToAlliance(allianceId, amount) {
+  try {
+    await api(`/alliances/${allianceId}/donate`, { method: 'POST', body: { amount } });
+    showToast(`💰 Donated ₵${amount.toLocaleString()} to the alliance treasury! Generosity is its own reward (it's not).`, 'default');
+    loadAlliances();
+  } catch (err) {
+    showToast(`Error donating: ${err.message}`, 'danger');
+  }
+}
+
+// ─── HORSE HEAL ───────────────────────────────────────────────────────────
+async function healHorse(horseId) {
+  if (!confirm('Heal this horse? The veterinary bill is coming.')) return;
+  try {
+    const result = await api(`/horses/${horseId}/heal`, { method: 'POST' });
+    showToast(`💊 Horse healed! ${result?.message || 'Back in action.'} Cost: ₵${result?.cost || '???'}`, 'default');
+    // Reload the horse detail page
+    if (getPage() === 'horse') loadHorseDetail(horseId);
+  } catch (err) {
+    showToast(`Heal failed: ${err.message}`, 'danger');
+  }
+}
+
 // ─── RACE REPLAY ──────────────────────────────────────────────────────────
 let replayViz = null;
 
@@ -3564,6 +4163,7 @@ function handleChatCommand(input) {
   switch (cmd) {
     case 'help':
       addChatMsg('msg-system', null, '*** ═══ CHAT COMMANDS ═══');
+      addChatMsg('msg-system', null, '***   /w @user message — Send private whisper');
       addChatMsg('msg-system', null, '***   /send @user amount [note] — Send cummies');
       addChatMsg('msg-system', null, '***   /trade @user horseName — Offer trade');
       addChatMsg('msg-system', null, '***   /me action — Emote/roleplay');
@@ -3618,6 +4218,21 @@ function handleChatCommand(input) {
       sendChatMessage('¯\\_(ツ)_/¯');
       break;
 
+    case 'w':
+    case 'whisper':
+    case 'msg':
+    case 'pm': {
+      if (parts.length < 3) { addChatMsg('msg-error', null, '*** Usage: /w @username message'); return; }
+      const target = parts[1].replace(/^@/, '');
+      const whisperText = parts.slice(2).join(' ');
+      if (!target || !whisperText) { addChatMsg('msg-error', null, '*** Usage: /w @username message'); return; }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        // Try direct whisper via WS first (bypasses chat command overhead)
+        ws.send(JSON.stringify({ type: 'whisper', target: target, text: whisperText }));
+      }
+      break;
+    }
+
     default:
       addChatMsg('msg-error', null, `*** Unknown command: /${cmd} — Type /help`);
   }
@@ -3635,10 +4250,22 @@ function addChatMsg(cls, user, text) {
 
   let html = `<span class="chat-ts">${ts}</span>`;
   if (user) {
-    html += `<span class="chat-nick">&lt;${escHtml(user)}&gt;</span>`;
+    const myName = currentUser ? currentUser.username : '';
+    const isMe = user === myName;
+    html += `<span class="chat-nick${isMe ? '' : ' clickable-nick'}" ${isMe ? '' : `title="Click to whisper" data-nick="${escHtml(user)}"`}>&lt;${escHtml(user)}&gt;</span>`;
   }
   html += `<span class="chat-text">${escHtml(text)}</span>`;
   div.innerHTML = html;
+
+  // Attach click-to-whisper on nick
+  const nickEl = div.querySelector('.clickable-nick');
+  if (nickEl) {
+    nickEl.style.cursor = 'pointer';
+    nickEl.addEventListener('click', () => {
+      const input = document.getElementById('chat-input');
+      if (input) { input.value = `/w @${nickEl.dataset.nick} `; input.focus(); }
+    });
+  }
 
   // Check for mention of current user
   if (currentUser && currentUser.username && text.toLowerCase().includes(currentUser.username.toLowerCase())) {
@@ -3673,10 +4300,22 @@ function addChatMsgFromTs(cls, user, text, unixTs) {
 
   let html = `<span class="chat-ts">${ts}</span>`;
   if (user) {
-    html += `<span class="chat-nick">&lt;${escHtml(user)}&gt;</span>`;
+    const myName = currentUser ? currentUser.username : '';
+    const isMe = user === myName;
+    html += `<span class="chat-nick${isMe ? '' : ' clickable-nick'}" ${isMe ? '' : `title="Click to whisper" data-nick="${escHtml(user)}"`}>&lt;${escHtml(user)}&gt;</span>`;
   }
   html += `<span class="chat-text">${escHtml(text)}</span>`;
   div.innerHTML = html;
+
+  // Attach click-to-whisper on nick
+  const nickEl = div.querySelector('.clickable-nick');
+  if (nickEl) {
+    nickEl.style.cursor = 'pointer';
+    nickEl.addEventListener('click', () => {
+      const input = document.getElementById('chat-input');
+      if (input) { input.value = `/w @${nickEl.dataset.nick} `; input.focus(); }
+    });
+  }
 
   if (currentUser && currentUser.username && text.toLowerCase().includes(currentUser.username.toLowerCase())) {
     div.classList.add('msg-mention');
@@ -3724,6 +4363,18 @@ function updateUserList(users) {
     name.className = `chat-user-name${u.username === myName ? ' is-you' : ''}`;
     name.textContent = u.username + (u.username === myName ? ' (you)' : '') + (u.isGuest ? ' [guest]' : '');
 
+    // Click to whisper (skip if it's yourself)
+    if (u.username !== myName) {
+      entry.title = `Click to whisper @${u.username}`;
+      entry.addEventListener('click', () => {
+        const input = document.getElementById('chat-input');
+        if (input) {
+          input.value = `/w @${u.username} `;
+          input.focus();
+        }
+      });
+    }
+
     entry.appendChild(dot);
     entry.appendChild(name);
     container.appendChild(entry);
@@ -3755,6 +4406,16 @@ function handleChatWsMessage(msg) {
       break;
     case 'users_update':
       updateUserList(msg.users || []);
+      break;
+    case 'whisper':
+      addChatMsgFromTs('msg-whisper', null, `[WHISPER from @${msg.from}] ${msg.text}`, msg.ts);
+      showToast(`💬 Whisper from ${msg.from}`, 'default');
+      break;
+    case 'whisper_sent':
+      addChatMsgFromTs('msg-whisper-sent', null, `[WHISPER to @${msg.to}] ${msg.text}`, msg.ts);
+      break;
+    case 'whisper_error':
+      addChatMsgFromTs('msg-whisper-error', null, `[WHISPER] ${msg.text}`, msg.ts);
       break;
   }
 }
@@ -3910,6 +4571,48 @@ function renderSapphoBar(score) {
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
   const color = score >= 9 ? 'var(--fg-bright)' : score >= 6 ? 'var(--amber)' : 'var(--red)';
   return `<span class="sappho-bar" style="color:${color}">[${bar}] ${score.toFixed(1)}/${max}</span>`;
+}
+
+// ─── AGE BRACKET INFO ──────────────────────────────────────────────────────
+function getAgeBracketInfo(age) {
+  if (age <= 2) return { bracket: 'Foal', effects: '🍼 Foal: Cannot race. +20% training gains. Growing up on hay and dreams.' };
+  if (age <= 5) return { bracket: 'Prime', effects: '🏇 Prime: Peak performance. No stat penalties. This horse is in its glory days.' };
+  if (age <= 8) return { bracket: 'Veteran', effects: '🎖️ Veteran: -5% speed, +10% stamina. Wise and battle-tested. Knows every trick in the book.' };
+  if (age <= 11) return { bracket: 'Elder', effects: '🧓 Elder: -15% speed, -10% stamina. +5% injury chance. Still has heart, just not the knees.' };
+  return { bracket: 'Ancient', effects: '💀 Ancient: -25% speed, -20% stamina. +10% injury chance. Running on pure spite and yogurt fumes.' };
+}
+
+// ─── INJURY BADGE RENDERER ─────────────────────────────────────────────────
+function renderInjuryBadge(injury, horseId) {
+  if (!injury) return '';
+  const typeNames = {
+    muscle_strain: '💪 Muscle Strain',
+    tendon_tear: '🦵 Tendon Tear',
+    hoof_crack: '🦶 Hoof Crack',
+    yogurt_poisoning: '🥛 Yogurt Poisoning',
+    existential_dread: '😰 Existential Dread',
+    haunted_by_e008: '👻 Haunted by E-008'
+  };
+  const healCosts = { minor: 100, moderate: 300, severe: 500, career_ending: 0 };
+  const typeName = typeNames[injury.type] || injury.type;
+  const cost = healCosts[injury.severity] || 0;
+  const isCareerEnding = injury.severity === 'career_ending';
+
+  let html = `<div class="injury-badge">
+    <span class="injury-type">${typeName}</span>
+    <span class="injury-severity ${injury.severity}">${injury.severity.replace('_', ' ')}</span>
+    <div class="injury-desc">${escHtml(injury.description || 'This horse is not having a good time.')}</div>`;
+
+  if (isCareerEnding) {
+    html += `<div class="injury-cooldown" style="color:var(--red);">⚠ CAREER ENDING — This horse must retire.</div>`;
+  } else {
+    html += `<div class="injury-cooldown">⏳ Races until recovery: ${injury.races_left || 0}</div>`;
+    if (cost > 0) {
+      html += `<button class="injury-heal-btn" onclick="window.SU.healHorse('${escHtml(horseId)}')">💊 HEAL (₵${cost})</button>`;
+    }
+  }
+  html += '</div>';
+  return html;
 }
 
 // ─── WEATHER DISPLAY ───────────────────────────────────────────────────────
@@ -4375,6 +5078,10 @@ async function loadHorseDetail(horseId) {
 
     let html = '';
 
+    // ── Age bracket badge and injury display helpers ──
+    const ageBracketInfo = getAgeBracketInfo(h.age || 0);
+    const injuryHtml = h.injury ? renderInjuryBadge(h.injury, horseId) : '';
+
     // ── Info Card ──
     html += `<div class="panel">
       <div style="display:flex;gap:20px;flex-wrap:wrap;">
@@ -4387,7 +5094,7 @@ async function loadHorseDetail(horseId) {
             <span class="text-dim">(Peak: ${Math.round(h.peak_elo || h.elo || 1200)})</span> |
             <span class="text-dim">W/L/R:</span> ${h.wins}/${h.losses}/${h.races} |
             <span class="text-dim">Gen:</span> G${h.generation} |
-            <span class="text-dim">Age:</span> ${h.age || 0}
+            <span class="text-dim">Age:</span> ${h.age || 0} <span class="age-badge age-${ageBracketInfo.bracket.toLowerCase()}">${ageBracketInfo.bracket}</span>
           </div>
           <div style="font-size:12px;margin-top:4px;">
             <span class="text-dim">Fitness:</span> <span class="text-amber">${(h.current_fitness || 0).toFixed(3)}</span>
@@ -4398,6 +5105,10 @@ async function loadHorseDetail(horseId) {
           <div style="font-size:12px;margin-top:4px;">
             <span class="text-dim">Fatigue:</span> ${renderFatigueGauge(h.fatigue || 0)}
           </div>
+          <div style="font-size:10px;margin-top:4px;" class="text-dim">
+            ${ageBracketInfo.effects}
+          </div>
+          ${injuryHtml}
         </div>
         <div style="min-width:200px;">
           <h3 style="margin-top:0;">TRAITS</h3>
@@ -5234,6 +5945,329 @@ async function cancelListing(listingId) {
     await loadMarket();
   } catch (e) {
     alert(`Cancel error: ${e.message}`);
+  }
+}
+
+// ─── AUCTION PAGE ─────────────────────────────────────────────────────────
+let allAuctions = [];
+let auctionTimerInterval = null;
+let currentAuctionModalID = null;
+
+async function loadAuctions() {
+  try {
+    const [aData, hData] = await Promise.allSettled([
+      api('/auctions'),
+      api('/horses'),
+    ]);
+
+    allAuctions = aData.status === 'fulfilled' ? (Array.isArray(aData.value) ? aData.value : []) : [];
+    allHorses = hData.status === 'fulfilled' ? (Array.isArray(hData.value) ? hData.value : []) : allHorses;
+  } catch (e) {
+    allAuctions = [];
+  }
+
+  // Populate horse select for creating auctions (only user's non-retired horses)
+  const horseEl = $('#auction-horse');
+  if (horseEl) {
+    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+    allHorses.filter(h => !h.retired).forEach(h => {
+      horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+    });
+  }
+
+  renderAuctions();
+  updateAuctionStats();
+  startAuctionTimers();
+}
+
+function updateAuctionStats() {
+  const activeCount = allAuctions.filter(a => a.status === 'open' || a.status === 'ending').length;
+  const taxBurned = allAuctions.reduce((sum, a) => sum + (a.geoffrussyTax || 0), 0);
+  const countEl = $('#auction-active-count');
+  const taxEl = $('#auction-tax-burned');
+  if (countEl) countEl.textContent = activeCount;
+  if (taxEl) taxEl.textContent = `₵${taxBurned.toLocaleString()}`;
+}
+
+function renderAuctions() {
+  const listEl = $('#auction-listings');
+  if (!listEl) return;
+
+  const active = allAuctions.filter(a => a.status === 'open' || a.status === 'ending');
+
+  if (active.length === 0) {
+    listEl.innerHTML = '<div class="text-dim">No active auctions. The gavel rests... for now. 🔨</div>';
+    return;
+  }
+
+  let html = `<table class="term-table"><thead><tr>
+    <th>HORSE</th><th>SELLER</th><th>STARTING</th><th>CURRENT BID</th><th>BIDDER</th><th>BIDS</th><th>TIME LEFT</th><th>STATUS</th><th>ACTIONS</th>
+  </tr></thead><tbody>`;
+
+  active.forEach(a => {
+    const timeLeft = getAuctionTimeLeft(a);
+    const statusClass = a.status === 'ending' ? 'text-red' : 'text-amber';
+    const statusText = a.status === 'ending' ? '⚡ ENDING' : '🔨 OPEN';
+    const currentBidText = a.currentBid > 0 ? `₵${a.currentBid.toLocaleString()}` : `₵${a.startingBid.toLocaleString()} (min)`;
+    const bidderText = a.bidderName || '—';
+
+    html += `<tr>
+      <td><a href="#horse/${a.horseID}">${escHtml(a.horseName)}</a></td>
+      <td>${escHtml(a.sellerName)}</td>
+      <td class="text-dim">₵${(a.startingBid || 0).toLocaleString()}</td>
+      <td class="text-amber">${currentBidText}</td>
+      <td>${escHtml(bidderText)}</td>
+      <td>${a.bidCount || 0}</td>
+      <td class="${statusClass}" data-auction-timer="${a.id}">${timeLeft}</td>
+      <td class="${statusClass}">${statusText}</td>
+      <td>
+        <button class="term-btn sm" onclick="window.SU.openAuctionBidModal('${escHtml(a.id)}')">BID</button>
+        <button class="term-btn danger sm" onclick="window.SU.cancelAuction('${escHtml(a.id)}')">CANCEL</button>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  listEl.innerHTML = html;
+}
+
+function getAuctionTimeLeft(auction) {
+  if (!auction.expiresAt) return '??';
+  const exp = new Date(auction.expiresAt).getTime();
+  const now = Date.now();
+  const diff = exp - now;
+  if (diff <= 0) return 'EXPIRED';
+  const secs = Math.floor(diff / 1000);
+  const mins = Math.floor(secs / 60);
+  const remSecs = secs % 60;
+  if (mins > 0) return `${mins}m ${remSecs}s`;
+  return `${remSecs}s`;
+}
+
+function startAuctionTimers() {
+  if (auctionTimerInterval) clearInterval(auctionTimerInterval);
+  auctionTimerInterval = setInterval(() => {
+    // Update timer cells in listing table
+    allAuctions.forEach(a => {
+      if (a.status !== 'open' && a.status !== 'ending') return;
+      const el = document.querySelector(`[data-auction-timer="${a.id}"]`);
+      if (el) {
+        const timeLeft = getAuctionTimeLeft(a);
+        el.textContent = timeLeft;
+        if (timeLeft === 'EXPIRED') {
+          el.className = 'text-red';
+        }
+      }
+    });
+    // Update modal timer if open
+    if (currentAuctionModalID) {
+      const auction = allAuctions.find(a => a.id === currentAuctionModalID);
+      if (auction) {
+        const timerEl = $('#auction-modal-timer');
+        if (timerEl) {
+          const tl = getAuctionTimeLeft(auction);
+          timerEl.textContent = `⏱ Time Left: ${tl}`;
+          if (tl === 'EXPIRED') timerEl.style.color = 'var(--red)';
+        }
+      }
+    }
+  }, 1000);
+}
+
+async function createAuction() {
+  const horseID = $('#auction-horse').value;
+  const startBid = parseInt($('#auction-start-bid').value) || 0;
+  const duration = parseInt($('#auction-duration').value) || 120;
+  const msgEl = $('#auction-create-msg');
+
+  if (!horseID) {
+    msgEl.textContent = 'ERROR: Select a horse to auction';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+  if (startBid < 1) {
+    msgEl.textContent = 'ERROR: Starting bid must be at least 1 cummies';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  try {
+    const result = await api('/auctions', {
+      method: 'POST',
+      body: { horseID, startingBid: startBid, duration },
+    });
+    msgEl.textContent = `✓ Auction created for ${result.horseName || 'horse'}! ID: ${(result.id || '').substring(0, 8)}`;
+    msgEl.style.color = 'var(--fg)';
+    await loadAuctions();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+function openAuctionBidModal(auctionID) {
+  const auction = allAuctions.find(a => a.id === auctionID);
+  if (!auction) return;
+
+  currentAuctionModalID = auctionID;
+  const modal = $('#auction-bid-modal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+
+  // Find horse details
+  const horse = allHorses.find(h => h.id === auction.horseID);
+
+  // Title
+  const titleEl = $('#auction-modal-title');
+  titleEl.textContent = `Horse: ${auction.horseName} — Seller: ${auction.sellerName}`;
+
+  // Stats
+  const statsEl = $('#auction-modal-stats');
+  if (horse) {
+    const genome = horse.genome || {};
+    let geneStr = '';
+    ['SPD','STM','TMP','SZE','REC','INT','MUT'].forEach(g => {
+      if (genome[g]) {
+        const expr = (genome[g].allele_a || '?') + (genome[g].allele_b || '?');
+        geneStr += `${g}:${expr} `;
+      }
+    });
+    statsEl.innerHTML = `
+      <div class="text-dim">ELO: <span class="text-amber">${Math.round(horse.elo || 1200)}</span> | 
+      W/L: <span class="text-green">${horse.wins || 0}</span>/<span class="text-red">${horse.losses || 0}</span> | 
+      Gen: ${horse.generation || 0} | 
+      Fitness: ${(horse.current_fitness || 0).toFixed(2)}</div>
+      <div class="text-dim" style="font-size:10px;margin-top:2px;">GENOME: ${geneStr || 'Unknown'}</div>
+      ${horse.traits?.length ? `<div class="text-dim" style="font-size:10px;">TRAITS: ${horse.traits.map(t => t.name).join(', ')}</div>` : ''}
+    `;
+  } else {
+    statsEl.innerHTML = '<div class="text-dim">Horse details loading...</div>';
+  }
+
+  // Timer
+  const timerEl = $('#auction-modal-timer');
+  timerEl.textContent = `⏱ Time Left: ${getAuctionTimeLeft(auction)}`;
+
+  // Current bid info
+  const currentEl = $('#auction-modal-current');
+  if (auction.currentBid > 0) {
+    currentEl.innerHTML = `<div>Current Bid: <span class="text-amber" style="font-size:18px;">₵${auction.currentBid.toLocaleString()}</span> by <span class="text-green">${escHtml(auction.bidderName)}</span></div>`;
+  } else {
+    currentEl.innerHTML = `<div>No bids yet — Starting bid: <span class="text-amber" style="font-size:18px;">₵${auction.startingBid.toLocaleString()}</span></div>`;
+  }
+
+  // Set default bid amount
+  const bidInput = $('#auction-bid-amount');
+  const minBid = auction.currentBid > 0 ? auction.currentBid + 1 : auction.startingBid;
+  bidInput.value = minBid;
+  bidInput.min = minBid;
+
+  // Bid history
+  renderAuctionBidHistory(auction);
+
+  // Clear message
+  const msgEl = $('#auction-bid-msg');
+  if (msgEl) msgEl.textContent = '';
+}
+
+function renderAuctionBidHistory(auction) {
+  const histEl = $('#auction-modal-history');
+  if (!histEl) return;
+
+  if (!auction.bidHistory || auction.bidHistory.length === 0) {
+    histEl.innerHTML = '<div class="text-dim">No bids yet. Be the first!</div>';
+    return;
+  }
+
+  // Show bids newest-first
+  const bids = [...auction.bidHistory].reverse();
+  let html = '<table class="term-table" style="font-size:11px;"><thead><tr><th>#</th><th>BIDDER</th><th>AMOUNT</th><th>TIME</th></tr></thead><tbody>';
+  bids.forEach((b, i) => {
+    const ts = b.timestamp ? new Date(b.timestamp).toLocaleTimeString() : '??';
+    const num = auction.bidHistory.length - i;
+    html += `<tr>
+      <td>${num}</td>
+      <td>${escHtml(b.bidderName)}</td>
+      <td class="text-amber">₵${(b.amount || 0).toLocaleString()}</td>
+      <td class="text-dim">${ts}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  histEl.innerHTML = html;
+}
+
+function closeAuctionModal() {
+  const modal = $('#auction-bid-modal');
+  if (modal) modal.style.display = 'none';
+  currentAuctionModalID = null;
+}
+
+async function submitAuctionBid() {
+  if (!currentAuctionModalID) return;
+  const amount = parseInt($('#auction-bid-amount').value) || 0;
+  const msgEl = $('#auction-bid-msg');
+
+  if (amount <= 0) {
+    msgEl.textContent = 'ERROR: Bid amount must be positive';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  try {
+    const result = await api(`/auctions/${currentAuctionModalID}/bid`, {
+      method: 'POST',
+      body: { amount },
+    });
+    msgEl.textContent = `✓ Bid placed: ₵${amount.toLocaleString()}!`;
+    msgEl.style.color = 'var(--fg)';
+
+    // Update local auction data
+    const idx = allAuctions.findIndex(a => a.id === currentAuctionModalID);
+    if (idx >= 0 && result) {
+      allAuctions[idx] = result;
+    }
+
+    // Refresh modal display
+    openAuctionBidModal(currentAuctionModalID);
+    // Refresh listings
+    renderAuctions();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function cancelAuction(auctionID) {
+  if (!confirm('Cancel this auction? (Only works if no bids)')) return;
+  try {
+    await api(`/auctions/${auctionID}`, { method: 'DELETE' });
+    await loadAuctions();
+  } catch (e) {
+    alert(`Cancel error: ${e.message}`);
+  }
+}
+
+// Called when we receive a bid update via WebSocket
+function onAuctionBidUpdate(msg) {
+  if (!msg.auction) return;
+
+  // Update our local copy
+  const idx = allAuctions.findIndex(a => a.id === msg.auction.id);
+  if (idx >= 0) {
+    allAuctions[idx] = msg.auction;
+  } else {
+    allAuctions.push(msg.auction);
+  }
+
+  // Refresh listing table if on auctions page
+  if (getPage() === 'auctions') {
+    renderAuctions();
+    updateAuctionStats();
+  }
+
+  // Refresh modal if viewing this auction
+  if (currentAuctionModalID === msg.auction.id) {
+    openAuctionBidModal(msg.auction.id);
   }
 }
 
@@ -6748,6 +7782,10 @@ function bindEvents() {
   // Market
   $('#btn-create-listing').addEventListener('click', createListing);
 
+  // Auction
+  const auctionBtn = $('#btn-create-auction');
+  if (auctionBtn) auctionBtn.addEventListener('click', createAuction);
+
   // Tournament
   $('#btn-create-tourney').addEventListener('click', createTournament);
 
@@ -6756,6 +7794,10 @@ function bindEvents() {
 
   // Season advance
   $('#btn-advance-season').addEventListener('click', advanceSeason);
+
+  // Alliance
+  const allianceBtn = $('#btn-create-alliance');
+  if (allianceBtn) allianceBtn.addEventListener('click', createAlliance);
 
   // Challenge
   const challengeBtn = $('#btn-create-challenge');
@@ -6798,6 +7840,20 @@ window.SU = {
   claimDailyReward,
   switchLeaderboardTab,
   sortLeaderboard,
+  // Auction features
+  openAuctionBidModal,
+  closeAuctionModal,
+  submitAuctionBid,
+  cancelAuction,
+  // Alliance features
+  viewAllianceDetail,
+  joinAlliance,
+  leaveAlliance,
+  kickFromAlliance,
+  disbandAlliance,
+  openDonateModal,
+  // Horse injury
+  healHorse,
 };
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────

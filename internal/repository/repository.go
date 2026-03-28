@@ -7,6 +7,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/mojomast/stallionussy/internal/models"
 )
@@ -216,4 +217,85 @@ type MarketTransactionRepository interface {
 	// GetRecentTransactions returns the most recent market transactions,
 	// newest first.
 	GetRecentTransactions(ctx context.Context, limit int) ([]*models.MarketTransaction, error)
+}
+
+// ---------------------------------------------------------------------------
+// AuctionRepository — live horse auctions
+// ---------------------------------------------------------------------------
+
+// AuctionRepository handles persistence for live horse auctions.
+type AuctionRepository interface {
+	// CreateAuction persists a new auction.
+	CreateAuction(ctx context.Context, auction *models.Auction) error
+
+	// GetAuction retrieves an auction by ID.
+	GetAuction(ctx context.Context, id string) (*models.Auction, error)
+
+	// ListActiveAuctions returns all auctions with status "open" or "ending".
+	ListActiveAuctions(ctx context.Context) ([]*models.Auction, error)
+
+	// ListAuctionsByUser returns all auctions created by or bid on by a user.
+	ListAuctionsByUser(ctx context.Context, userID string) ([]*models.Auction, error)
+
+	// UpdateAuction saves changes to an existing auction.
+	UpdateAuction(ctx context.Context, auction *models.Auction) error
+}
+
+// ---------------------------------------------------------------------------
+// AllianceRepository — stable alliances / guilds
+// ---------------------------------------------------------------------------
+
+// AllianceRepository handles persistence for stable alliances (guilds).
+type AllianceRepository interface {
+	// CreateAlliance persists a new alliance.
+	CreateAlliance(ctx context.Context, alliance *models.Alliance) error
+
+	// GetAlliance retrieves an alliance by ID, including its members.
+	GetAlliance(ctx context.Context, id string) (*models.Alliance, error)
+
+	// ListAlliances returns all alliances.
+	ListAlliances(ctx context.Context) ([]*models.Alliance, error)
+
+	// UpdateAlliance saves changes to an existing alliance (name, tag, motto, treasury).
+	UpdateAlliance(ctx context.Context, alliance *models.Alliance) error
+
+	// DeleteAlliance removes an alliance and cascades to its members.
+	DeleteAlliance(ctx context.Context, id string) error
+
+	// AddMember adds a member to an alliance.
+	AddMember(ctx context.Context, member *models.AllianceMember) error
+
+	// RemoveMember removes a member from an alliance.
+	RemoveMember(ctx context.Context, allianceID, userID string) error
+
+	// GetMember retrieves a specific member record.
+	GetMember(ctx context.Context, allianceID, userID string) (*models.AllianceMember, error)
+
+	// GetMemberByUser finds which alliance a user belongs to (if any).
+	GetMemberByUser(ctx context.Context, userID string) (*models.AllianceMember, error)
+
+	// ListMembers returns all members of a given alliance.
+	ListMembers(ctx context.Context, allianceID string) ([]*models.AllianceMember, error)
+
+	// UpdateMember saves changes to a member record (e.g. role change).
+	UpdateMember(ctx context.Context, member *models.AllianceMember) error
+}
+
+// ---------------------------------------------------------------------------
+// RaceReplayRepository — persistent race replay data
+// ---------------------------------------------------------------------------
+
+// RaceReplayRepository handles persistence for full race replays.
+type RaceReplayRepository interface {
+	// SaveReplay persists a full race replay. Uses upsert semantics.
+	SaveReplay(ctx context.Context, replay *models.RaceReplay) error
+
+	// GetReplay retrieves a single race replay by race ID.
+	GetReplay(ctx context.Context, raceID string) (*models.RaceReplay, error)
+
+	// ListRecentReplays returns the most recent race replays, newest first.
+	ListRecentReplays(ctx context.Context, limit int) ([]*models.RaceReplay, error)
+
+	// DeleteOldReplays removes replays older than the given cutoff time.
+	DeleteOldReplays(ctx context.Context, olderThan time.Time) (int64, error)
 }

@@ -30,7 +30,7 @@ const horseCols = `
 	fitness_ceiling, current_fitness, wins, losses, races,
 	elo, owner_id, is_legendary, lot_number, created_at,
 	lore, traits, fatigue, retired, total_earnings,
-	training_xp, peak_elo`
+	training_xp, peak_elo, injury`
 
 // scanHorse scans a single horse row from the given scanner. Genome and Traits
 // are stored as JSONB and unmarshalled here.
@@ -39,6 +39,7 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 	var (
 		genomeJSON []byte
 		traitsJSON []byte
+		injuryJSON []byte
 		sireID     sql.NullString
 		mareID     sql.NullString
 		lore       sql.NullString
@@ -69,6 +70,7 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 		&h.TotalEarnings,
 		&h.TrainingXP,
 		&h.PeakELO,
+		&injuryJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -85,6 +87,14 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 	if len(traitsJSON) > 0 {
 		if err := json.Unmarshal(traitsJSON, &h.Traits); err != nil {
 			return nil, fmt.Errorf("unmarshal traits: %w", err)
+		}
+	}
+
+	// Unmarshal JSONB injury (nullable — nil means healthy).
+	if len(injuryJSON) > 0 {
+		h.Injury = &models.Injury{}
+		if err := json.Unmarshal(injuryJSON, h.Injury); err != nil {
+			return nil, fmt.Errorf("unmarshal injury: %w", err)
 		}
 	}
 
@@ -115,7 +125,7 @@ func toNullString(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: true}
 }
 
-// CreateHorse persists a new horse. Genome and Traits are marshalled to JSONB.
+// CreateHorse persists a new horse. Genome, Traits, and Injury are marshalled to JSONB.
 func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error {
 	genomeJSON, err := json.Marshal(horse.Genome)
 	if err != nil {
@@ -125,6 +135,13 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 	if err != nil {
 		return fmt.Errorf("marshal traits: %w", err)
 	}
+	var injuryJSON []byte
+	if horse.Injury != nil {
+		injuryJSON, err = json.Marshal(horse.Injury)
+		if err != nil {
+			return fmt.Errorf("marshal injury: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO horses (
@@ -132,13 +149,13 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 			fitness_ceiling, current_fitness, wins, losses, races,
 			elo, owner_id, is_legendary, lot_number, created_at,
 			lore, traits, fatigue, retired, total_earnings,
-			training_xp, peak_elo
+			training_xp, peak_elo, injury
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10, $11, $12,
 			$13, $14, $15, $16, $17,
 			$18, $19, $20, $21, $22,
-			$23, $24
+			$23, $24, $25
 		)`
 	_, err = r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -165,6 +182,7 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 		horse.TotalEarnings,
 		horse.TrainingXP,
 		horse.PeakELO,
+		injuryJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("create horse: %w", err)
@@ -241,6 +259,13 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 	if err != nil {
 		return fmt.Errorf("marshal traits: %w", err)
 	}
+	var injuryJSON []byte
+	if horse.Injury != nil {
+		injuryJSON, err = json.Marshal(horse.Injury)
+		if err != nil {
+			return fmt.Errorf("marshal injury: %w", err)
+		}
+	}
 
 	query := `
 		UPDATE horses SET
@@ -249,7 +274,8 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 			current_fitness = $9, wins = $10, losses = $11, races = $12,
 			elo = $13, owner_id = $14, is_legendary = $15, lot_number = $16,
 			lore = $17, traits = $18, fatigue = $19, retired = $20,
-			total_earnings = $21, training_xp = $22, peak_elo = $23
+			total_earnings = $21, training_xp = $22, peak_elo = $23,
+			injury = $24
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -275,6 +301,7 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 		horse.TotalEarnings,
 		horse.TrainingXP,
 		horse.PeakELO,
+		injuryJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("update horse: %w", err)

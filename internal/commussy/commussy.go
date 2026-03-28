@@ -170,6 +170,39 @@ func (h *Hub) SendToClient(c *Client, v interface{}) {
 	}
 }
 
+// SendToUser marshals a value to JSON and sends it to ALL connections for a
+// specific userID (a user may have multiple tabs/devices open). Non-blocking.
+func (h *Hub) SendToUser(userID string, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if c.UserID == userID {
+			select {
+			case c.send <- data:
+			default:
+			}
+		}
+	}
+}
+
+// GetClientByUsername finds the first connected client whose username matches
+// (case-insensitive). Returns nil if no matching client is online.
+func (h *Hub) GetClientByUsername(username string) *Client {
+	lower := strings.ToLower(username)
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		if strings.ToLower(c.Username) == lower {
+			return c
+		}
+	}
+	return nil
+}
+
 // HandleChatCommand processes chat commands received from a client's ReadPump.
 // The "who" command is handled locally; other commands are forwarded to the
 // Hub's OnChatCommand callback if set.
@@ -514,6 +547,64 @@ func (c *Client) ReadPump() {
 				continue
 			}
 			c.hub.HandleChatCommand(c, command, msg)
+
+		case "whisper":
+			// Private message to another user.
+			// Rate limit: reuse the same chat rate limiter.
+			now := time.Now()
+			if now.Sub(c.lastChatTime) < 500*time.Millisecond {
+				continue
+			}
+			c.lastChatTime = now
+
+			target, _ := msg["target"].(string)
+			text, _ := msg["text"].(string)
+			text = stripHTMLTags(text)
+			if len(text) > 500 {
+				text = text[:500]
+			}
+			if target == "" || text == "" {
+				continue
+			}
+
+			// Find the target client by username (case-insensitive).
+			targetClient := c.hub.GetClientByUsername(target)
+			if targetClient == nil {
+				c.hub.SendToClient(c, map[string]interface{}{
+					"type": "whisper_error",
+					"text": fmt.Sprintf("User '%s' is not online.", target),
+					"ts":   now.Unix(),
+				})
+				continue
+			}
+
+			// Don't allow whispering yourself.
+			if strings.EqualFold(c.Username, target) {
+				c.hub.SendToClient(c, map[string]interface{}{
+					"type": "whisper_error",
+					"text": "You can't whisper to yourself, weirdo.",
+					"ts":   now.Unix(),
+				})
+				continue
+			}
+
+			// Send the whisper to the target user (all their connections).
+			c.hub.SendToUser(targetClient.UserID, map[string]interface{}{
+				"type":       "whisper",
+				"from":       c.Username,
+				"fromUserID": c.UserID,
+				"text":       text,
+				"ts":         now.Unix(),
+			})
+
+			// Echo back to sender as confirmation.
+			c.hub.SendToClient(c, map[string]interface{}{
+				"type":     "whisper_sent",
+				"to":       targetClient.Username,
+				"toUserID": targetClient.UserID,
+				"text":     text,
+				"ts":       now.Unix(),
+			})
 
 		default:
 			// Unknown message type — ignore silently.
