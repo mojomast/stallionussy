@@ -139,6 +139,20 @@ type narrativeMessage struct {
 	Message string `json:"message"`
 }
 
+// narrativeTickLine is a single narrative line within a narrative_tick message.
+type narrativeTickLine struct {
+	Text  string `json:"text"`
+	Class string `json:"class"`
+}
+
+// narrativeTickMessage is the JSON shape for tick-interleaved narrative broadcasts.
+type narrativeTickMessage struct {
+	Type   string              `json:"type"`
+	RaceID string              `json:"raceID"`
+	Tick   int                 `json:"tick"`
+	Lines  []narrativeTickLine `json:"lines"`
+}
+
 // ---------------------------------------------------------------------------
 // Hub broadcast helpers
 // ---------------------------------------------------------------------------
@@ -224,6 +238,32 @@ func (h *Hub) BroadcastNarrative(raceID string, message string) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		log.Printf("commussy: failed to marshal narrative: %v", err)
+		return
+	}
+	h.broadcast <- data
+}
+
+// BroadcastNarrativeTick sends narrative lines interleaved with a specific
+// race tick, enabling real-time play-by-play commentary during replay.
+func (h *Hub) BroadcastNarrativeTick(raceID string, tick int, texts []string, classes []string) {
+	nLines := make([]narrativeTickLine, len(texts))
+	for i, t := range texts {
+		cls := "event-normal"
+		if i < len(classes) && classes[i] != "" {
+			cls = classes[i]
+		}
+		nLines[i] = narrativeTickLine{Text: t, Class: cls}
+	}
+
+	msg := narrativeTickMessage{
+		Type:   "narrative_tick",
+		RaceID: raceID,
+		Tick:   tick,
+		Lines:  nLines,
+	}
+	data, err := json.Marshal(msg)
+	if err != nil {
+		log.Printf("commussy: failed to marshal narrative_tick: %v", err)
 		return
 	}
 	h.broadcast <- data

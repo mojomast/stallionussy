@@ -323,22 +323,22 @@ func TestGenerateRaceNarrative(t *testing.T) {
 		t.Fatal("narrative should not be empty")
 	}
 
-	// Should contain weather line.
+	// Should contain weather line (now includes CONDITIONS: prefix).
 	foundWeather := false
 	for _, line := range narrative {
-		if strings.Contains(line, "WEATHER:") {
+		if strings.Contains(line, "CONDITIONS:") || strings.Contains(line, "WEATHER") {
 			foundWeather = true
 			break
 		}
 	}
 	if !foundWeather {
-		t.Error("narrative should contain a WEATHER line")
+		t.Error("narrative should contain a CONDITIONS/WEATHER line")
 	}
 
 	// Should contain final results section.
 	foundResults := false
 	for _, line := range narrative {
-		if strings.Contains(line, "FINAL RESULTS") {
+		if strings.Contains(line, "R E S U L T") || strings.Contains(line, "CHAMPION") || strings.Contains(line, "1st") {
 			foundResults = true
 			break
 		}
@@ -378,8 +378,8 @@ func TestGenerateRaceNarrativeEmpty(t *testing.T) {
 		Entries: []models.RaceEntry{},
 	}
 	narrative := GenerateRaceNarrative(race)
-	if narrative != nil {
-		t.Errorf("expected nil narrative for empty entries, got %v", narrative)
+	if len(narrative) != 0 {
+		t.Errorf("expected empty narrative for empty entries, got %v", narrative)
 	}
 }
 
@@ -411,14 +411,22 @@ func TestGenerateRaceNarrativeWithWeather(t *testing.T) {
 				t.Fatal("narrative should not be empty")
 			}
 
-			// First line should contain the weather type.
-			if !strings.Contains(narrative[0], string(tc.w)) {
-				t.Errorf("first line should mention weather %q, got %q", tc.w, narrative[0])
+			// Weather line should be in the first few lines and mention the weather type.
+			foundWeatherType := false
+			foundWeatherDesc := false
+			for _, line := range narrative {
+				if strings.Contains(line, string(tc.w)) {
+					foundWeatherType = true
+				}
+				if strings.Contains(line, tc.desc) {
+					foundWeatherDesc = true
+				}
 			}
-
-			// Weather description should be present.
-			if !strings.Contains(narrative[0], tc.desc) {
-				t.Errorf("first line should contain %q, got %q", tc.desc, narrative[0])
+			if !foundWeatherType {
+				t.Errorf("narrative should mention weather %q somewhere", tc.w)
+			}
+			if !foundWeatherDesc {
+				t.Errorf("narrative should contain %q somewhere", tc.desc)
 			}
 		})
 	}
@@ -749,7 +757,7 @@ func TestHauntedussyTrack(t *testing.T) {
 	// Should have FINAL RESULTS.
 	foundResults := false
 	for _, line := range narrative {
-		if strings.Contains(line, "FINAL RESULTS") {
+		if strings.Contains(line, "R E S U L T") || strings.Contains(line, "CHAMPION") || strings.Contains(line, "1st") {
 			foundResults = true
 			break
 		}

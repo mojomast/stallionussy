@@ -6,10 +6,12 @@
 package server
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -624,9 +626,10 @@ func (s *Server) resolveHorses(ids []string) ([]*models.Horse, string) {
 
 // raceResult is the JSON response for race endpoints.
 type raceResult struct {
-	Race      *models.Race   `json:"race"`
-	Narrative []string       `json:"narrative"`
-	Weather   models.Weather `json:"weather"`
+	Race             *models.Race            `json:"race"`
+	Narrative        []string                `json:"narrative"`
+	NarrativeIndexed []racussy.NarrativeLine `json:"narrative_indexed"`
+	Weather          models.Weather          `json:"weather"`
 }
 
 // runRace creates a race, simulates it with weather, updates stats, records
@@ -640,8 +643,13 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 	race := racussy.NewRace(horses, trackType, purse)
 	race = racussy.SimulateRaceWithWeather(race, horses, weather)
 
-	// 3. Generate the narrative with weather context.
-	narrative := racussy.GenerateRaceNarrativeWithWeather(race, weather)
+	// 3. Generate the indexed narrative with weather context.
+	narrativeIndexed := racussy.GenerateRaceNarrativeIndexed(race, weather)
+	// Also generate the plain string narrative for backward compatibility.
+	narrative := make([]string, len(narrativeIndexed))
+	for i, nl := range narrativeIndexed {
+		narrative[i] = nl.Text
+	}
 
 	// 4. Build horse lookup map.
 	horseMap := make(map[string]*models.Horse, len(horses))
@@ -758,15 +766,16 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 	}
 
 	// Broadcast tick-by-tick replay to WebSocket clients.
-	go s.broadcastRaceReplay(race, narrative)
+	go s.broadcastRaceReplay(race, narrativeIndexed)
 
 	log.Printf("server: race %s finished on %s (%dm) with %d entries, weather: %s",
 		race.ID, race.TrackType, race.Distance, len(race.Entries), weather)
 
 	return raceResult{
-		Race:      race,
-		Narrative: narrative,
-		Weather:   weather,
+		Race:             race,
+		Narrative:        narrative,
+		NarrativeIndexed: narrativeIndexed,
+		Weather:          weather,
 	}
 }
 
@@ -824,8 +833,8 @@ func hasAchievement(achievements []models.Achievement, id string) bool {
 }
 
 // broadcastRaceReplay sends tick-by-tick telemetry to WebSocket clients with
-// a configurable delay between ticks for dramatic real-time replay effect.
-func (s *Server) broadcastRaceReplay(race *models.Race, narrative []string) {
+// narrative lines interleaved at the correct ticks for real-time play-by-play.
+func (s *Server) broadcastRaceReplay(race *models.Race, narrativeIndexed []racussy.NarrativeLine) {
 	tickDelay := 50 * time.Millisecond
 
 	if envDelay := os.Getenv("STALLIONUSSY_TICK_DELAY_MS"); envDelay != "" {
@@ -835,9 +844,26 @@ func (s *Server) broadcastRaceReplay(race *models.Race, narrative []string) {
 		}
 	}
 
+	// Build a map of tick -> narrative lines for that tick.
+	narrativeByTick := make(map[int][]racussy.NarrativeLine)
+	for _, nl := range narrativeIndexed {
+		narrativeByTick[nl.Tick] = append(narrativeByTick[nl.Tick], nl)
+	}
+
 	// Broadcast race_start.
 	s.hub.BroadcastRaceStart(race.ID, race)
-	time.Sleep(tickDelay)
+
+	// Send pre-race narrative (tick 0) before the first tick.
+	if preRace, ok := narrativeByTick[0]; ok {
+		texts := make([]string, len(preRace))
+		classes := make([]string, len(preRace))
+		for i, nl := range preRace {
+			texts[i] = nl.Text
+			classes[i] = nl.Class
+		}
+		s.hub.BroadcastNarrativeTick(race.ID, 0, texts, classes)
+	}
+	time.Sleep(tickDelay * 5) // Brief pause for pre-race announcements
 
 	// Determine the max tick.
 	maxTick := 0
@@ -869,7 +895,7 @@ func (s *Server) broadcastRaceReplay(race *models.Race, narrative []string) {
 		tickIndices[i] = idx
 	}
 
-	// Replay tick-by-tick.
+	// Replay tick-by-tick with interleaved narrative.
 	for tick := 1; tick <= maxTick; tick++ {
 		tickEntries := make([]models.RaceEntry, len(race.Entries))
 		for i, entry := range race.Entries {
@@ -891,15 +917,33 @@ func (s *Server) broadcastRaceReplay(race *models.Race, narrative []string) {
 		}
 
 		s.hub.BroadcastRaceTick(race.ID, tick, tickEntries)
+
+		// Send any narrative lines for this tick.
+		if nls, ok := narrativeByTick[tick]; ok {
+			texts := make([]string, len(nls))
+			classes := make([]string, len(nls))
+			for i, nl := range nls {
+				texts[i] = nl.Text
+				classes[i] = nl.Class
+			}
+			s.hub.BroadcastNarrativeTick(race.ID, tick, texts, classes)
+		}
+
 		time.Sleep(tickDelay)
 	}
 
-	// Broadcast narrative lines.
-	for _, line := range narrative {
-		if line == "" {
+	// Send any post-race narrative lines (tick > maxTick).
+	for tick, nls := range narrativeByTick {
+		if tick <= maxTick {
 			continue
 		}
-		s.hub.BroadcastNarrative(race.ID, line)
+		texts := make([]string, len(nls))
+		classes := make([]string, len(nls))
+		for i, nl := range nls {
+			texts[i] = nl.Text
+			classes[i] = nl.Class
+		}
+		s.hub.BroadcastNarrativeTick(race.ID, tick, texts, classes)
 	}
 
 	// Broadcast race_end.
@@ -1318,8 +1362,12 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	// Simulate the race with weather.
 	race = racussy.SimulateRaceWithWeather(race, horses, weather)
 
-	// Generate narrative.
-	narrative := racussy.GenerateRaceNarrativeWithWeather(race, weather)
+	// Generate indexed narrative.
+	narrativeIndexed := racussy.GenerateRaceNarrativeIndexed(race, weather)
+	narrative := make([]string, len(narrativeIndexed))
+	for i, nl := range narrativeIndexed {
+		narrative[i] = nl.Text
+	}
 
 	// Record round results in tournament standings.
 	if err := s.tournaments.RecordRoundResults(tournamentID, race); err != nil {
@@ -1330,7 +1378,7 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	s.applyPostRaceEffects(race, horses, weather)
 
 	// Broadcast replay.
-	go s.broadcastRaceReplay(race, narrative)
+	go s.broadcastRaceReplay(race, narrativeIndexed)
 
 	// Get updated standings.
 	standings := s.tournaments.GetStandings(tournamentID)
@@ -1339,10 +1387,11 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 		tournamentID, race.ID, weather)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"race":      race,
-		"narrative": narrative,
-		"weather":   weather,
-		"standings": standings,
+		"race":              race,
+		"narrative":         narrative,
+		"narrative_indexed": narrativeIndexed,
+		"weather":           weather,
+		"standings":         standings,
 	})
 }
 
@@ -1694,4 +1743,15 @@ type loggingResponseWriter struct {
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.statusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack implements http.Hijacker so WebSocket upgrades work through the
+// logging middleware. Without this, gorilla/websocket gets:
+//
+//	"websocket: response does not implement http.Hijacker"
+func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := lrw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
 }

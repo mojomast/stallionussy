@@ -661,28 +661,78 @@ func GenerateRaceNarrative(race *models.Race) []string {
 }
 
 // GenerateRaceNarrativeWithWeather produces narrative text including weather context.
+// This is the backward-compatible wrapper that returns plain strings.
+// Internally delegates to GenerateRaceNarrativeIndexed and strips tick/class info.
 func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather) []string {
+	indexed := GenerateRaceNarrativeIndexed(race, weather)
+	result := make([]string, len(indexed))
+	for i, nl := range indexed {
+		result[i] = nl.Text
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// NarrativeLine — a single narrative line tagged with its tick number
+// ---------------------------------------------------------------------------
+
+// NarrativeLine represents a single piece of race commentary tied to a
+// specific simulation tick. This enables real-time interleaving of narration
+// with tick-by-tick race replay — like a real derby broadcast.
+type NarrativeLine struct {
+	Tick  int    `json:"tick"`  // simulation tick this line corresponds to (0 = pre-race)
+	Text  string `json:"text"`  // the narrative text
+	Class string `json:"class"` // CSS class hint for frontend styling
+}
+
+// ---------------------------------------------------------------------------
+// GenerateRaceNarrativeIndexed — tick-tagged narrative for real-time replay
+// ---------------------------------------------------------------------------
+
+// GenerateRaceNarrativeIndexed produces narrative lines tagged by tick,
+// enabling real-time interleaving with the tick-by-tick race replay.
+func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []NarrativeLine {
 	if len(race.Entries) == 0 {
 		return nil
 	}
 
-	narrative := []string{}
+	var lines []NarrativeLine
 
-	// ------ Weather announcement ------
-	weatherDesc := weatherDescription(weather)
-	narrative = append(narrative, fmt.Sprintf("[0.0s] WEATHER: %s -- %s", string(weather), weatherDesc))
-
-	// Track-specific opening flavor.
-	switch race.TrackType {
-	case models.TrackHauntedussy:
-		narrative = append(narrative, "[0.0s] The shadows lengthen on the Hauntedussy track... something stirs in the fog.")
-	case models.TrackFrostussy:
-		narrative = append(narrative, "[0.0s] Ice crystals glitter under the floodlights. The Frostussy surface is treacherous today.")
-	case models.TrackThunderussy:
-		narrative = append(narrative, "[0.0s] Thunder rumbles in the distance. The Thunderussy endurance gauntlet begins.")
+	// Helper to add a line.
+	add := func(tick int, text, class string) {
+		lines = append(lines, NarrativeLine{Tick: tick, Text: text, Class: class})
 	}
 
-	// Determine the max tick across all entries.
+	// --- Pre-race announcements (tick 0) ---
+	weatherDesc := weatherDescription(weather)
+	add(0, fmt.Sprintf("🎙️ LADIES AND GENTLEMEN... Welcome to the %s! %dm of pure equine chaos!", string(race.TrackType), race.Distance), "event-announcer")
+	add(0, fmt.Sprintf("☁️ CONDITIONS: %s — %s", string(weather), weatherDesc), "event-weather")
+
+	// Track flavor.
+	switch race.TrackType {
+	case models.TrackHauntedussy:
+		add(0, "👻 The shadows lengthen on the Hauntedussy track... something stirs in the fog. The crowd falls silent.", "event-ghost")
+	case models.TrackFrostussy:
+		add(0, "❄️ Ice crystals glitter under the floodlights. The Frostussy surface is TREACHEROUS today, folks!", "event-weather")
+	case models.TrackThunderussy:
+		add(0, "⚡ Thunder rumbles in the distance. This is the Thunderussy endurance gauntlet — only the strong survive.", "event-weather")
+	case models.TrackMudussy:
+		add(0, "🟤 The Mudussy track is an absolute swamp today. This is going to get UGLY.", "event-weather")
+	case models.TrackGrindussy:
+		add(0, "🏔️ 3200 metres of pure Grindussy ahead. This is a war of attrition.", "event-announcer")
+	case models.TrackSprintussy:
+		add(0, "💨 Sprintussy! 800 metres, blink and you'll miss it. RAW SPEED is all that matters.", "event-burst")
+	}
+
+	// Entrant introductions.
+	for i, e := range race.Entries {
+		laneStr := ordinal(i + 1)
+		add(0, fmt.Sprintf("   🐎 Lane %s: %s", laneStr, e.HorseName), "event-normal")
+	}
+	add(0, "", "event-normal")
+	add(0, "🔔 AND THEY'RE OFF! The gates fly open!", "event-burst")
+
+	// --- Build tick data index ---
 	maxTick := 0
 	for _, e := range race.Entries {
 		if n := len(e.TickLog); n > 0 {
@@ -692,7 +742,6 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 		}
 	}
 
-	// Build a tick-index per entry for O(1) lookups.
 	type tickRef struct {
 		pos   float64
 		speed float64
@@ -711,54 +760,48 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 	lastLeadChangeTick := 0
 	distance := float64(race.Distance)
 
-	// Report race progress at key percentage checkpoints plus events.
-	checkpoints := map[int]bool{}
-	for _, pct := range []int{25, 50, 75} {
-		checkpoints[int(distance*float64(pct)/100)] = true
-	}
+	// Checkpoints for standings reports.
+	checkpointPcts := []int{25, 50, 75, 90}
 	reportedCheckpoints := map[int]bool{}
 
-	// Track Thunderussy lightning intervals — every ~50 ticks with some randomness.
-	lastLightningTick := 0
-
-	// --- Event throttling to prevent narrative spam ---
-	// Per-horse event counts: eventCounts[horseIdx][eventType] = count
+	// Event throttling (same as original).
 	eventCounts := make([]map[string]int, len(race.Entries))
 	for i := range eventCounts {
 		eventCounts[i] = map[string]int{}
 	}
-	// Per-horse last event tick to enforce minimum gap between same events
 	eventLastTick := make([]map[string]int, len(race.Entries))
 	for i := range eventLastTick {
 		eventLastTick[i] = map[string]int{}
 	}
-	// Global event counts for track-wide events (lights flicker, etc.)
 	globalEventCount := map[string]int{}
 
-	// Throttle limits: max times an event can appear per horse in narrative
 	eventMaxPerHorse := map[string]int{
 		"PANIC": 3, "GHOST SIGHTING": 2, "ICE SLIP": 2,
 		"ANOMALOUS ACCELERATION": 4, "ANOMALOUS RESONANCE": 2,
 		"THE YOGURT ERUPTS": 2, "REALITY FRACTURE": 2,
 	}
-	// Minimum tick gap between reports of same event for same horse
 	eventMinGap := map[string]int{
 		"PANIC": 15, "GHOST SIGHTING": 30, "ICE SLIP": 20,
 		"ANOMALOUS ACCELERATION": 10,
 	}
-	// Escalation messages when a horse hits the cap for an event type
 	eventCapMsg := map[string]string{
-		"PANIC":          "%s has entered a permanent state of existential dread.",
-		"GHOST SIGHTING": "%s refuses to look anywhere but straight ahead now.",
-		"ICE SLIP":       "%s has given up on traction entirely.",
+		"PANIC":          "💀 %s has entered a permanent state of existential dread. They've stopped responding to stimuli.",
+		"GHOST SIGHTING": "😨 %s refuses to look anywhere but straight ahead now. Pure survival mode.",
+		"ICE SLIP":       "🧊 %s has given up on traction entirely and is basically just sliding.",
 	}
-	// Global event caps
 	globalEventMax := map[string]int{
 		"THE LIGHTS FLICKER": 3,
 	}
 
+	// Track last time we gave a general "pack update"
+	lastPackUpdateTick := 0
+
+	// Track which horses have been announced as finished
+	announcedFinish := map[int]bool{}
+
+	lastLightningTick := 0
+
 	for t := 1; t <= maxTick; t++ {
-		// Gather positions at this tick for every entry that has data.
 		type posAt struct {
 			idx  int
 			pos  float64
@@ -774,70 +817,108 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 			continue
 		}
 
-		// Sort by position descending to find the leader.
+		// Sort by position descending.
 		sort.Slice(positions, func(a, b int) bool {
 			return positions[a].pos > positions[b].pos
 		})
-
 		leader := positions[0]
+		ts := float64(t) * 0.1
 
-		// --- Lead change (throttled: min 10 ticks between reports) ---
-		if leader.idx != prevLeaderIdx {
-			if prevLeaderIdx == -1 || (t-lastLeadChangeTick) >= 10 {
-				narrative = append(narrative, fmt.Sprintf("[%.1fs] %s surges ahead!", float64(t)*0.1, leader.name))
+		// --- Lead change ---
+		if leader.idx != prevLeaderIdx && prevLeaderIdx != -1 {
+			if (t - lastLeadChangeTick) >= 8 {
+				gap := 0.0
+				if len(positions) > 1 {
+					gap = leader.pos - positions[1].pos
+				}
+				if gap > 5 {
+					add(t, fmt.Sprintf("🔥 [%.1fs] %s SURGES to the front and opens up a BIG lead! %.0fm ahead!", ts, leader.name, gap), "event-burst")
+				} else {
+					add(t, fmt.Sprintf("↗️ [%.1fs] LEAD CHANGE! %s takes the lead from %s!", ts, leader.name, race.Entries[prevLeaderIdx].HorseName), "event-burst")
+				}
 				lastLeadChangeTick = t
 			}
+		} else if prevLeaderIdx == -1 {
+			add(t, fmt.Sprintf("🏇 [%.1fs] %s breaks fast and takes the early lead!", ts, leader.name), "event-burst")
+			lastLeadChangeTick = t
 		}
 		prevLeaderIdx = leader.idx
 
-		// --- Checkpoint position reports ---
-		for cp := range checkpoints {
-			if reportedCheckpoints[cp] {
+		// --- Checkpoint standings ---
+		for _, pct := range checkpointPcts {
+			cpDist := int(distance * float64(pct) / 100)
+			if reportedCheckpoints[pct] {
 				continue
 			}
-			if leader.pos >= float64(cp) {
-				pct := int(float64(cp) / distance * 100)
-				// Build compact standings
+			if leader.pos >= float64(cpDist) {
 				standings := ""
 				for rank, p := range positions {
 					if rank > 0 {
 						standings += ", "
 					}
-					standings += fmt.Sprintf("%d.%s", rank+1, p.name)
+					medal := ""
+					switch rank {
+					case 0:
+						medal = "🥇"
+					case 1:
+						medal = "🥈"
+					case 2:
+						medal = "🥉"
+					}
+					standings += fmt.Sprintf("%s%d.%s", medal, rank+1, p.name)
 					if rank >= 3 {
+						standings += "..."
 						break
 					}
 				}
-				narrative = append(narrative, fmt.Sprintf("[%.1fs] === %d%% MARK === %s", float64(t)*0.1, pct, standings))
-				reportedCheckpoints[cp] = true
+
+				marker := "═══"
+				if pct == 90 {
+					add(t, fmt.Sprintf("🚨 [%.1fs] %s FINAL STRETCH! %s %s %s STANDINGS: %s", ts, marker, marker, marker, marker, standings), "event-burst")
+				} else if pct == 50 {
+					add(t, fmt.Sprintf("📍 [%.1fs] %s HALFWAY POINT %s STANDINGS: %s", ts, marker, marker, standings), "event-announcer")
+				} else {
+					add(t, fmt.Sprintf("📍 [%.1fs] %s %d%% MARK %s %s", ts, marker, pct, marker, standings), "event-announcer")
+				}
+				reportedCheckpoints[pct] = true
 			}
 		}
 
-		// --- Special events this tick (throttled to prevent narrative spam) ---
+		// --- Pack proximity commentary ---
+		if len(positions) >= 3 && (t-lastPackUpdateTick) >= 30 && t > 10 {
+			frontGap := positions[0].pos - positions[len(positions)-1].pos
+			if frontGap < 20 && frontGap > 0 {
+				add(t, fmt.Sprintf("🏇 [%.1fs] The pack is TIGHT! Only %.0fm separating first from last! Anyone's race!", ts, frontGap), "event-announcer")
+				lastPackUpdateTick = t
+			} else if len(positions) >= 2 {
+				gapToSecond := positions[0].pos - positions[1].pos
+				if gapToSecond > 50 {
+					add(t, fmt.Sprintf("🔭 [%.1fs] %s is RUNNING AWAY with it! %.0fm lead — the others can barely see them!", ts, positions[0].name, gapToSecond), "event-burst")
+					lastPackUpdateTick = t
+				}
+			}
+		}
+
+		// --- Horse events ---
 		for i := range race.Entries {
 			ref, ok := tickData[i][t]
 			if !ok {
 				continue
 			}
-			ts := float64(t) * 0.1
 			name := race.Entries[i].HorseName
 
-			// Helper: check if a per-horse event should be narrated.
-			// Returns true if under cap and past minimum gap; increments counters.
 			canReport := func(evtKey string) bool {
 				maxN := eventMaxPerHorse[evtKey]
 				if maxN == 0 {
-					maxN = 3 // default
+					maxN = 3
 				}
 				count := eventCounts[i][evtKey]
 				if count > maxN {
-					return false // already past cap (cap message already sent)
+					return false
 				}
 				if count == maxN {
-					// Emit escalation message exactly once at the cap.
 					if msg, ok := eventCapMsg[evtKey]; ok {
-						narrative = append(narrative,
-							fmt.Sprintf("[%.1fs] %s", ts, fmt.Sprintf(msg, name)))
+						add(t, fmt.Sprintf("[%.1fs] %s", ts, fmt.Sprintf(msg, name)), "event-panic")
 					}
 					eventCounts[i][evtKey]++
 					return false
@@ -853,7 +934,6 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 				return true
 			}
 
-			// Helper: check if a global (track-wide) event should be narrated.
 			canReportGlobal := func(evtKey string) bool {
 				maxN := globalEventMax[evtKey]
 				if maxN == 0 {
@@ -869,72 +949,84 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 			switch ref.event {
 			case "PANIC":
 				if canReport("PANIC") {
-					if race.TrackType == models.TrackMudussy {
-						narrative = append(narrative,
-							fmt.Sprintf("[%.1fs] %s: PANIC! Spooked by the mud!", ts, name))
-					} else if race.TrackType == models.TrackHauntedussy {
-						narrative = append(narrative,
-							fmt.Sprintf("[%.1fs] %s: PANIC! Something unseen brushes past!", ts, name))
-					} else {
-						narrative = append(narrative,
-							fmt.Sprintf("[%.1fs] %s: PANIC! Lost composure!", ts, name))
+					msgs := []string{
+						fmt.Sprintf("😱 [%.1fs] %s: PANIC! They've completely lost it! Dead stop on the track!", ts, name),
+						fmt.Sprintf("🫣 [%.1fs] OH NO! %s has SPOOKED! They're frozen in place! The crowd gasps!", ts, name),
+						fmt.Sprintf("💥 [%.1fs] %s: TOTAL MELTDOWN! Legs locked, eyes wide — that horse is NOT moving!", ts, name),
 					}
+					add(t, msgs[eventCounts[i]["PANIC"]%len(msgs)], "event-panic")
 				}
 			case "ANOMALOUS ACCELERATION":
 				if canReport("ANOMALOUS ACCELERATION") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION. The yogurt remembers.", ts))
+					add(t, fmt.Sprintf("🧪 [%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION! The yogurt REMEMBERS! %s rockets forward with impossible speed!", ts, name), "event-e008")
 				}
 			case "GHOST SIGHTING":
 				if canReport("GHOST SIGHTING") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track!", ts, name))
+					add(t, fmt.Sprintf("👻 [%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track! The horse RECOILS in terror!", ts, name), "event-ghost")
 				}
 			case "THE LIGHTS FLICKER":
 				if canReportGlobal("THE LIGHTS FLICKER") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] THE LIGHTS FLICKER -- all horses shudder as darkness pulses through the arena!", ts))
+					add(t, fmt.Sprintf("⚫ [%.1fs] THE LIGHTS FLICKER — darkness pulses through the arena! Every horse shudders! The crowd SCREAMS!", ts), "event-ghost")
 				}
 			case "ANOMALOUS RESONANCE":
 				if canReport("ANOMALOUS RESONANCE") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] %s: ANOMALOUS RESONANCE. The air hums with forbidden frequency.", ts, name))
+					add(t, fmt.Sprintf("🌀 [%.1fs] %s: ANOMALOUS RESONANCE! The air hums with forbidden frequency! Reality bends around the horse!", ts, name), "event-e008")
 				}
 			case "THE YOGURT ERUPTS":
 				if canReport("THE YOGURT ERUPTS") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] %s: THE YOGURT ERUPTS! An impossible surge of dairy-powered energy!", ts, name))
+					add(t, fmt.Sprintf("🥛 [%.1fs] %s: THE YOGURT ERUPTS!! A geyser of sentient dairy launches the horse forward! E-008 CONTAINMENT BREACH!!", ts, name), "event-e008")
 				}
 			case "REALITY FRACTURE":
 				if canReport("REALITY FRACTURE") {
-					narrative = append(narrative,
-						fmt.Sprintf("[%.1fs] %s: REALITY FRACTURE! Space folds and the horse blinks forward!", ts, name))
+					add(t, fmt.Sprintf("🌌 [%.1fs] %s: REALITY FRACTURE!! Space FOLDS — the horse BLINKS forward through a rip in spacetime! WHAT DID WE JUST WITNESS?!", ts, name), "event-e008")
 				}
 			}
 
-			// Frostussy: detect ice slipping when chaos is very negative (speed near 0).
+			// Frostussy ice slip detection.
 			if race.TrackType == models.TrackFrostussy && ref.speed < 0.5 && ref.event == "" {
 				if ref.speed > 0 && ref.speed < 0.3 {
 					if canReport("ICE SLIP") {
-						narrative = append(narrative,
-							fmt.Sprintf("[%.1fs] %s: SLIPPING ON ICE! Hooves scramble for grip!", ts, name))
+						add(t, fmt.Sprintf("🧊 [%.1fs] %s: SLIPPING ON ICE! Hooves scramble desperately for grip! They're losing ground!", ts, name), "event-weather")
 					}
 				}
 			}
 		}
 
-		// --- Thunderussy: LIGHTNING STRIKES at pseudo-random intervals ---
+		// --- Thunderussy lightning ---
 		if race.TrackType == models.TrackThunderussy && (t-lastLightningTick) >= 40 {
-			// Check roughly every 50 ticks with jitter.
 			if t%50 < 5 || (t > 100 && t%73 < 3) {
-				narrative = append(narrative,
-					fmt.Sprintf("[%.1fs] LIGHTNING STRIKES the Thunderussy track! The ground trembles!", float64(t)*0.1))
+				add(t, fmt.Sprintf("⚡ [%.1fs] LIGHTNING STRIKES the Thunderussy track! The ground TREMBLES! Horses scatter!", ts), "event-weather")
 				lastLightningTick = t
 			}
 		}
 
+		// --- Finish announcements ---
+		for _, p := range positions {
+			if p.pos >= distance && !announcedFinish[p.idx] {
+				place := 0
+				for _, e := range race.Entries {
+					if e.HorseID == race.Entries[p.idx].HorseID {
+						place = e.FinishPlace
+						break
+					}
+				}
+				switch place {
+				case 1:
+					add(t, fmt.Sprintf("🏆 [%.1fs] %s CROSSES THE LINE FIRST!! WHAT A RACE!! THE CROWD ERUPTS!!", ts, p.name), "event-burst")
+				case 2:
+					add(t, fmt.Sprintf("🥈 [%.1fs] %s finishes 2nd! SO close! The crowd groans!", ts, p.name), "event-announcer")
+				case 3:
+					add(t, fmt.Sprintf("🥉 [%.1fs] %s claims the final podium spot in 3rd!", ts, p.name), "event-announcer")
+				default:
+					if place > 0 {
+						add(t, fmt.Sprintf("🏁 [%.1fs] %s crosses the line in %s place.", ts, p.name, ordinal(place)), "event-normal")
+					}
+				}
+				announcedFinish[p.idx] = true
+			}
+		}
+
 		// --- Photo finish detection ---
-		// Check if 2+ horses cross the line this tick within 0.5m of each other.
 		var finishersThisTick []posAt
 		for _, p := range positions {
 			if p.pos >= distance {
@@ -943,18 +1035,17 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 		}
 		if len(finishersThisTick) >= 2 {
 			if math.Abs(finishersThisTick[0].pos-finishersThisTick[1].pos) <= 0.5 {
-				narrative = append(narrative,
-					fmt.Sprintf("[%.1fs] PHOTO FINISH between %s and %s!",
-						float64(t)*0.1, finishersThisTick[0].name, finishersThisTick[1].name))
+				add(t, fmt.Sprintf("📸 [%.1fs] PHOTO FINISH between %s and %s!! Separated by MILLIMETRES!!", ts, finishersThisTick[0].name, finishersThisTick[1].name), "event-burst")
 			}
 		}
 	}
 
 	// --- Final results ---
-	narrative = append(narrative, "")
-	narrative = append(narrative, "=== FINAL RESULTS ===")
+	add(maxTick+1, "", "event-normal")
+	add(maxTick+1, "═══════════════════════════════════", "event-announcer")
+	add(maxTick+1, "🏁  F I N A L   R E S U L T S  🏁", "event-announcer")
+	add(maxTick+1, "═══════════════════════════════════", "event-announcer")
 
-	// Sort entries by finish place.
 	sorted := make([]models.RaceEntry, len(race.Entries))
 	copy(sorted, race.Entries)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -968,20 +1059,19 @@ func GenerateRaceNarrativeWithWeather(race *models.Race, weather models.Weather)
 		var flair string
 		switch e.FinishPlace {
 		case 1:
-			flair = " -- CHAMPION! Absolute unit."
+			flair = " — 🏆 CHAMPION! ABSOLUTE UNIT!"
 		case 2:
-			flair = " -- So close. The crowd weeps."
+			flair = " — 🥈 So close. The crowd weeps."
 		case 3:
-			flair = " -- Podium secured. Respectable."
+			flair = " — 🥉 Podium secured. Respectable."
 		default:
-			flair = " -- Ran their heart out."
+			flair = " — Ran their heart out."
 		}
 
-		narrative = append(narrative,
-			fmt.Sprintf("  %s: %s (%s)%s", placeStr, e.HorseName, timeStr, flair))
+		add(maxTick+2, fmt.Sprintf("  %s: %s (%s)%s", placeStr, e.HorseName, timeStr, flair), "event-announcer")
 	}
 
-	return narrative
+	return lines
 }
 
 // ---------------------------------------------------------------------------

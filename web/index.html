@@ -728,13 +728,34 @@ select.term-input option {
   margin: 8px 0;
 }
 
+/* Race narrative gets a bigger, more prominent treatment */
+#race-narrative {
+  height: 300px;
+  font-size: 12px;
+  line-height: 1.7;
+  border: 2px solid var(--amber);
+  background: rgba(0, 0, 0, 0.8);
+  padding: 12px;
+  scroll-behavior: smooth;
+}
+
 .narrative-log .event-panic { color: var(--red); font-weight: bold; }
 .narrative-log .event-e008 { color: var(--purple); }
-.narrative-log .event-burst { color: var(--cyan); }
+.narrative-log .event-burst { color: var(--cyan); font-weight: bold; }
 .narrative-log .event-weather { color: var(--amber); }
 .narrative-log .event-trait { color: var(--gold); }
 .narrative-log .event-ghost { color: var(--purple); font-style: italic; }
 .narrative-log .event-normal { color: var(--fg-dim); }
+.narrative-log .event-announcer { color: var(--fg); font-weight: bold; }
+
+/* Narrative line entrance animation */
+.narrative-log > div {
+  animation: narrativeSlideIn 0.2s ease-out;
+}
+@keyframes narrativeSlideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
 
 /* ─── ASCII ART CONTAINER ────────────────────────────────────────────────── */
 .ascii-art {
@@ -1253,7 +1274,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <h3 id="race-live-title">// RACE IN PROGRESS</h3>
     <div class="section-hdr">Track: <span id="race-live-track"></span> | Distance: <span id="race-live-dist"></span>m | Weather: <span id="race-live-weather" class="text-amber">—</span> | Status: <span id="race-live-status" class="text-amber">RUNNING</span></div>
     <div id="race-bars" class="mt-8 mb-8"></div>
-    <h3>// RACE NARRATIVE</h3>
+    <h3>// LIVE COMMENTARY</h3>
     <div class="narrative-log" id="race-narrative"></div>
   </div>
 
@@ -1876,6 +1897,7 @@ function handleWsMessage(msg) {
     case 'race_tick': onRaceTick(msg); break;
     case 'race_end': onRaceEnd(msg); break;
     case 'narrative': onNarrative(msg); break;
+    case 'narrative_tick': onNarrativeTick(msg); break;
   }
 }
 
@@ -1970,15 +1992,23 @@ function onNarrative(msg) {
   addNarrativeLine(msg.message, cls);
 }
 
+function onNarrativeTick(msg) {
+  const lines = msg.lines || [];
+  lines.forEach(line => {
+    addNarrativeLine(line.text, line.class || getEventClass(line.text || ''));
+  });
+}
+
 function getEventClass(text) {
   if (!text) return 'event-normal';
   const upper = text.toUpperCase();
-  if (upper.includes('PANIC') || upper.includes('STUMBLE') || upper.includes('CRASH')) return 'event-panic';
-  if (upper.includes('E-008') || upper.includes('GLITCH') || upper.includes('ANOMAL')) return 'event-e008';
-  if (upper.includes('GHOST') || upper.includes('HAUNT') || upper.includes('PHANTOM')) return 'event-ghost';
-  if (upper.includes('WEATHER') || upper.includes('RAIN') || upper.includes('STORM') || upper.includes('FOG') || upper.includes('HEAT')) return 'event-weather';
+  if (upper.includes('PANIC') || upper.includes('STUMBLE') || upper.includes('CRASH') || upper.includes('MELTDOWN') || upper.includes('SPOOKED')) return 'event-panic';
+  if (upper.includes('E-008') || upper.includes('GLITCH') || upper.includes('ANOMAL') || upper.includes('YOGURT') || upper.includes('REALITY FRACTURE') || upper.includes('RESONANCE')) return 'event-e008';
+  if (upper.includes('GHOST') || upper.includes('HAUNT') || upper.includes('PHANTOM') || upper.includes('LIGHTS FLICKER') || upper.includes('SPECTRAL')) return 'event-ghost';
+  if (upper.includes('WEATHER') || upper.includes('RAIN') || upper.includes('STORM') || upper.includes('FOG') || upper.includes('HEAT') || upper.includes('LIGHTNING') || upper.includes('ICE') || upper.includes('FROST') || upper.includes('SLIP')) return 'event-weather';
   if (upper.includes('TRAIT') || upper.includes('ABILITY')) return 'event-trait';
-  if (upper.includes('BURST') || upper.includes('SURGE') || upper.includes('SPRINT')) return 'event-burst';
+  if (upper.includes('BURST') || upper.includes('SURGE') || upper.includes('SPRINT') || upper.includes('CHAMPION') || upper.includes('CROSSES THE LINE') || upper.includes('PHOTO FINISH') || upper.includes('FINAL STRETCH')) return 'event-burst';
+  if (upper.includes('MARK') || upper.includes('STANDINGS') || upper.includes('HALFWAY') || upper.includes('RESULT') || upper.includes('LADIES AND GENTLEMEN') || upper.includes('LANE')) return 'event-announcer';
   return 'event-normal';
 }
 
@@ -3063,12 +3093,13 @@ async function startRace() {
     const raceData = race;
     const raceObj = race.race || race;  // unwrap { race: {...}, narrative: [...], weather: "..." }
     const narrativeLines = race.narrative || [];
+    const narrativeIndexed = race.narrative_indexed || [];
     const raceWeather = race.weather || null;
 
     if (raceObj && (raceObj.status === 'Finished' || raceObj.entries)) {
       currentRace = raceObj;
       currentWeather = raceWeather;
-      simulateLocalRace(raceObj, narrativeLines);
+      simulateLocalRace(raceObj, narrativeLines, narrativeIndexed);
     } else if (raceObj) {
       currentRace = raceObj;
       currentWeather = raceWeather;
@@ -3096,9 +3127,10 @@ async function quickRace() {
     if (race) {
       const raceObj = race.race || race;
       const raceWeather = race.weather || null;
+      const narrativeIndexed = race.narrative_indexed || [];
       currentRace = raceObj;
       currentWeather = raceWeather;
-      simulateLocalRace(raceObj, race.narrative || []);
+      simulateLocalRace(raceObj, race.narrative || [], narrativeIndexed);
     }
   } catch (e) {
     alert(`Quick race error: ${e.message}`);
@@ -3108,15 +3140,15 @@ async function quickRace() {
   }
 }
 
-function simulateLocalRace(race, serverNarrative) {
+function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
   const liveEl = $('#race-live');
   liveEl.classList.remove('hidden');
 
   $('#race-live-track').textContent = race.track_type || '?';
   $('#race-live-dist').textContent = race.distance || '?';
-  $('#race-live-status').textContent = 'REPLAYING';
+  $('#race-live-status').textContent = 'LIVE';
   $('#race-live-status').className = 'text-amber';
-  $('#race-live-title').textContent = `// RACE ${(race.id || '').substring(0, 8)}`;
+  $('#race-live-title').textContent = `// RACE ${(race.id || '').substring(0, 8)} IN PROGRESS`;
 
   // Show weather if available
   if (currentWeather) {
@@ -3141,7 +3173,24 @@ function simulateLocalRace(race, serverNarrative) {
     barsEl.appendChild(bar);
   });
 
-  addNarrativeLine('═══ RACE REPLAY START ═══', 'event-burst');
+  // Build tick-indexed narrative map from the server's indexed narrative
+  const narrativeByTick = new Map();
+  if (narrativeIndexed && Array.isArray(narrativeIndexed)) {
+    narrativeIndexed.forEach(nl => {
+      if (!narrativeByTick.has(nl.tick)) {
+        narrativeByTick.set(nl.tick, []);
+      }
+      narrativeByTick.get(nl.tick).push(nl);
+    });
+  }
+
+  // Show pre-race narrative (tick 0) immediately
+  if (narrativeByTick.has(0)) {
+    narrativeByTick.get(0).forEach(nl => {
+      if (nl.text === '') return;
+      addNarrativeLine(nl.text, nl.class || getEventClass(nl.text));
+    });
+  }
 
   let maxTicks = 0;
   entries.forEach(e => {
@@ -3167,11 +3216,25 @@ function simulateLocalRace(race, serverNarrative) {
     if (tick >= maxTicks) {
       clearInterval(interval);
       $('#race-live-status').textContent = 'FINISHED';
-      addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
+
+      // Show post-race narrative lines
+      narrativeByTick.forEach((nls, t) => {
+        if (t > maxTicks) {
+          nls.forEach(nl => {
+            if (nl.text === '') {
+              addNarrativeLine('', 'event-normal');
+            } else {
+              addNarrativeLine(nl.text, nl.class || getEventClass(nl.text));
+            }
+          });
+        }
+      });
+
       showRaceResults(race);
       return;
     }
 
+    // Update progress bars
     entries.forEach(e => {
       if (!e.tick_log || tick >= e.tick_log.length) return;
       const te = e.tick_log[tick];
@@ -3182,12 +3245,35 @@ function simulateLocalRace(race, serverNarrative) {
         barEl.querySelector('.bar-fill').style.width = `${pct}%`;
         if (pct >= 100) barEl.querySelector('.bar-fill').classList.add('finished');
         barEl.querySelector('.bar-pct').textContent = `${pct.toFixed(0)}%`;
-      }
 
-      if (te.event) {
-        addNarrativeLine(`[T${tick}] ${e.horse_name}: ${te.event}`, getEventClass(te.event));
+        // Flash effects on events
+        if (te.event) {
+          const label = barEl.querySelector('.bar-label');
+          if (te.event.includes('PANIC')) {
+            label.style.color = 'var(--red)';
+            setTimeout(() => label.style.color = '', 600);
+          } else if (te.event.includes('ANOMAL') || te.event.includes('YOGURT') || te.event.includes('REALITY')) {
+            label.style.color = 'var(--purple)';
+            label.classList.add('glitch-flicker');
+            setTimeout(() => { label.style.color = ''; label.classList.remove('glitch-flicker'); }, 600);
+          } else if (te.event.includes('GHOST') || te.event.includes('FLICKER')) {
+            label.style.color = 'var(--purple)';
+            setTimeout(() => label.style.color = '', 500);
+          }
+        }
       }
     });
+
+    // The actual tick number in the sim (1-indexed)
+    const simTick = tick + 1;
+
+    // Show narrative lines for this tick
+    if (narrativeByTick.has(simTick)) {
+      narrativeByTick.get(simTick).forEach(nl => {
+        if (nl.text === '') return;
+        addNarrativeLine(nl.text, nl.class || getEventClass(nl.text));
+      });
+    }
 
     tick++;
   }, 80);
