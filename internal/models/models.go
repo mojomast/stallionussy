@@ -793,3 +793,65 @@ type RaceReplay struct {
 	Data       []byte    `json:"-"` // Full JSON-encoded race result (stored as JSONB)
 	CreatedAt  time.Time `json:"createdAt"`
 }
+
+// ---------------------------------------------------------------------------
+// Horse Fights (Gladiatorial Combat)
+// ---------------------------------------------------------------------------
+
+// HorseFight represents a gladiatorial combat event between two horses.
+type HorseFight struct {
+	ID            string    `json:"id"`
+	ArenaType     string    `json:"arenaType"`
+	Horse1ID      string    `json:"horse1ID"`
+	Horse1Name    string    `json:"horse1Name"`
+	Horse1OwnerID string    `json:"horse1OwnerID"`
+	Horse2ID      string    `json:"horse2ID"`
+	Horse2Name    string    `json:"horse2Name"`
+	Horse2OwnerID string    `json:"horse2OwnerID"`
+	WinnerID      string    `json:"winnerID"`
+	WinnerName    string    `json:"winnerName"`
+	LoserID       string    `json:"loserID"`
+	LoserName     string    `json:"loserName"`
+	IsFatality    bool      `json:"isFatality"`
+	IsToDeath     bool      `json:"isToDeath"`
+	Purse         int64     `json:"purse"`
+	EntryFee      int64     `json:"entryFee"`
+	Status        string    `json:"status"` // "pending", "fighting", "finished"
+	KORound       int       `json:"koRound"`
+	TotalRounds   int       `json:"totalRounds"`
+	FightLog      []byte    `json:"fightLog,omitempty"` // JSON-encoded full fight result
+	Narrative     []string  `json:"narrative"`
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+const (
+	FightStatusPending  = "pending"
+	FightStatusFighting = "fighting"
+	FightStatusFinished = "finished"
+)
+
+// GlueFactoryResult represents the outcome of sending a horse to the glue factory.
+type GlueFactoryResult struct {
+	HorseID       string    `json:"horseID"`
+	HorseName     string    `json:"horseName"`
+	GlueProduced  int64     `json:"glueProduced"`  // units of glue
+	CummiesEarned int64     `json:"cummiesEarned"` // payment for the glue
+	BonusMaterial string    `json:"bonusMaterial"` // random bonus resource
+	BonusAmount   int64     `json:"bonusAmount"`
+	Eulogy        string    `json:"eulogy"` // randomly generated farewell
+	CreatedAt     time.Time `json:"createdAt"`
+}
+
+// BreedingStallion tracks a horse permanently assigned to breeding duty.
+type BreedingStallion struct {
+	HorseID       string    `json:"horseID"`
+	HorseName     string    `json:"horseName"`
+	OwnerID       string    `json:"ownerID"`
+	StableID      string    `json:"stableID"`
+	BreedCount    int       `json:"breedCount"`
+	TotalEarnings int64     `json:"totalEarnings"`
+	Fee           int64     `json:"fee"`           // breeding fee charged
+	CooldownHours int       `json:"cooldownHours"` // reduced cooldown (default 12 vs normal 24)
+	Active        bool      `json:"active"`
+	AssignedAt    time.Time `json:"assignedAt"`
+}

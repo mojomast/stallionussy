@@ -285,6 +285,76 @@ CREATE INDEX IF NOT EXISTS idx_alliance_members_user_id ON alliance_members (use
 -- Add injury column to horses (JSONB, nullable)
 -- ===========================================================================
 ALTER TABLE horses ADD COLUMN IF NOT EXISTS injury JSONB;
+
+-- ===========================================================================
+-- Horse Fights
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS horse_fights (
+    id              TEXT PRIMARY KEY,
+    arena_type      TEXT NOT NULL DEFAULT '',
+    horse1_id       TEXT NOT NULL DEFAULT '',
+    horse1_name     TEXT NOT NULL DEFAULT '',
+    horse1_owner_id TEXT NOT NULL DEFAULT '',
+    horse2_id       TEXT NOT NULL DEFAULT '',
+    horse2_name     TEXT NOT NULL DEFAULT '',
+    horse2_owner_id TEXT NOT NULL DEFAULT '',
+    winner_id       TEXT NOT NULL DEFAULT '',
+    winner_name     TEXT NOT NULL DEFAULT '',
+    loser_id        TEXT NOT NULL DEFAULT '',
+    loser_name      TEXT NOT NULL DEFAULT '',
+    is_fatality     BOOLEAN NOT NULL DEFAULT FALSE,
+    is_to_death     BOOLEAN NOT NULL DEFAULT FALSE,
+    purse           BIGINT NOT NULL DEFAULT 0,
+    entry_fee       BIGINT NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    ko_round        INT NOT NULL DEFAULT 0,
+    total_rounds    INT NOT NULL DEFAULT 0,
+    fight_log       JSONB NOT NULL DEFAULT '{}',
+    narrative       JSONB NOT NULL DEFAULT '[]',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_horse_fights_status ON horse_fights (status);
+CREATE INDEX IF NOT EXISTS idx_horse_fights_horse1 ON horse_fights (horse1_id);
+CREATE INDEX IF NOT EXISTS idx_horse_fights_horse2 ON horse_fights (horse2_id);
+
+-- ===========================================================================
+-- Glue Factory Ledger
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS glue_factory (
+    id              TEXT PRIMARY KEY,
+    horse_id        TEXT NOT NULL DEFAULT '',
+    horse_name      TEXT NOT NULL DEFAULT '',
+    owner_id        TEXT NOT NULL DEFAULT '',
+    stable_id       TEXT NOT NULL DEFAULT '',
+    glue_produced   BIGINT NOT NULL DEFAULT 0,
+    cummies_earned  BIGINT NOT NULL DEFAULT 0,
+    bonus_material  TEXT NOT NULL DEFAULT '',
+    bonus_amount    BIGINT NOT NULL DEFAULT 0,
+    eulogy          TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_glue_factory_owner ON glue_factory (owner_id);
+
+-- ===========================================================================
+-- Breeding Stallions (Permanent Stud Duty)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS breeding_stallions (
+    horse_id        TEXT PRIMARY KEY,
+    horse_name      TEXT NOT NULL DEFAULT '',
+    owner_id        TEXT NOT NULL DEFAULT '',
+    stable_id       TEXT NOT NULL DEFAULT '',
+    breed_count     INT NOT NULL DEFAULT 0,
+    total_earnings  BIGINT NOT NULL DEFAULT 0,
+    fee             BIGINT NOT NULL DEFAULT 0,
+    cooldown_hours  INT NOT NULL DEFAULT 12,
+    active          BOOLEAN NOT NULL DEFAULT TRUE,
+    assigned_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (owner_id);
+CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
 `
 
 // RunMigrations executes the schema DDL against the provided database

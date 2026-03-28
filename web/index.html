@@ -1704,6 +1704,78 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   margin-bottom: 12px;
 }
 
+/* ─── FIGHTS (GLADIATORIAL COMBAT) ─────────────────────────────────────── */
+.fight-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--bg-light);
+  transition: border-color 0.2s;
+}
+.fight-card:hover { border-color: #ff4444; }
+.fight-card.pending { border-left: 3px solid var(--fg-amber); }
+.fight-card.finished { border-left: 3px solid #ff4444; }
+.fight-card .fight-arena { color: #ff6666; font-weight: bold; text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
+.fight-card .fight-vs { color: var(--fg); font-size: 14px; margin: 4px 0; }
+.fight-card .fight-meta { color: var(--fg-dim); font-size: 10px; }
+.fight-card .fight-death { color: #ff4444; font-weight: bold; text-transform: uppercase; }
+.fight-card .fight-winner { color: #00ff41; font-weight: bold; }
+.fight-narrative {
+  background: #0a0a0a;
+  border: 1px solid #ff4444;
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+.fight-narrative .narr-line { margin-bottom: 4px; }
+.fight-narrative .narr-line.critical { color: #ff6666; font-weight: bold; }
+.fight-narrative .narr-line.dodge { color: #66aaff; }
+.fight-narrative .narr-line.special { color: #ffaa00; }
+.fight-narrative .narr-line.death { color: #ff0000; font-weight: bold; text-transform: uppercase; }
+
+/* ─── GLUE FACTORY ─────────────────────────────────────────────────────── */
+.glue-section-hdr {
+  color: #ff4444;
+  text-shadow: 0 0 8px rgba(255, 68, 68, 0.6);
+}
+.glue-result {
+  border: 1px solid #660000;
+  background: #0a0000;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.glue-result .glue-horse { color: #ff4444; font-weight: bold; }
+.glue-result .glue-stats { color: var(--fg-amber); font-size: 11px; }
+.glue-result .glue-eulogy { color: var(--fg-dim); font-style: italic; font-size: 11px; margin-top: 4px; border-top: 1px solid #330000; padding-top: 4px; }
+.glue-result .glue-bonus { color: #aa66ff; font-size: 10px; }
+.glue-confirm-modal {
+  background: rgba(0,0,0,0.92);
+  border: 2px solid #ff0000;
+  padding: 24px;
+  text-align: center;
+  max-width: 400px;
+}
+.glue-confirm-modal h3 { color: #ff0000; text-shadow: 0 0 10px rgba(255,0,0,0.5); }
+.glue-confirm-modal .glue-warning { color: var(--fg-dim); margin: 12px 0; font-size: 12px; }
+.glue-confirm-modal .glue-confirm-btns { display: flex; gap: 12px; justify-content: center; margin-top: 16px; }
+
+/* ─── BREEDING STALLIONS ───────────────────────────────────────────────── */
+.breeder-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--bg-light);
+  transition: border-color 0.2s;
+}
+.breeder-card:hover { border-color: #aa66ff; }
+.breeder-card .breeder-name { color: #aa66ff; font-weight: bold; font-size: 13px; }
+.breeder-card .breeder-fee { color: var(--fg-amber); }
+.breeder-card .breeder-stats { color: var(--fg-dim); font-size: 10px; margin-top: 4px; }
+.breeder-card .breeder-owner { color: var(--fg-dim); font-size: 10px; }
+
 /* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .stats-row { flex-direction: column; }
@@ -1873,6 +1945,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#challenges" data-page="challenges">[CHALLENGE]</a>
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
   <a href="#alliances" data-page="alliances">[ALLIANCE]</a>
+  <a href="#fights" data-page="fights">[FIGHTS]</a>
+  <a href="#glue" data-page="glue">[GLUE]</a>
+  <a href="#studs" data-page="studs">[STUDS]</a>
   <a href="#history" data-page="history">[HISTORY]</a>
   <div class="nav-right">
     <span class="season-badge" id="nav-season-badge" style="display:none;"></span>
@@ -2456,6 +2531,146 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
 </div>
 
+<!-- ═══ FIGHTS PAGE ═══════════════════════════════════════════════════════ -->
+<div class="page" id="page-fights">
+  <div class="section-hdr" style="color:#ff4444; text-shadow: 0 0 8px rgba(255,68,68,0.6);">// GLADIATORIAL COMBAT — ⚔️ "Two horses enter. One horse leaves. (Usually.)"</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="color:#ff6666;">CREATE FIGHT CHALLENGE</h3>
+      <div class="form-row">
+        <label>YOUR HORSE:</label>
+        <select class="term-input" id="fight-horse"><option value="">-- SELECT RETIRED HORSE --</option></select>
+      </div>
+      <div class="form-row">
+        <label>ARENA:</label>
+        <select class="term-input" id="fight-arena">
+          <option value="Colosseum">Colosseum (Standard)</option>
+          <option value="Thunderdome">Thunderdome (Electric Floor)</option>
+          <option value="The Pit">The Pit (SZE Bonus, SPD Penalty)</option>
+          <option value="Dr. Mittens' Operating Theater">Dr. Mittens' Theater (INT Bonus)</option>
+          <option value="E-008's Containment Zone">E-008 Zone (CHAOS MODE)</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>ENTRY FEE (₵):</label>
+        <input class="term-input" id="fight-fee" type="number" value="100" min="0" style="max-width:120px;">
+      </div>
+      <div class="form-row">
+        <label>TO THE DEATH:</label>
+        <input type="checkbox" id="fight-death" style="width:auto;">
+        <span class="text-dim" style="font-size:10px; margin-left:4px;">LOSER IS PERMANENTLY DESTROYED</span>
+      </div>
+      <div class="form-row">
+        <label></label>
+        <button class="term-btn danger" id="btn-create-fight">ENTER THE ARENA</button>
+      </div>
+      <div id="fight-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+    </div>
+    <div>
+      <h3 style="color:#ff6666;">// PENDING FIGHTS (awaiting challengers)</h3>
+      <div id="fights-pending">
+        <span class="text-dim">No fights awaiting challengers.</span>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="color:#ff6666;">// RECENT FIGHT RESULTS</h3>
+  <div id="fights-recent">
+    <span class="text-dim">No fight history yet.</span>
+  </div>
+
+  <div id="fight-replay-section" class="hidden" style="margin-top:16px;">
+    <h3 style="color:#ff6666;">// FIGHT REPLAY — <span id="fight-replay-title" class="text-amber"></span></h3>
+    <div id="fight-replay-content"></div>
+    <button class="term-btn" onclick="document.getElementById('fight-replay-section').classList.add('hidden')">CLOSE REPLAY</button>
+  </div>
+</div>
+
+<!-- ═══ GLUE FACTORY PAGE ═════════════════════════════════════════════════ -->
+<div class="page" id="page-glue">
+  <div class="section-hdr glue-section-hdr">// THE GLUE FACTORY — "Every horse has value. Even in death."</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="color:#ff4444;">SEND HORSE TO GLUE FACTORY</h3>
+      <p class="text-dim" style="font-size:11px; margin-bottom:12px;">
+        THIS IS PERMANENT AND IRREVERSIBLE. Your horse will be converted into
+        glue, cummies, and bonus materials. There is no coming back from this.
+        The glue factory sends its regards.
+      </p>
+      <div class="form-row">
+        <label>HORSE:</label>
+        <select class="term-input" id="glue-horse"><option value="">-- SELECT HORSE --</option></select>
+      </div>
+      <div class="form-row">
+        <label></label>
+        <button class="term-btn danger" id="btn-send-glue">SEND TO GLUE FACTORY</button>
+      </div>
+      <div id="glue-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+    </div>
+    <div>
+      <h3 style="color:#ff4444;">// GLUE FACTORY LEDGER</h3>
+      <div id="glue-history">
+        <span class="text-dim">No horses have been processed. Yet.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ BREEDING STALLIONS PAGE ═══════════════════════════════════════════ -->
+<div class="page" id="page-studs">
+  <div class="section-hdr" style="color:#aa66ff; text-shadow: 0 0 8px rgba(170,102,255,0.4);">// BREEDING STALLIONS — "Permanent stud duty. The legacy continues."</div>
+
+  <div class="two-col">
+    <div>
+      <h3 style="color:#aa66ff;">ASSIGN HORSE TO BREEDING DUTY</h3>
+      <p class="text-dim" style="font-size:11px; margin-bottom:12px;">
+        Permanently assign a retired horse as a breeding stallion. Other players
+        can breed with your horse by paying the fee. The horse can no longer race
+        or fight but earns passive income.
+      </p>
+      <div class="form-row">
+        <label>HORSE:</label>
+        <select class="term-input" id="breeder-horse"><option value="">-- SELECT RETIRED HORSE --</option></select>
+      </div>
+      <div class="form-row">
+        <label>BREEDING FEE (₵):</label>
+        <input class="term-input" id="breeder-fee" type="number" value="200" min="0" style="max-width:120px;">
+      </div>
+      <div class="form-row">
+        <label></label>
+        <button class="term-btn" id="btn-assign-breeder" style="border-color:#aa66ff; color:#aa66ff;">ASSIGN TO STUD DUTY</button>
+      </div>
+      <div id="breeder-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+      <h3 style="color:#aa66ff;">// MY BREEDING STALLIONS</h3>
+      <div id="my-breeders">
+        <span class="text-dim">No breeding stallions assigned.</span>
+      </div>
+    </div>
+    <div>
+      <h3 style="color:#aa66ff;">// ALL AVAILABLE STALLIONS</h3>
+      <div id="all-breeders">
+        <span class="loading cursor-blink">Loading stallions...</span>
+      </div>
+
+      <div id="breed-with-section" class="hidden" style="margin-top:16px;">
+        <h3 style="color:#aa66ff;">// BREED WITH STALLION</h3>
+        <div class="form-row">
+          <label>YOUR MARE:</label>
+          <select class="term-input" id="stud-mare"><option value="">-- SELECT YOUR MARE --</option></select>
+        </div>
+        <div class="form-row">
+          <label></label>
+          <button class="term-btn" id="btn-breed-with-stud" style="border-color:#aa66ff; color:#aa66ff;">BREED</button>
+        </div>
+        <div id="stud-breed-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 </div><!-- /main -->
   </div><!-- /app-content -->
 </div><!-- /app-layout -->
@@ -2920,6 +3135,9 @@ function navigate() {
     case 'alliances': loadAlliances(); break;
     case 'history': loadRaceHistory(); break;
     case 'replay': loadReplay(getPageParam()); break;
+    case 'fights': loadFights(); break;
+    case 'glue': loadGluePage(); break;
+    case 'studs': loadStuds(); break;
   }
 }
 
@@ -3075,6 +3293,32 @@ function handleWsMessage(msg) {
       if (msg.retiredChampion) {
         showToast(`🏆 ${msg.horseName} inducted into Hall of Fame!`, 'legendary');
       }
+      break;
+
+    // ─── FIGHT / GLUE / BREEDER EVENTS ───────────────────────────────
+    case 'fight_created':
+      showToast(msg.message || '⚔️ New fight challenge posted!', 'challenge');
+      if (getPage() === 'fights') loadFights();
+      break;
+    case 'fight_finished':
+      showToast(msg.message || '⚔️ A fight has concluded!', 'challenge');
+      if (getPage() === 'fights') loadFights();
+      break;
+    case 'glue_factory':
+      showToast(msg.message || '🏭 A horse has been sent to the glue factory.', 'danger');
+      if (getPage() === 'glue') loadGluePage();
+      break;
+    case 'breeder_assigned':
+      showToast(msg.message || '🐴 New breeding stallion assigned!', 'breeding');
+      if (getPage() === 'studs') loadStuds();
+      break;
+    case 'breeder_offspring':
+      showToast(msg.message || '🐴 A new foal was born via the breeding program!', 'breeding');
+      if (getPage() === 'studs') loadStuds();
+      break;
+    case 'breeder_retired':
+      showToast(msg.message || '🐴 A breeding stallion has been retired.', 'default');
+      if (getPage() === 'studs') loadStuds();
       break;
 
     // Chat message types
@@ -7762,6 +8006,449 @@ async function checkAuth() {
   }
 }
 
+// ─── FIGHTS (GLADIATORIAL COMBAT) ──────────────────────────────────────────
+let selectedStallionID = null;
+
+async function loadFights() {
+  try {
+    // Fetch pending+recent fights and user horses in parallel
+    const [fightsData, horsesData] = await Promise.allSettled([
+      api('/fights'),
+      api('/horses'),
+    ]);
+
+    const fights = fightsData.status === 'fulfilled' ? (fightsData.value || {}) : {};
+    const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
+
+    // Populate horse dropdown with user's horses (for fighting)
+    const horseEl = $('#fight-horse');
+    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+    horses.forEach(h => {
+      horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+    });
+
+    // Render pending fights
+    const pendingEl = $('#fights-pending');
+    const pending = Array.isArray(fights.pending) ? fights.pending : [];
+    if (pending.length === 0) {
+      pendingEl.innerHTML = '<span class="text-dim">No fights awaiting challengers. Create one above!</span>';
+    } else {
+      let html = '';
+      pending.forEach(f => {
+        html += `<div class="fight-card" style="border-color:#ff6644;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <strong style="color:#ff6666;">${escHtml(f.horse1Name)}</strong>
+              <span class="text-dim"> awaits a challenger in the </span>
+              <span style="color:#ff9944;">${escHtml(f.arenaType)}</span>
+            </div>
+            <div>
+              <span class="text-amber">Entry: ${f.entryFee || 0}₵</span>
+              ${f.isToDeath ? '<span style="color:#ff0000; margin-left:8px;">☠ TO THE DEATH</span>' : ''}
+            </div>
+          </div>
+          <div style="margin-top:8px;">
+            <select class="term-input" id="join-horse-${escHtml(f.id)}" style="max-width:200px; display:inline-block;">
+              <option value="">-- YOUR HORSE --</option>
+              ${horses.map(h => `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`).join('')}
+            </select>
+            <button class="term-btn danger" style="margin-left:8px;" onclick="window.SU.joinFight('${escHtml(f.id)}')">⚔️ ACCEPT CHALLENGE</button>
+          </div>
+        </div>`;
+      });
+      pendingEl.innerHTML = html;
+    }
+
+    // Render recent fight results
+    const recentEl = $('#fights-recent');
+    const recent = Array.isArray(fights.recent) ? fights.recent : [];
+    if (recent.length === 0) {
+      recentEl.innerHTML = '<span class="text-dim">No fight history yet. Be the first to spill blood!</span>';
+    } else {
+      let html = `<table class="term-table"><thead><tr>
+        <th>ARENA</th><th>FIGHTER 1</th><th>FIGHTER 2</th><th>WINNER</th><th>KO RND</th><th>PURSE</th><th>DEATH?</th><th></th>
+      </tr></thead><tbody>`;
+      recent.forEach(f => {
+        const fatality = f.isFatality ? '<span style="color:#ff0000;">💀 YES</span>' : '<span class="text-dim">No</span>';
+        html += `<tr>
+          <td style="color:#ff9944;">${escHtml(f.arenaType)}</td>
+          <td>${escHtml(f.horse1Name)}</td>
+          <td>${escHtml(f.horse2Name || '???')}</td>
+          <td style="color:#44ff44;">${escHtml(f.winnerName || '—')}</td>
+          <td>${f.koRound || '—'}</td>
+          <td class="text-amber">${f.purse || 0}₵</td>
+          <td>${fatality}</td>
+          <td><button class="term-btn sm" onclick="window.SU.viewFightReplay('${escHtml(f.id)}')">REPLAY</button></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      recentEl.innerHTML = html;
+    }
+  } catch (e) {
+    console.error('loadFights:', e);
+    $('#fights-pending').innerHTML = '<span class="text-dim">Error loading fights.</span>';
+  }
+}
+
+async function createFight() {
+  const horseID = $('#fight-horse').value;
+  const arena = $('#fight-arena').value;
+  const fee = parseInt($('#fight-fee').value) || 0;
+  const toDeath = $('#fight-death').checked;
+  const msgEl = $('#fight-create-msg');
+
+  if (!horseID) {
+    msgEl.textContent = 'ERROR: Select a horse to fight with!';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  msgEl.textContent = 'Entering the arena...';
+  msgEl.style.color = 'var(--amber)';
+
+  try {
+    const result = await api('/fights', {
+      method: 'POST',
+      body: { horseID, arenaType: arena, entryFee: fee, isToDeath: toDeath },
+    });
+    msgEl.textContent = `✓ ${result.horse1Name || 'Your horse'} has entered the ${result.arenaType || arena}! Awaiting challenger...`;
+    msgEl.style.color = 'var(--green)';
+    loadFights();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function joinFight(fightID) {
+  const horseSelect = $(`#join-horse-${fightID}`);
+  if (!horseSelect) return;
+  const horseID = horseSelect.value;
+  if (!horseID) {
+    showToast('Select a horse to fight with!', 'danger');
+    return;
+  }
+
+  try {
+    const result = await api(`/fights/${encodeURIComponent(fightID)}/join`, {
+      method: 'POST',
+      body: { horseID },
+    });
+    showToast(`⚔️ FIGHT COMPLETE! Winner: ${result.winnerName || '???'}`, 'challenge');
+    loadFights();
+    // Auto-show replay
+    if (result.id) viewFightReplay(result.id);
+  } catch (e) {
+    showToast(`Fight error: ${e.message}`, 'danger');
+  }
+}
+
+async function viewFightReplay(fightID) {
+  const section = $('#fight-replay-section');
+  const titleEl = $('#fight-replay-title');
+  const contentEl = $('#fight-replay-content');
+
+  section.classList.remove('hidden');
+  titleEl.textContent = 'Loading...';
+  contentEl.innerHTML = '<span class="loading cursor-blink">Loading fight replay...</span>';
+
+  try {
+    const data = await api(`/fights/${encodeURIComponent(fightID)}/replay`);
+    if (!data) {
+      contentEl.innerHTML = '<span class="text-dim">No replay data available.</span>';
+      return;
+    }
+
+    titleEl.textContent = `${data.horse1Name || '?'} vs ${data.horse2Name || '?'} — ${data.arenaType || '?'}`;
+
+    // Build narrative replay
+    const narrative = Array.isArray(data.narrative) ? data.narrative : [];
+    if (narrative.length === 0) {
+      contentEl.innerHTML = '<span class="text-dim">No narrative available for this fight.</span>';
+      return;
+    }
+
+    let html = '<div class="fight-narrative">';
+    narrative.forEach((line, i) => {
+      const isSpecial = line.includes('💀') || line.includes('CRITICAL') || line.includes('BERSERK') || line.includes('FATAL');
+      const cls = isSpecial ? 'style="color:#ff4444; font-weight:bold;"' : '';
+      html += `<div class="fight-narrative-line" ${cls}><span class="text-dim" style="font-size:9px;">[${i + 1}]</span> ${escHtml(line)}</div>`;
+    });
+    html += '</div>';
+
+    // Fight summary
+    html += `<div style="margin-top:12px; padding:8px; border:1px solid #ff4444; background:rgba(255,68,68,0.05);">`;
+    html += `<strong style="color:#ff6666;">RESULT:</strong> `;
+    if (data.winnerName) {
+      html += `<span style="color:#44ff44;">${escHtml(data.winnerName)}</span> wins!`;
+      if (data.koRound) html += ` KO in round ${data.koRound}.`;
+      if (data.isFatality) html += ` <span style="color:#ff0000;">💀 FATALITY!</span>`;
+      html += ` Purse: <span class="text-amber">${data.purse || 0}₵</span>`;
+    } else {
+      html += `<span class="text-dim">Result unknown</span>`;
+    }
+    html += `</div>`;
+
+    contentEl.innerHTML = html;
+  } catch (e) {
+    contentEl.innerHTML = `<span style="color:var(--red);">Error loading replay: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// ─── GLUE FACTORY ──────────────────────────────────────────────────────────
+
+async function loadGluePage() {
+  try {
+    const [horsesData, historyData] = await Promise.allSettled([
+      api('/horses'),
+      api('/glue/history'),
+    ]);
+
+    const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
+
+    // Populate horse dropdown
+    const horseEl = $('#glue-horse');
+    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+    horses.forEach(h => {
+      horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+    });
+
+    // Render glue history
+    const historyEl = $('#glue-history');
+    const history = historyData.status === 'fulfilled' ? (Array.isArray(historyData.value) ? historyData.value : []) : [];
+
+    if (history.length === 0) {
+      historyEl.innerHTML = '<span class="text-dim">No horses have been processed. Yet.</span>';
+    } else {
+      let html = `<table class="term-table"><thead><tr>
+        <th>HORSE</th><th>GLUE</th><th>CUMMIES</th><th>BONUS</th><th>EULOGY</th><th>DATE</th>
+      </tr></thead><tbody>`;
+      history.forEach(r => {
+        const date = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '—';
+        html += `<tr>
+          <td style="color:#ff4444;">${escHtml(r.horseName)}</td>
+          <td>${r.glueProduced || 0} units</td>
+          <td class="text-amber">${r.cummiesEarned || 0}₵</td>
+          <td>${r.bonusAmount || 0} ${escHtml(r.bonusMaterial || '')}</td>
+          <td class="text-dim" style="max-width:200px; font-size:10px;">${escHtml(r.eulogy || '')}</td>
+          <td class="text-dim">${date}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      historyEl.innerHTML = html;
+    }
+  } catch (e) {
+    console.error('loadGluePage:', e);
+  }
+}
+
+async function sendToGlue() {
+  const horseID = $('#glue-horse').value;
+  const msgEl = $('#glue-msg');
+
+  if (!horseID) {
+    msgEl.textContent = 'ERROR: Select a horse to send to the factory!';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  // Confirmation dialog — this is PERMANENT
+  const horseName = $('#glue-horse').selectedOptions[0]?.textContent || 'this horse';
+  if (!confirm(`⚠️ IRREVERSIBLE ACTION ⚠️\n\nYou are about to send ${horseName} to the GLUE FACTORY.\n\nThis horse will be PERMANENTLY DESTROYED and converted into glue.\n\nThere is no undo. There is no coming back.\n\nAre you absolutely sure?`)) {
+    msgEl.textContent = 'Cancelled. The horse lives another day.';
+    msgEl.style.color = 'var(--dim)';
+    return;
+  }
+
+  msgEl.textContent = 'Processing... the factory awaits...';
+  msgEl.style.color = 'var(--amber)';
+
+  try {
+    const result = await api(`/horses/${encodeURIComponent(horseID)}/glue`, {
+      method: 'POST',
+    });
+    msgEl.innerHTML = `<span style="color:#ff4444;">☠ ${escHtml(result.horseName || 'Horse')} has been destroyed.</span><br>` +
+      `Glue produced: ${result.glueProduced || 0} units | Cummies earned: <span class="text-amber">${result.cummiesEarned || 0}₵</span><br>` +
+      `Bonus: ${result.bonusAmount || 0} ${escHtml(result.bonusMaterial || '')}<br>` +
+      `<span class="text-dim" style="font-style:italic;">"${escHtml(result.eulogy || '')}"</span>`;
+    msgEl.style.color = '';
+    loadGluePage();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+// ─── BREEDING STALLIONS (STUDS) ────────────────────────────────────────────
+
+async function loadStuds() {
+  try {
+    const [horsesData, myBreedersData, allBreedersData] = await Promise.allSettled([
+      api('/horses'),
+      api('/breeders?mine=true'),
+      api('/breeders'),
+    ]);
+
+    const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
+    const myBreeders = myBreedersData.status === 'fulfilled' ? (Array.isArray(myBreedersData.value) ? myBreedersData.value : []) : [];
+    const allBreeders = allBreedersData.status === 'fulfilled' ? (Array.isArray(allBreedersData.value) ? allBreedersData.value : []) : [];
+
+    // Populate horse dropdown for assigning breeder
+    const horseEl = $('#breeder-horse');
+    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+    horses.forEach(h => {
+      horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
+    });
+
+    // Render my breeders
+    const myBreedersEl = $('#my-breeders');
+    if (myBreeders.length === 0) {
+      myBreedersEl.innerHTML = '<span class="text-dim">No breeding stallions assigned yet.</span>';
+    } else {
+      let html = '';
+      myBreeders.forEach(b => {
+        html += `<div class="breeder-card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <strong style="color:#aa66ff;">${escHtml(b.horseName)}</strong>
+              <span class="text-dim" style="margin-left:8px;">Fee: <span class="text-amber">${b.fee || 0}₵</span></span>
+            </div>
+            <button class="term-btn danger sm" onclick="window.SU.retireBreeder('${escHtml(b.horseID)}')">RETIRE</button>
+          </div>
+          <div class="text-dim" style="font-size:10px; margin-top:4px;">
+            Sessions: ${b.breedCount || 0} | Earnings: ${b.totalEarnings || 0}₵ | Cooldown: ${b.cooldownHours || 2}h
+          </div>
+        </div>`;
+      });
+      myBreedersEl.innerHTML = html;
+    }
+
+    // Render all available breeders
+    const allBreedersEl = $('#all-breeders');
+    if (allBreeders.length === 0) {
+      allBreedersEl.innerHTML = '<span class="text-dim">No breeding stallions available.</span>';
+    } else {
+      let html = `<table class="term-table"><thead><tr>
+        <th>STALLION</th><th>FEE</th><th>SESSIONS</th><th>EARNINGS</th><th></th>
+      </tr></thead><tbody>`;
+      allBreeders.forEach(b => {
+        html += `<tr>
+          <td style="color:#aa66ff;">${escHtml(b.horseName)}</td>
+          <td class="text-amber">${b.fee || 0}₵</td>
+          <td>${b.breedCount || 0}</td>
+          <td>${b.totalEarnings || 0}₵</td>
+          <td><button class="term-btn sm" style="border-color:#aa66ff; color:#aa66ff;" onclick="window.SU.selectStallion('${escHtml(b.horseID)}', '${escHtml(b.horseName)}', ${b.fee || 0})">BREED</button></td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      allBreedersEl.innerHTML = html;
+    }
+
+    // Populate mare dropdown for breeding
+    const mareEl = $('#stud-mare');
+    mareEl.innerHTML = '<option value="">-- SELECT YOUR MARE --</option>';
+    horses.forEach(h => {
+      mareEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`;
+    });
+  } catch (e) {
+    console.error('loadStuds:', e);
+  }
+}
+
+async function assignBreeder() {
+  const horseID = $('#breeder-horse').value;
+  const fee = parseInt($('#breeder-fee').value) || 0;
+  const msgEl = $('#breeder-msg');
+
+  if (!horseID) {
+    msgEl.textContent = 'ERROR: Select a horse to assign!';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  const horseName = $('#breeder-horse').selectedOptions[0]?.textContent || 'this horse';
+  if (!confirm(`Assign ${horseName} to PERMANENT breeding duty?\n\nThis horse will no longer be able to race or fight.\nIt will earn ${fee}₵ per breeding session.\n\nContinue?`)) {
+    return;
+  }
+
+  msgEl.textContent = 'Assigning to stud duty...';
+  msgEl.style.color = 'var(--amber)';
+
+  try {
+    const result = await api(`/horses/${encodeURIComponent(horseID)}/assign-breeder`, {
+      method: 'POST',
+      body: { fee },
+    });
+    msgEl.textContent = `✓ ${result.horseName || horseName} is now a breeding stallion! Fee: ${result.fee || fee}₵`;
+    msgEl.style.color = '#aa66ff';
+    loadStuds();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+function selectStallion(stallionID, stallionName, fee) {
+  selectedStallionID = stallionID;
+  const section = $('#breed-with-section');
+  section.classList.remove('hidden');
+  const heading = section.querySelector('h3');
+  if (heading) {
+    heading.innerHTML = `// BREED WITH <span style="color:#aa66ff;">${escHtml(stallionName)}</span> <span class="text-dim">(Fee: ${fee}₵)</span>`;
+  }
+  $('#stud-breed-msg').textContent = '';
+}
+
+async function breedWithStallion() {
+  if (!selectedStallionID) {
+    showToast('Select a stallion first!', 'danger');
+    return;
+  }
+  const mareID = $('#stud-mare').value;
+  const msgEl = $('#stud-breed-msg');
+
+  if (!mareID) {
+    msgEl.textContent = 'ERROR: Select your mare!';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
+  msgEl.textContent = 'Breeding in progress...';
+  msgEl.style.color = 'var(--amber)';
+
+  try {
+    const result = await api(`/breeders/${encodeURIComponent(selectedStallionID)}/breed`, {
+      method: 'POST',
+      body: { mareID },
+    });
+    const foal = result.foal;
+    if (foal) {
+      msgEl.innerHTML = `✓ NEW FOAL: <a href="#horse/${escHtml(foal.id)}" style="color:#aa66ff;">${escHtml(foal.name)}</a> has been born!`;
+    } else {
+      msgEl.textContent = '✓ Breeding successful!';
+    }
+    msgEl.style.color = 'var(--green)';
+    loadStuds();
+  } catch (e) {
+    msgEl.textContent = `ERROR: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function retireBreeder(horseID) {
+  if (!confirm('Retire this breeding stallion? It will no longer be available for breeding.')) return;
+
+  try {
+    await api(`/breeders/${encodeURIComponent(horseID)}/retire`, {
+      method: 'POST',
+    });
+    showToast('Breeding stallion retired.', 'default');
+    loadStuds();
+  } catch (e) {
+    showToast(`Error retiring breeder: ${e.message}`, 'danger');
+  }
+}
+
 // ─── EVENT LISTENERS ───────────────────────────────────────────────────────
 function bindEvents() {
   window.addEventListener('hashchange', navigate);
@@ -7812,6 +8499,21 @@ function bindEvents() {
       if (leaderboardTab === 'horses') renderLeaderboardLegacy();
     });
   });
+
+  // Fights
+  const fightBtn = $('#btn-create-fight');
+  if (fightBtn) fightBtn.addEventListener('click', createFight);
+
+  // Glue Factory
+  const glueBtn = $('#btn-send-glue');
+  if (glueBtn) glueBtn.addEventListener('click', sendToGlue);
+
+  // Breeding Stallions
+  const breederBtn = $('#btn-assign-breeder');
+  if (breederBtn) breederBtn.addEventListener('click', assignBreeder);
+
+  const breedWithBtn = $('#btn-breed-with-stud');
+  if (breedWithBtn) breedWithBtn.addEventListener('click', breedWithStallion);
 }
 
 // ─── EXPOSE FUNCTIONS FOR INLINE ONCLICK ───────────────────────────────────
@@ -7854,6 +8556,11 @@ window.SU = {
   openDonateModal,
   // Horse injury
   healHorse,
+  // Fight / Glue / Breeder features
+  joinFight,
+  viewFightReplay,
+  selectStallion,
+  retireBreeder,
 };
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────

@@ -299,3 +299,66 @@ type RaceReplayRepository interface {
 	// DeleteOldReplays removes replays older than the given cutoff time.
 	DeleteOldReplays(ctx context.Context, olderThan time.Time) (int64, error)
 }
+
+// ---------------------------------------------------------------------------
+// HorseFightRepository — gladiatorial combat records
+// ---------------------------------------------------------------------------
+
+// HorseFightRepository handles persistence for horse fight records.
+type HorseFightRepository interface {
+	// CreateFight persists a new horse fight record.
+	CreateFight(ctx context.Context, fight *models.HorseFight) error
+
+	// GetFight retrieves a fight by ID.
+	GetFight(ctx context.Context, id string) (*models.HorseFight, error)
+
+	// ListRecentFights returns the most recent fights, newest first.
+	ListRecentFights(ctx context.Context, limit int) ([]*models.HorseFight, error)
+
+	// ListFightsByHorse returns all fights involving a given horse.
+	ListFightsByHorse(ctx context.Context, horseID string) ([]*models.HorseFight, error)
+
+	// UpdateFight saves changes to an existing fight record.
+	UpdateFight(ctx context.Context, fight *models.HorseFight) error
+}
+
+// ---------------------------------------------------------------------------
+// GlueFactoryRepository — glue production records
+// ---------------------------------------------------------------------------
+
+// GlueFactoryRepository handles persistence for glue factory records.
+type GlueFactoryRepository interface {
+	// RecordGlue persists a glue factory result.
+	RecordGlue(ctx context.Context, result *models.GlueFactoryResult, ownerID, stableID string) error
+
+	// GetStableGlueHistory returns all glue factory records for a stable.
+	GetStableGlueHistory(ctx context.Context, stableID string) ([]*models.GlueFactoryResult, error)
+
+	// GetTotalGlueProduced returns the total glue produced across all stables.
+	GetTotalGlueProduced(ctx context.Context) (int64, error)
+}
+
+// ---------------------------------------------------------------------------
+// BreedingStallionRepository — permanent stud duty records
+// ---------------------------------------------------------------------------
+
+// BreedingStallionRepository handles persistence for permanent breeding stallions.
+type BreedingStallionRepository interface {
+	// AssignBreeder persists a new breeding stallion record.
+	AssignBreeder(ctx context.Context, breeder *models.BreedingStallion) error
+
+	// GetBreeder retrieves a breeding stallion by horse ID.
+	GetBreeder(ctx context.Context, horseID string) (*models.BreedingStallion, error)
+
+	// ListActiveBreedersByOwner returns all active breeders owned by a user.
+	ListActiveBreedersByOwner(ctx context.Context, ownerID string) ([]*models.BreedingStallion, error)
+
+	// ListAllActiveBreeders returns all active breeding stallions.
+	ListAllActiveBreeders(ctx context.Context) ([]*models.BreedingStallion, error)
+
+	// UpdateBreeder saves changes to an existing breeding stallion record.
+	UpdateBreeder(ctx context.Context, breeder *models.BreedingStallion) error
+
+	// DeactivateBreeder marks a breeding stallion as inactive.
+	DeactivateBreeder(ctx context.Context, horseID string) error
+}

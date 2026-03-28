@@ -368,6 +368,39 @@ func (sm *StableManager) MoveHorse(horseID, fromStableID, toStableID string) err
 }
 
 // ---------------------------------------------------------------------------
+// Permanent horse removal (death / glue factory / retirement)
+// ---------------------------------------------------------------------------
+
+// RemoveHorse permanently removes a horse from its stable and the global
+// registry. This is used when a horse dies in combat, is sent to the glue
+// factory, or is otherwise permanently retired. Returns an error if the
+// horse is not found.
+func (sm *StableManager) RemoveHorse(horseID string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	_, ok := sm.horses[horseID]
+	if !ok {
+		return fmt.Errorf("horse not found: %s", horseID)
+	}
+
+	// Remove from whichever stable contains it.
+	for _, stable := range sm.stables {
+		for i := range stable.Horses {
+			if stable.Horses[i].ID == horseID {
+				stable.Horses = append(stable.Horses[:i], stable.Horses[i+1:]...)
+				break
+			}
+		}
+	}
+
+	// Remove from the global registry.
+	delete(sm.horses, horseID)
+
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // Leaderboard
 // ---------------------------------------------------------------------------
 

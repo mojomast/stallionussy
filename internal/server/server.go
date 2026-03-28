@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mojomast/stallionussy/internal/authussy"
 	"github.com/mojomast/stallionussy/internal/commussy"
+	"github.com/mojomast/stallionussy/internal/fightussy"
 	"github.com/mojomast/stallionussy/internal/genussy"
 	"github.com/mojomast/stallionussy/internal/marketussy"
 	"github.com/mojomast/stallionussy/internal/models"
@@ -71,6 +72,9 @@ type Server struct {
 	auctionRepo     repository.AuctionRepository
 	replayRepo      repository.RaceReplayRepository
 	allianceRepo    repository.AllianceRepository
+	fightRepo       repository.HorseFightRepository
+	glueRepo        repository.GlueFactoryRepository
+	breederRepo     repository.BreedingStallionRepository
 
 	// Auth (nil when running without DB).
 	auth        *authussy.AuthService
@@ -105,6 +109,10 @@ type Server struct {
 	// Stable alliances / guilds (in-memory store).
 	alliances  map[string]*models.Alliance // allianceID -> alliance
 	allianceMu sync.RWMutex
+
+	// Pending horse fights (in-memory: fights awaiting an opponent).
+	pendingFights map[string]*models.HorseFight // fightID -> fight
+	fightMu       sync.RWMutex
 }
 
 // NewServer initializes all subsystems, seeds the legendary horses into a
@@ -139,10 +147,11 @@ func NewServer(db *postgres.DB) *Server {
 			StartedAt: time.Now(),
 			Active:    true,
 		},
-		pastSeasons: []models.Season{},
-		progress:    make(map[string]*models.PlayerProgress),
-		rivalries:   make(map[string]map[string]int),
-		alliances:   make(map[string]*models.Alliance),
+		pastSeasons:   []models.Season{},
+		progress:      make(map[string]*models.PlayerProgress),
+		rivalries:     make(map[string]map[string]int),
+		alliances:     make(map[string]*models.Alliance),
+		pendingFights: make(map[string]*models.HorseFight),
 	}
 
 	// If a DB connection is provided, wire up persistence and auth.
@@ -161,6 +170,9 @@ func NewServer(db *postgres.DB) *Server {
 		s.auctionRepo = postgres.NewAuctionRepo(db)
 		s.replayRepo = postgres.NewReplayRepo(db)
 		s.allianceRepo = postgres.NewAllianceRepo(db)
+		s.fightRepo = postgres.NewFightRepo(db)
+		s.glueRepo = postgres.NewGlueFactoryRepo(db)
+		s.breederRepo = postgres.NewBreedingStallionRepo(db)
 
 		// Create auth service.
 		jwtSecret := os.Getenv("JWT_SECRET")
@@ -218,6 +230,10 @@ func NewServer(db *postgres.DB) *Server {
 			s.handleChatWhisper(senderUserID, senderUsername, args)
 		case "alliance":
 			s.handleChatAlliance(senderUserID, senderUsername, args)
+		case "fight":
+			s.handleChatFight(senderUserID, senderUsername, args)
+		case "joinfight":
+			s.handleChatJoinFight(senderUserID, senderUsername, args)
 		}
 	}
 
@@ -356,6 +372,26 @@ func (s *Server) routes() {
 	// --- Horse Injury & Age ---
 	s.mux.HandleFunc("POST /api/horses/{id}/heal", s.handleHealHorse)
 	s.mux.HandleFunc("GET /api/horses/{id}/age-info", s.handleGetHorseAgeInfo)
+
+	// --- Horse Fights (Gladiatorial Combat) ---
+	s.mux.HandleFunc("POST /api/fights", s.handleCreateFight)
+	s.mux.HandleFunc("POST /api/fights/{id}/join", s.handleJoinFight)
+	s.mux.HandleFunc("GET /api/fights/{id}", s.handleGetFight)
+	s.mux.HandleFunc("GET /api/fights", s.handleListFights)
+	s.mux.HandleFunc("GET /api/fights/arenas", s.handleListArenas)
+	s.mux.HandleFunc("GET /api/fights/{id}/replay", s.handleGetFightReplay)
+
+	// --- Glue Factory ---
+	s.mux.HandleFunc("POST /api/horses/{id}/glue", s.handleSendToGlue)
+	s.mux.HandleFunc("GET /api/glue/stats", s.handleGlueStats)
+	s.mux.HandleFunc("GET /api/glue/history", s.handleListGlueHistory)
+
+	// --- Breeding Stallions (Permanent Stud Duty) ---
+	s.mux.HandleFunc("POST /api/horses/{id}/assign-breeder", s.handleAssignBreeder)
+	s.mux.HandleFunc("GET /api/breeders", s.handleListBreeders)
+	s.mux.HandleFunc("GET /api/breeders/{id}", s.handleGetBreeder)
+	s.mux.HandleFunc("POST /api/breeders/{id}/breed", s.handleBreedWithStallion)
+	s.mux.HandleFunc("POST /api/breeders/{id}/retire", s.handleRetireBreeder)
 
 	// --- Leaderboard ---
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleGetLeaderboard)
@@ -7661,4 +7697,1182 @@ func pickEventTarget(target string, horses []*models.Horse, race *models.Race) *
 	default:
 		return nil
 	}
+}
+
+// ===========================================================================
+// Horse Fights (Gladiatorial Combat) Handlers
+// ===========================================================================
+//
+// Retired horses get maces welded to their hooves and fight in arenas.
+// Two horses enter, one horse leaves (usually). The system supports both
+// non-lethal (loser gets injured) and to-the-death (loser is permanently
+// deleted) matches. Fights are created as "pending" and start when an
+// opponent joins.
+
+// glueEulogies — randomly selected farewell messages for the glue factory.
+var glueEulogies = []string{
+	"They ran their last race. Now they hold things together. Literally.",
+	"Gone but not forgotten. Their adhesive properties will bind us all.",
+	"From the track to the factory. A noble end for a noble steed.",
+	"They lived fast, died young, and left a beautifully viscous corpse.",
+	"In memoriam: they couldn't outrun capitalism.",
+	"The Glue Factory sends its regards. Your horse is now a craft supply.",
+	"E-008 salutes this sacrifice. The yogurt remembers.",
+	"Dr. Mittens performed the final examination. Cause of death: economics.",
+	"Pastor Router offered a prayer packet. It was delivered successfully (200 OK).",
+	"Geoffrussy's CI/CD pipeline has decommissioned this unit. Farewell.",
+	"They say every bottle of glue contains the spirit of a horse. This one contains YOURS.",
+	"Jason Derulo tripped over the memorial plaque. Classic Derulo.",
+	"B.U.R.P. has classified this horse's remains as 'adhesive-adjacent material'.",
+	"The horse is dead. Long live the horse. (The glue, however, will live forever.)",
+	"Margaret Chen would note this horse's excellent collagen-to-body-mass ratio.",
+	"A moment of silence... followed by the sound of industrial processing equipment.",
+}
+
+// glueBonusMaterials — random bonus resources from the glue factory.
+var glueBonusMaterials = []string{
+	"Artisanal Hoof Polish",
+	"Vintage Horsehair Paintbrush",
+	"Premium Leather Scraps",
+	"Organic Bone Meal",
+	"Haunted Horseshoe",
+	"Sentimental Mane Clippings",
+	"E-008 Infused Gelatin",
+	"Dr. Mittens' Approved Cat Toys (horse-derived)",
+	"Cursed Tail Hair",
+	"Commemorative Trophy (participation)",
+}
+
+// handleCreateFight creates a new pending fight. The creator's horse is
+// entered as horse1 and the fight waits for an opponent to join.
+//
+// POST /api/fights
+// Body: { "horseID": "...", "arenaType": "Colosseum", "isToDeath": false, "entryFee": 100 }
+func (s *Server) handleCreateFight(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req struct {
+		HorseID   string `json:"horseID"`
+		ArenaType string `json:"arenaType"`
+		IsToDeath bool   `json:"isToDeath"`
+		EntryFee  int64  `json:"entryFee"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.HorseID == "" {
+		writeError(w, http.StatusBadRequest, "horseID is required")
+		return
+	}
+
+	// Verify ownership.
+	if !s.userOwnsHorse(claims.UserID, req.HorseID) {
+		writeError(w, http.StatusForbidden, "you don't own that horse")
+		return
+	}
+
+	// Get the horse.
+	horse, err := s.stables.GetHorse(req.HorseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	// Horse must be retired to fight.
+	if !horse.Retired {
+		writeError(w, http.StatusBadRequest, "only retired horses can enter the arena — retire your horse first")
+		return
+	}
+
+	// Check entry fee affordability.
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you don't have a stable")
+		return
+	}
+	if req.EntryFee < 0 {
+		writeError(w, http.StatusBadRequest, "entry fee cannot be negative")
+		return
+	}
+	if stable.Cummies < req.EntryFee {
+		writeError(w, http.StatusBadRequest, "insufficient cummies for entry fee")
+		return
+	}
+
+	// Deduct entry fee.
+	if req.EntryFee > 0 {
+		stable.Cummies -= req.EntryFee
+	}
+
+	// Default arena type.
+	if req.ArenaType == "" {
+		req.ArenaType = fightussy.ArenaColosseum
+	}
+
+	fight := &models.HorseFight{
+		ID:            uuid.New().String(),
+		ArenaType:     req.ArenaType,
+		Horse1ID:      horse.ID,
+		Horse1Name:    horse.Name,
+		Horse1OwnerID: claims.UserID,
+		IsToDeath:     req.IsToDeath,
+		EntryFee:      req.EntryFee,
+		Purse:         req.EntryFee * 2, // winner takes both entry fees
+		Status:        models.FightStatusPending,
+		CreatedAt:     time.Now(),
+	}
+
+	// Store in-memory.
+	s.fightMu.Lock()
+	s.pendingFights[fight.ID] = fight
+	s.fightMu.Unlock()
+
+	// Persist to DB.
+	if s.fightRepo != nil {
+		ctx := context.Background()
+		if err := s.fightRepo.CreateFight(ctx, fight); err != nil {
+			log.Printf("server: failed to persist fight %s: %v", fight.ID, err)
+		}
+	}
+
+	// Broadcast new fight.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "fight_created",
+		"fight":     fight,
+		"message":   fmt.Sprintf("⚔️ %s has entered the %s and awaits a challenger! Entry fee: %d cummies. %s", horse.Name, fight.ArenaType, fight.EntryFee, map[bool]string{true: "TO THE DEATH!", false: "Non-lethal bout."}[fight.IsToDeath]),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusCreated, fight)
+}
+
+// handleJoinFight joins a pending fight as the second combatant and
+// immediately runs the fight simulation.
+//
+// POST /api/fights/{id}/join
+// Body: { "horseID": "..." }
+func (s *Server) handleJoinFight(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	fightID := r.PathValue("id")
+
+	var req struct {
+		HorseID string `json:"horseID"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.HorseID == "" {
+		writeError(w, http.StatusBadRequest, "horseID is required")
+		return
+	}
+
+	// Verify ownership.
+	if !s.userOwnsHorse(claims.UserID, req.HorseID) {
+		writeError(w, http.StatusForbidden, "you don't own that horse")
+		return
+	}
+
+	// Get the horse.
+	horse2, err := s.stables.GetHorse(req.HorseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	if !horse2.Retired {
+		writeError(w, http.StatusBadRequest, "only retired horses can enter the arena")
+		return
+	}
+
+	// Find the pending fight.
+	s.fightMu.Lock()
+	fight, exists := s.pendingFights[fightID]
+	if !exists {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusNotFound, "fight not found or already started")
+		return
+	}
+	if fight.Status != models.FightStatusPending {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusBadRequest, "fight is not pending")
+		return
+	}
+
+	// Can't fight your own horse.
+	if fight.Horse1ID == req.HorseID {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusBadRequest, "a horse cannot fight itself (that's just therapy)")
+		return
+	}
+
+	// Can't fight your own horses against each other.
+	if fight.Horse1OwnerID == claims.UserID {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you cannot fight your own horses against each other")
+		return
+	}
+
+	// Check entry fee.
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusBadRequest, "you don't have a stable")
+		return
+	}
+	if stable.Cummies < fight.EntryFee {
+		s.fightMu.Unlock()
+		writeError(w, http.StatusBadRequest, "insufficient cummies for entry fee")
+		return
+	}
+
+	// Deduct entry fee.
+	if fight.EntryFee > 0 {
+		stable.Cummies -= fight.EntryFee
+	}
+
+	// Fill in horse 2 and mark as fighting.
+	fight.Horse2ID = horse2.ID
+	fight.Horse2Name = horse2.Name
+	fight.Horse2OwnerID = claims.UserID
+	fight.Status = models.FightStatusFighting
+
+	// Remove from pending.
+	delete(s.pendingFights, fightID)
+	s.fightMu.Unlock()
+
+	// Get horse 1 for the simulation.
+	horse1, err := s.stables.GetHorse(fight.Horse1ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "horse 1 not found (may have been deleted)")
+		return
+	}
+
+	// Run fight simulation.
+	config := fightussy.FightConfig{
+		ArenaType: fight.ArenaType,
+		MaxRounds: 10,
+		Purse:     fight.Purse,
+		IsToDeath: fight.IsToDeath,
+	}
+	result := fightussy.SimulateFight(horse1, horse2, config)
+
+	// Encode fight result as the fight log.
+	fightLogJSON, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("server: failed to marshal fight result: %v", err)
+	}
+
+	// Update fight record.
+	fight.WinnerID = result.WinnerID
+	fight.WinnerName = result.WinnerName
+	fight.LoserID = result.LoserID
+	fight.LoserName = result.LoserName
+	fight.IsFatality = result.IsFatality
+	fight.KORound = result.KORound
+	fight.TotalRounds = len(result.Rounds)
+	fight.FightLog = fightLogJSON
+	fight.Narrative = result.Narrative
+	fight.Status = models.FightStatusFinished
+
+	// Award purse to winner's stable.
+	ctx := context.Background()
+	if result.WinnerID != "" {
+		var winnerOwnerID string
+		if result.WinnerID == fight.Horse1ID {
+			winnerOwnerID = fight.Horse1OwnerID
+		} else {
+			winnerOwnerID = fight.Horse2OwnerID
+		}
+		winnerStable := s.getStableForUser(winnerOwnerID)
+		if winnerStable != nil {
+			winnerStable.Cummies += fight.Purse
+			s.persistStable(ctx, winnerStable)
+		}
+	}
+
+	// Handle fatality — permanently remove the loser.
+	if result.IsFatality && result.LoserID != "" {
+		if err := s.stables.RemoveHorse(result.LoserID); err != nil {
+			log.Printf("server: failed to remove dead horse %s: %v", result.LoserID, err)
+		}
+		if s.horseRepo != nil {
+			if err := s.horseRepo.DeleteHorse(ctx, result.LoserID); err != nil {
+				log.Printf("server: failed to delete dead horse from DB %s: %v", result.LoserID, err)
+			}
+		}
+	}
+
+	// Persist fight result.
+	if s.fightRepo != nil {
+		if err := s.fightRepo.UpdateFight(ctx, fight); err != nil {
+			log.Printf("server: failed to update fight %s: %v", fight.ID, err)
+		}
+	}
+
+	// Persist stables (entry fees deducted, purse awarded).
+	s.persistStable(ctx, stable)
+	creatorStable := s.getStableForUser(fight.Horse1OwnerID)
+	if creatorStable != nil {
+		s.persistStable(ctx, creatorStable)
+	}
+
+	// Broadcast fight result.
+	deathMsg := ""
+	if result.IsFatality && result.LoserName != "" {
+		deathMsg = fmt.Sprintf(" 💀 %s has been PERMANENTLY DESTROYED!", result.LoserName)
+	}
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "fight_finished",
+		"fight":     fight,
+		"message":   fmt.Sprintf("⚔️ FIGHT OVER in the %s! %s vs %s — Winner: %s! KO Round %d!%s Purse: %d cummies!", fight.ArenaType, fight.Horse1Name, fight.Horse2Name, result.WinnerName, result.KORound, deathMsg, fight.Purse),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusOK, fight)
+}
+
+// handleGetFight retrieves a fight by ID.
+// GET /api/fights/{id}
+func (s *Server) handleGetFight(w http.ResponseWriter, r *http.Request) {
+	fightID := r.PathValue("id")
+
+	// Check pending fights first.
+	s.fightMu.RLock()
+	if fight, exists := s.pendingFights[fightID]; exists {
+		s.fightMu.RUnlock()
+		writeJSON(w, http.StatusOK, fight)
+		return
+	}
+	s.fightMu.RUnlock()
+
+	// Check DB.
+	if s.fightRepo != nil {
+		fight, err := s.fightRepo.GetFight(context.Background(), fightID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, fight)
+			return
+		}
+	}
+
+	writeError(w, http.StatusNotFound, "fight not found")
+}
+
+// handleListFights lists pending and recent fights.
+// GET /api/fights?status=pending|finished&limit=20
+func (s *Server) handleListFights(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if n, err := strconv.Atoi(limitStr); err == nil && n > 0 && n <= 100 {
+		limit = n
+	}
+
+	var fights []*models.HorseFight
+
+	if status == "" || status == "pending" {
+		// Include in-memory pending fights.
+		s.fightMu.RLock()
+		for _, f := range s.pendingFights {
+			fights = append(fights, f)
+		}
+		s.fightMu.RUnlock()
+	}
+
+	if status == "" || status == "finished" {
+		// Include DB fights.
+		if s.fightRepo != nil {
+			dbFights, err := s.fightRepo.ListRecentFights(context.Background(), limit)
+			if err != nil {
+				log.Printf("server: failed to list recent fights: %v", err)
+			} else {
+				fights = append(fights, dbFights...)
+			}
+		}
+	}
+
+	// Sort by created_at descending.
+	sort.Slice(fights, func(i, j int) bool {
+		return fights[i].CreatedAt.After(fights[j].CreatedAt)
+	})
+
+	if len(fights) > limit {
+		fights = fights[:limit]
+	}
+
+	if fights == nil {
+		fights = []*models.HorseFight{}
+	}
+
+	writeJSON(w, http.StatusOK, fights)
+}
+
+// handleGetFightReplay returns the full fight log for replay.
+// GET /api/fights/{id}/replay
+func (s *Server) handleGetFightReplay(w http.ResponseWriter, r *http.Request) {
+	fightID := r.PathValue("id")
+
+	if s.fightRepo != nil {
+		fight, err := s.fightRepo.GetFight(context.Background(), fightID)
+		if err == nil && len(fight.FightLog) > 0 {
+			// Return the raw fight result JSON.
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(fight.FightLog)
+			return
+		}
+	}
+
+	writeError(w, http.StatusNotFound, "fight replay not found")
+}
+
+// ===========================================================================
+// Glue Factory Handlers
+// ===========================================================================
+//
+// Send a horse to the glue factory for permanent disposal. The horse is
+// deleted and the owner receives cummies based on the horse's stats plus
+// a random bonus material. This is irreversible and horrifying.
+
+// handleSendToGlue permanently destroys a horse and converts it to glue.
+//
+// POST /api/horses/{id}/glue
+func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	horseID := r.PathValue("id")
+
+	// Verify ownership.
+	if !s.userOwnsHorse(claims.UserID, horseID) {
+		writeError(w, http.StatusForbidden, "you don't own that horse")
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	// Calculate glue production based on horse stats.
+	// Base glue = 50 + (age * 3) + (races * 2) + (wins * 5)
+	glueProduced := int64(50) + int64(horse.Age)*3 + int64(horse.Races)*2 + int64(horse.Wins)*5
+
+	// Cummies earned = glue * 10 + ELO bonus
+	eloBonus := int64(horse.ELO / 10.0)
+	cummiesEarned := glueProduced*10 + eloBonus
+
+	// Random bonus material.
+	bonusMaterial := glueBonusMaterials[rand.IntN(len(glueBonusMaterials))]
+	bonusAmount := int64(rand.IntN(50)) + 10
+
+	// Random eulogy.
+	eulogy := glueEulogies[rand.IntN(len(glueEulogies))]
+
+	result := &models.GlueFactoryResult{
+		HorseID:       horse.ID,
+		HorseName:     horse.Name,
+		GlueProduced:  glueProduced,
+		CummiesEarned: cummiesEarned,
+		BonusMaterial: bonusMaterial,
+		BonusAmount:   bonusAmount,
+		Eulogy:        eulogy,
+		CreatedAt:     time.Now(),
+	}
+
+	// Award cummies to the owner.
+	stable := s.getStableForUser(claims.UserID)
+	if stable != nil {
+		stable.Cummies += cummiesEarned
+	}
+
+	// Remove the horse permanently.
+	ctx := context.Background()
+	if err := s.stables.RemoveHorse(horseID); err != nil {
+		log.Printf("server: failed to remove horse from stableussy: %v", err)
+	}
+	if s.horseRepo != nil {
+		if err := s.horseRepo.DeleteHorse(ctx, horseID); err != nil {
+			log.Printf("server: failed to delete horse from DB: %v", err)
+		}
+	}
+
+	// Persist glue record.
+	if s.glueRepo != nil {
+		stableID := ""
+		if stable != nil {
+			stableID = stable.ID
+		}
+		if err := s.glueRepo.RecordGlue(ctx, result, claims.UserID, stableID); err != nil {
+			log.Printf("server: failed to persist glue result: %v", err)
+		}
+	}
+
+	// Persist stable (cummies updated).
+	if stable != nil {
+		s.persistStable(ctx, stable)
+	}
+
+	// Broadcast the horror.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "glue_factory",
+		"result":    result,
+		"message":   fmt.Sprintf("🏭 %s has been sent to the GLUE FACTORY. %d units of glue produced. %d cummies earned. Bonus: %d %s. %s", result.HorseName, result.GlueProduced, result.CummiesEarned, result.BonusAmount, result.BonusMaterial, result.Eulogy),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleListGlueHistory returns glue factory history for the current user's stable.
+// GET /api/glue/history
+func (s *Server) handleListGlueHistory(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeJSON(w, http.StatusOK, []models.GlueFactoryResult{})
+		return
+	}
+
+	if s.glueRepo == nil {
+		writeJSON(w, http.StatusOK, []models.GlueFactoryResult{})
+		return
+	}
+
+	results, err := s.glueRepo.GetStableGlueHistory(context.Background(), stable.ID)
+	if err != nil {
+		log.Printf("server: failed to list glue history: %v", err)
+		writeJSON(w, http.StatusOK, []models.GlueFactoryResult{})
+		return
+	}
+	if results == nil {
+		results = []*models.GlueFactoryResult{}
+	}
+
+	writeJSON(w, http.StatusOK, results)
+}
+
+// handleListArenas returns the available arena types with descriptions.
+// GET /api/fights/arenas
+func (s *Server) handleListArenas(w http.ResponseWriter, r *http.Request) {
+	arenas := []map[string]interface{}{
+		{
+			"id":          "Colosseum",
+			"name":        "The Colosseum",
+			"description": "Standard arena. No special modifiers. Just two horses, two maces, and the unquenchable thirst of the crowd.",
+			"modifier":    "None",
+		},
+		{
+			"id":          "Thunderdome",
+			"name":        "The Thunderdome",
+			"description": "Electrified floor panels zap randomly. +20% damage, 5 HP passive damage per round. Two horses enter, maybe one leaves.",
+			"modifier":    "+20% damage, 5 HP/round passive damage",
+		},
+		{
+			"id":          "The Pit",
+			"name":        "The Pit",
+			"description": "A muddy hellhole. SZE-dominant (Power) horses deal +15% damage. SPD gets a penalty. It's disgusting and the crowd loves it.",
+			"modifier":    "SZE AA: +15% damage, SPD penalty",
+		},
+		{
+			"id":          "Dr. Mittens' Operating Theater",
+			"name":        "Dr. Mittens' Operating Theater",
+			"description": "The cat DVM has converted her operating theater into a fight pit. INT bonus +20%. Random healing events because she can't help herself.",
+			"modifier":    "INT +20%, random heals",
+		},
+		{
+			"id":          "E-008's Containment Zone",
+			"name":        "E-008's Containment Zone",
+			"description": "The sentient yogurt's former prison. Pure chaos. Random stat swaps, 5% mutation chance per round. The yogurt whispers encouragement.",
+			"modifier":    "Chaos mode, stat swaps, mutations",
+		},
+	}
+	writeJSON(w, http.StatusOK, arenas)
+}
+
+// handleGlueStats returns global glue factory statistics.
+// GET /api/glue/stats
+func (s *Server) handleGlueStats(w http.ResponseWriter, r *http.Request) {
+	var totalGlue int64
+	if s.glueRepo != nil {
+		g, err := s.glueRepo.GetTotalGlueProduced(context.Background())
+		if err == nil {
+			totalGlue = g
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"totalGlueProduced":  totalGlue,
+		"gluePerCummy":       15,
+		"factoryStatus":      "Operational",
+		"factoryMotto":       "Where Champions Become Adhesive™",
+		"drMittensApproval":  "Reluctant",
+		"burpInvestigations": "Pending",
+	})
+}
+
+// ===========================================================================
+// Breeding Stallion Handlers
+// ===========================================================================
+//
+// Permanently assign a retired horse to breeding duty. They can no longer
+// race or fight, but they earn passive income from breeding fees. Other
+// players can breed with them by paying the fee.
+
+// handleAssignBreeder permanently assigns a horse to breeding duty.
+//
+// POST /api/horses/{id}/assign-breeder
+// Body: { "fee": 500 }
+func (s *Server) handleAssignBreeder(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	horseID := r.PathValue("id")
+
+	var req struct {
+		Fee int64 `json:"fee"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Fee < 0 {
+		writeError(w, http.StatusBadRequest, "breeding fee cannot be negative")
+		return
+	}
+
+	// Verify ownership.
+	if !s.userOwnsHorse(claims.UserID, horseID) {
+		writeError(w, http.StatusForbidden, "you don't own that horse")
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	if !horse.Retired {
+		writeError(w, http.StatusBadRequest, "only retired horses can be assigned to breeding duty")
+		return
+	}
+
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you don't have a stable")
+		return
+	}
+
+	breeder := &models.BreedingStallion{
+		HorseID:       horse.ID,
+		HorseName:     horse.Name,
+		OwnerID:       claims.UserID,
+		StableID:      stable.ID,
+		BreedCount:    0,
+		TotalEarnings: 0,
+		Fee:           req.Fee,
+		CooldownHours: 2, // reduced from the normal 4h breeding cooldown
+		Active:        true,
+		AssignedAt:    time.Now(),
+	}
+
+	// Persist to DB.
+	if s.breederRepo != nil {
+		ctx := context.Background()
+		if err := s.breederRepo.AssignBreeder(ctx, breeder); err != nil {
+			log.Printf("server: failed to persist breeder %s: %v", breeder.HorseID, err)
+			writeError(w, http.StatusInternalServerError, "failed to assign breeder")
+			return
+		}
+	}
+
+	// Broadcast.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "breeder_assigned",
+		"breeder":   breeder,
+		"message":   fmt.Sprintf("🐴 %s has been permanently assigned to BREEDING DUTY! Fee: %d cummies per session. The legacy continues!", horse.Name, req.Fee),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusCreated, breeder)
+}
+
+// handleListBreeders lists all active breeding stallions.
+// GET /api/breeders?mine=true
+func (s *Server) handleListBreeders(w http.ResponseWriter, r *http.Request) {
+	if s.breederRepo == nil {
+		writeJSON(w, http.StatusOK, []*models.BreedingStallion{})
+		return
+	}
+
+	mine := r.URL.Query().Get("mine")
+	ctx := context.Background()
+
+	var breeders []*models.BreedingStallion
+	var err error
+
+	if mine == "true" {
+		claims, ok := authussy.GetUserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "authentication required for ?mine=true")
+			return
+		}
+		breeders, err = s.breederRepo.ListActiveBreedersByOwner(ctx, claims.UserID)
+	} else {
+		breeders, err = s.breederRepo.ListAllActiveBreeders(ctx)
+	}
+
+	if err != nil {
+		log.Printf("server: failed to list breeders: %v", err)
+		writeJSON(w, http.StatusOK, []*models.BreedingStallion{})
+		return
+	}
+	if breeders == nil {
+		breeders = []*models.BreedingStallion{}
+	}
+
+	writeJSON(w, http.StatusOK, breeders)
+}
+
+// handleGetBreeder retrieves a single breeding stallion by horse ID.
+// GET /api/breeders/{id}
+func (s *Server) handleGetBreeder(w http.ResponseWriter, r *http.Request) {
+	horseID := r.PathValue("id")
+
+	if s.breederRepo == nil {
+		writeError(w, http.StatusNotFound, "breeder not found")
+		return
+	}
+
+	breeder, err := s.breederRepo.GetBreeder(context.Background(), horseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "breeder not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, breeder)
+}
+
+// handleBreedWithStallion breeds the caller's mare with a breeding stallion.
+// The caller pays the breeding fee.
+//
+// POST /api/breeders/{id}/breed
+// Body: { "mareID": "..." }
+func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	stallionHorseID := r.PathValue("id")
+
+	var req struct {
+		MareID string `json:"mareID"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.MareID == "" {
+		writeError(w, http.StatusBadRequest, "mareID is required")
+		return
+	}
+
+	// Verify caller owns the mare.
+	if !s.userOwnsHorse(claims.UserID, req.MareID) {
+		writeError(w, http.StatusForbidden, "you don't own that mare")
+		return
+	}
+
+	mare, err := s.stables.GetHorse(req.MareID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "mare not found")
+		return
+	}
+
+	// Get the stallion.
+	stallion, err := s.stables.GetHorse(stallionHorseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stallion not found")
+		return
+	}
+
+	// Get the breeder record.
+	if s.breederRepo == nil {
+		writeError(w, http.StatusInternalServerError, "breeding system not available")
+		return
+	}
+
+	breeder, err := s.breederRepo.GetBreeder(context.Background(), stallionHorseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stallion is not registered as a breeder")
+		return
+	}
+	if !breeder.Active {
+		writeError(w, http.StatusBadRequest, "this breeding stallion has been retired from duty")
+		return
+	}
+
+	// Check breeding fee.
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "you don't have a stable")
+		return
+	}
+	if breeder.Fee > 0 && stable.Cummies < breeder.Fee {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: need %d, have %d", breeder.Fee, stable.Cummies))
+		return
+	}
+
+	// Deduct fee from buyer, add to stallion owner.
+	ctx := context.Background()
+	if breeder.Fee > 0 {
+		stable.Cummies -= breeder.Fee
+		ownerStable := s.getStableForUser(breeder.OwnerID)
+		if ownerStable != nil {
+			ownerStable.Cummies += breeder.Fee
+			s.persistStable(ctx, ownerStable)
+		}
+	}
+
+	// Breed the horses using genussy.
+	foal := genussy.Breed(stallion, mare)
+	if foal == nil {
+		writeError(w, http.StatusInternalServerError, "breeding failed — the genes refused to cooperate")
+		return
+	}
+
+	// Assign traits to the foal.
+	s.trainer.AssignTraitsAtBirth(foal, stallion, mare)
+
+	// Add foal to buyer's stable.
+	if err := s.stables.AddHorseToStable(stable.ID, foal); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to add foal: %v", err))
+		return
+	}
+
+	// Update breeder stats.
+	breeder.BreedCount++
+	breeder.TotalEarnings += breeder.Fee
+	if err := s.breederRepo.UpdateBreeder(ctx, breeder); err != nil {
+		log.Printf("server: failed to update breeder stats: %v", err)
+	}
+
+	// Persist.
+	s.persistHorse(ctx, foal)
+	s.persistStable(ctx, stable)
+
+	// Broadcast.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "breeder_offspring",
+		"foal":      foal,
+		"stallion":  stallion.Name,
+		"mare":      mare.Name,
+		"message":   fmt.Sprintf("🐴 NEW FOAL! %s (sire: %s × dam: %s) has been born via the breeding program! Fee paid: %d cummies.", foal.Name, stallion.Name, mare.Name, breeder.Fee),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"foal":    foal,
+		"breeder": breeder,
+	})
+}
+
+// handleRetireBreeder deactivates a breeding stallion.
+// POST /api/breeders/{id}/retire
+func (s *Server) handleRetireBreeder(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	horseID := r.PathValue("id")
+
+	if s.breederRepo == nil {
+		writeError(w, http.StatusInternalServerError, "breeding system not available")
+		return
+	}
+
+	breeder, err := s.breederRepo.GetBreeder(context.Background(), horseID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "breeder not found")
+		return
+	}
+
+	// Only the owner can retire their breeder.
+	if breeder.OwnerID != claims.UserID {
+		writeError(w, http.StatusForbidden, "you don't own this breeding stallion")
+		return
+	}
+
+	ctx := context.Background()
+	if err := s.breederRepo.DeactivateBreeder(ctx, horseID); err != nil {
+		log.Printf("server: failed to deactivate breeder: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to retire breeder")
+		return
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "breeder_retired",
+		"horseID":   horseID,
+		"horseName": breeder.HorseName,
+		"message":   fmt.Sprintf("🐴 %s has been retired from breeding duty after %d sessions. Total earnings: %d cummies.", breeder.HorseName, breeder.BreedCount, breeder.TotalEarnings),
+		"timestamp": time.Now().UnixMilli(),
+	})
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "retired",
+		"message": fmt.Sprintf("%s has been retired from breeding duty", breeder.HorseName),
+	})
+}
+
+// ===========================================================================
+// Chat Commands for Fights
+// ===========================================================================
+
+// handleChatFight handles the /fight chat command.
+// Usage: /fight <horseID> [arena] [death]
+func (s *Server) handleChatFight(senderUserID, senderUsername string, args map[string]interface{}) {
+	horseID, _ := args["horse"].(string)
+	if horseID == "" {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Usage: /fight <horseID> [arena] [death] — Create a fight challenge with your retired horse.",
+		})
+		return
+	}
+
+	if !s.userOwnsHorse(senderUserID, horseID) {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "You don't own that horse.",
+		})
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || !horse.Retired {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Only retired horses can fight. Retire your horse first.",
+		})
+		return
+	}
+
+	arenaType, _ := args["arena"].(string)
+	if arenaType == "" {
+		arenaType = fightussy.ArenaColosseum
+	}
+
+	isToDeath := false
+	if deathStr, ok := args["death"].(string); ok && (deathStr == "true" || deathStr == "death" || deathStr == "yes") {
+		isToDeath = true
+	}
+
+	fight := &models.HorseFight{
+		ID:            uuid.New().String(),
+		ArenaType:     arenaType,
+		Horse1ID:      horse.ID,
+		Horse1Name:    horse.Name,
+		Horse1OwnerID: senderUserID,
+		IsToDeath:     isToDeath,
+		EntryFee:      100, // default chat entry fee
+		Purse:         200,
+		Status:        models.FightStatusPending,
+		CreatedAt:     time.Now(),
+	}
+
+	s.fightMu.Lock()
+	s.pendingFights[fight.ID] = fight
+	s.fightMu.Unlock()
+
+	if s.fightRepo != nil {
+		if err := s.fightRepo.CreateFight(context.Background(), fight); err != nil {
+			log.Printf("server: failed to persist chat fight: %v", err)
+		}
+	}
+
+	deathLabel := "non-lethal"
+	if isToDeath {
+		deathLabel = "TO THE DEATH"
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":    "chat_message",
+		"user":    senderUsername,
+		"message": fmt.Sprintf("⚔️ %s challenges the arena! %s enters the %s (%s). Use /joinfight %s <yourHorseID> to accept!", senderUsername, horse.Name, arenaType, deathLabel, fight.ID),
+	})
+}
+
+// handleChatJoinFight handles the /joinfight chat command.
+// Usage: /joinfight <fightID> <horseID>
+func (s *Server) handleChatJoinFight(senderUserID, senderUsername string, args map[string]interface{}) {
+	fightID, _ := args["fight"].(string)
+	horseID, _ := args["horse"].(string)
+	if fightID == "" || horseID == "" {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Usage: /joinfight <fightID> <horseID> — Join a pending fight.",
+		})
+		return
+	}
+
+	if !s.userOwnsHorse(senderUserID, horseID) {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "You don't own that horse.",
+		})
+		return
+	}
+
+	horse2, err := s.stables.GetHorse(horseID)
+	if err != nil || !horse2.Retired {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Only retired horses can fight.",
+		})
+		return
+	}
+
+	// Find and lock the fight.
+	s.fightMu.Lock()
+	fight, exists := s.pendingFights[fightID]
+	if !exists || fight.Status != models.FightStatusPending {
+		s.fightMu.Unlock()
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Fight not found or already started.",
+		})
+		return
+	}
+
+	if fight.Horse1OwnerID == senderUserID {
+		s.fightMu.Unlock()
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "You can't fight your own horse against itself.",
+		})
+		return
+	}
+
+	// Check entry fee.
+	stable := s.getStableForUser(senderUserID)
+	if stable == nil || stable.Cummies < fight.EntryFee {
+		s.fightMu.Unlock()
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": fmt.Sprintf("Insufficient cummies. Need %d.", fight.EntryFee),
+		})
+		return
+	}
+
+	// Deduct entry fee.
+	if fight.EntryFee > 0 {
+		stable.Cummies -= fight.EntryFee
+	}
+
+	fight.Horse2ID = horse2.ID
+	fight.Horse2Name = horse2.Name
+	fight.Horse2OwnerID = senderUserID
+	fight.Status = models.FightStatusFighting
+	delete(s.pendingFights, fightID)
+	s.fightMu.Unlock()
+
+	// Get horse 1.
+	horse1, err := s.stables.GetHorse(fight.Horse1ID)
+	if err != nil {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "Horse 1 not found. Fight cancelled.",
+		})
+		return
+	}
+
+	// Simulate.
+	config := fightussy.FightConfig{
+		ArenaType: fight.ArenaType,
+		MaxRounds: 10,
+		Purse:     fight.Purse,
+		IsToDeath: fight.IsToDeath,
+	}
+	result := fightussy.SimulateFight(horse1, horse2, config)
+
+	fightLogJSON, _ := json.Marshal(result)
+	fight.WinnerID = result.WinnerID
+	fight.WinnerName = result.WinnerName
+	fight.LoserID = result.LoserID
+	fight.LoserName = result.LoserName
+	fight.IsFatality = result.IsFatality
+	fight.KORound = result.KORound
+	fight.TotalRounds = len(result.Rounds)
+	fight.FightLog = fightLogJSON
+	fight.Narrative = result.Narrative
+	fight.Status = models.FightStatusFinished
+
+	ctx := context.Background()
+
+	// Award purse.
+	if result.WinnerID != "" {
+		winnerOwnerID := fight.Horse1OwnerID
+		if result.WinnerID == fight.Horse2ID {
+			winnerOwnerID = fight.Horse2OwnerID
+		}
+		winnerStable := s.getStableForUser(winnerOwnerID)
+		if winnerStable != nil {
+			winnerStable.Cummies += fight.Purse
+			s.persistStable(ctx, winnerStable)
+		}
+	}
+
+	// Handle fatality.
+	if result.IsFatality && result.LoserID != "" {
+		_ = s.stables.RemoveHorse(result.LoserID)
+		if s.horseRepo != nil {
+			_ = s.horseRepo.DeleteHorse(ctx, result.LoserID)
+		}
+	}
+
+	if s.fightRepo != nil {
+		_ = s.fightRepo.UpdateFight(ctx, fight)
+	}
+	s.persistStable(ctx, stable)
+
+	deathMsg := ""
+	if result.IsFatality && result.LoserName != "" {
+		deathMsg = fmt.Sprintf(" 💀 %s has been PERMANENTLY DESTROYED!", result.LoserName)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "fight_finished",
+		"fight":     fight,
+		"message":   fmt.Sprintf("⚔️ FIGHT OVER! %s vs %s in the %s! Winner: %s (Round %d)!%s", fight.Horse1Name, fight.Horse2Name, fight.ArenaType, result.WinnerName, result.KORound, deathMsg),
+		"timestamp": time.Now().UnixMilli(),
+	})
 }
