@@ -5,8 +5,11 @@ package commussy
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +37,11 @@ type Hub struct {
 
 	// mu protects the clients map for concurrent reads (e.g. ClientCount).
 	mu sync.RWMutex
+
+	// OnChatCommand is an optional callback that the server can set to handle
+	// chat commands (e.g. /send, /trade). Called from ReadPump for commands
+	// other than "who" (which is handled locally by the Hub).
+	OnChatCommand func(senderUserID, senderUsername, command string, args map[string]interface{})
 }
 
 // NewHub creates and returns a new Hub instance, ready to Run().
@@ -59,6 +67,17 @@ func (h *Hub) Run() {
 			h.clients[client] = true
 			h.mu.Unlock()
 
+			// Announce the new user joining and update the user list.
+			// Only broadcast if the client has a username (skip anonymous/test clients).
+			if client.Username != "" {
+				h.BroadcastJSON(map[string]interface{}{
+					"type": "chat_system",
+					"text": fmt.Sprintf("--> %s has joined #general", client.Username),
+					"ts":   time.Now().Unix(),
+				})
+				h.BroadcastUserList()
+			}
+
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
@@ -66,6 +85,17 @@ func (h *Hub) Run() {
 				close(client.send)
 			}
 			h.mu.Unlock()
+
+			// Announce the user leaving and update the user list.
+			// Only broadcast if the client has a username (skip anonymous/test clients).
+			if client.Username != "" {
+				h.BroadcastJSON(map[string]interface{}{
+					"type": "chat_system",
+					"text": fmt.Sprintf("<-- %s has left #general", client.Username),
+					"ts":   time.Now().Unix(),
+				})
+				h.BroadcastUserList()
+			}
 
 		case message := <-h.broadcast:
 			h.mu.RLock()
@@ -102,6 +132,78 @@ func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.clients)
+}
+
+// BroadcastUserList builds and broadcasts the current user list to all
+// connected clients. Called on client register/unregister.
+func (h *Hub) BroadcastUserList() {
+	h.mu.RLock()
+	users := make([]map[string]interface{}, 0, len(h.clients))
+	for c := range h.clients {
+		users = append(users, map[string]interface{}{
+			"username": c.Username,
+			"userID":   c.UserID,
+			"isGuest":  c.IsGuest,
+			"status":   "online",
+		})
+	}
+	h.mu.RUnlock()
+
+	h.BroadcastJSON(map[string]interface{}{
+		"type":  "users_update",
+		"users": users,
+		"count": len(users),
+	})
+}
+
+// SendToClient marshals a value to JSON and sends it to a specific client
+// (e.g., for /who responses, error messages). Non-blocking: drops the message
+// if the client's send buffer is full.
+func (h *Hub) SendToClient(c *Client, v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	select {
+	case c.send <- data:
+	default:
+	}
+}
+
+// HandleChatCommand processes chat commands received from a client's ReadPump.
+// The "who" command is handled locally; other commands are forwarded to the
+// Hub's OnChatCommand callback if set.
+func (h *Hub) HandleChatCommand(sender *Client, command string, args map[string]interface{}) {
+	switch command {
+	case "who":
+		h.mu.RLock()
+		userList := make([]string, 0, len(h.clients))
+		for c := range h.clients {
+			status := "online"
+			if c.IsGuest {
+				status = "guest"
+			}
+			userList = append(userList, fmt.Sprintf("%s (%s)", c.Username, status))
+		}
+		h.mu.RUnlock()
+		h.SendToClient(sender, map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Online (%d): %s", len(userList), strings.Join(userList, ", ")),
+			"ts":   time.Now().Unix(),
+		})
+	default:
+		// Commands like "send", "trade", "team" will be handled by the server
+		// via the OnChatCommand callback. For now, acknowledge receipt.
+		h.SendToClient(sender, map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Command /%s received — processing...", command),
+			"ts":   time.Now().Unix(),
+		})
+		// Forward to the server's callback if set.
+		if h.OnChatCommand != nil {
+			h.OnChatCommand(sender.UserID, sender.Username, command, args)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +258,18 @@ type narrativeTickMessage struct {
 // ---------------------------------------------------------------------------
 // Hub broadcast helpers
 // ---------------------------------------------------------------------------
+
+// BroadcastJSON marshals an arbitrary value to JSON and sends it to every
+// connected client. Use this for generic event broadcasts (seasonal events,
+// system announcements, etc.) that don't have a dedicated typed method.
+func (h *Hub) BroadcastJSON(v interface{}) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		log.Printf("commussy: failed to marshal broadcast payload: %v", err)
+		return
+	}
+	h.broadcast <- data
+}
 
 // BroadcastRaceTick marshals the current tick's race entries into JSON and
 // sends them to every connected client. Each entry is slimmed down to the
@@ -284,21 +398,33 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 
 	// maxMessageSize is the maximum message size allowed from peer.
-	maxMessageSize = 512
+	maxMessageSize = 4096
 )
 
 // Client is a middleman between a WebSocket connection and the Hub.
 type Client struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub          *Hub
+	conn         *websocket.Conn
+	send         chan []byte
+	UserID       string    // JWT user ID (empty for guests)
+	Username     string    // Display name
+	IsGuest      bool      // True for unauthenticated connections
+	lastChatTime time.Time // Rate limiting: last time a chat message was sent
+}
+
+// stripHTMLTags removes any HTML tags from a string for sanitization.
+var htmlTagRegex = regexp.MustCompile(`<[^>]*>`)
+
+func stripHTMLTags(s string) string {
+	return htmlTagRegex.ReplaceAllString(s, "")
 }
 
 // ReadPump pumps messages from the WebSocket connection to the hub.
 //
-// For now, incoming messages are discarded — the WebSocket is primarily used
-// as a broadcast channel. Future versions may accept client commands here
-// (e.g., subscribe to specific race IDs).
+// Incoming messages are parsed as JSON and routed based on their "type" field:
+//   - "chat": broadcast a chat message to all clients
+//   - "chat_emote": broadcast an emote action to all clients
+//   - "chat_command": route to the Hub's command handler
 //
 // The application runs ReadPump in a per-connection goroutine. It ensures
 // that there is at most one reader on a connection by executing all reads
@@ -317,9 +443,7 @@ func (c *Client) ReadPump() {
 	})
 
 	for {
-		// Read and discard. We only care about keeping the connection alive
-		// and detecting disconnects.
-		_, _, err := c.conn.ReadMessage()
+		_, rawMsg, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err,
 				websocket.CloseGoingAway,
@@ -328,6 +452,71 @@ func (c *Client) ReadPump() {
 				log.Printf("commussy: read error: %v", err)
 			}
 			break
+		}
+
+		// Parse the JSON message into a generic map.
+		var msg map[string]interface{}
+		if err := json.Unmarshal(rawMsg, &msg); err != nil {
+			// Not valid JSON — ignore silently.
+			continue
+		}
+
+		msgType, _ := msg["type"].(string)
+		switch msgType {
+		case "chat":
+			// Rate limit: max 1 message per 500ms per client.
+			now := time.Now()
+			if now.Sub(c.lastChatTime) < 500*time.Millisecond {
+				continue
+			}
+			c.lastChatTime = now
+
+			text, _ := msg["text"].(string)
+			// Sanitize: strip HTML tags.
+			text = stripHTMLTags(text)
+			// Max text length: 500 chars (truncate if longer).
+			if len(text) > 500 {
+				text = text[:500]
+			}
+			if text == "" {
+				continue
+			}
+
+			c.hub.BroadcastJSON(map[string]interface{}{
+				"type":    "chat_msg",
+				"user":    c.Username,
+				"userID":  c.UserID,
+				"text":    text,
+				"ts":      now.Unix(),
+				"isGuest": c.IsGuest,
+			})
+
+		case "chat_emote":
+			text, _ := msg["text"].(string)
+			text = stripHTMLTags(text)
+			if len(text) > 500 {
+				text = text[:500]
+			}
+			if text == "" {
+				continue
+			}
+
+			c.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_emote",
+				"user": c.Username,
+				"text": text,
+				"ts":   time.Now().Unix(),
+			})
+
+		case "chat_command":
+			command, _ := msg["command"].(string)
+			if command == "" {
+				continue
+			}
+			c.hub.HandleChatCommand(c, command, msg)
+
+		default:
+			// Unknown message type — ignore silently.
 		}
 	}
 }
@@ -399,14 +588,17 @@ var upgrader = websocket.Upgrader{
 // registering the resulting client with the Hub, and starting the read/write
 // pump goroutines.
 //
+// The userID, username, and isGuest parameters are set on the client to
+// identify the user in chat messages and user lists.
+//
 // Usage in your HTTP router:
 //
 //	hub := commussy.NewHub()
 //	go hub.Run()
 //	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-//	    commussy.ServeWs(hub, w, r)
+//	    commussy.ServeWs(hub, w, r, userID, username, isGuest)
 //	})
-func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request, userID, username string, isGuest bool) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("commussy: websocket upgrade failed: %v", err)
@@ -414,9 +606,12 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:  hub,
-		conn: conn,
-		send: make(chan []byte, 256),
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		UserID:   userID,
+		Username: username,
+		IsGuest:  isGuest,
 	}
 	hub.register <- client
 

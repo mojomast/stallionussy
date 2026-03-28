@@ -1170,7 +1170,7 @@ func cmdOffer(state *cliState, args []string) {
 	fmt.Printf("Trade offer created!\n")
 	fmt.Printf("  Offer ID:    %s\n", offer.ID)
 	fmt.Printf("  Horse:       %s\n", offer.HorseName)
-	fmt.Printf("  To Stable:   %s\n", offer.ToStable)
+	fmt.Printf("  To Stable:   %s\n", offer.ToStableID)
 	fmt.Printf("  Price:       %d Cummies\n", offer.Price)
 	fmt.Printf("  Status:      %s\n", offer.Status)
 }
@@ -1201,7 +1201,7 @@ func cmdOffers(state *cliState, args []string) {
 		fmt.Println("=== INCOMING OFFERS ===")
 		for _, o := range incoming {
 			fmt.Printf("  [%s] %s for %d Cummies from stable %s\n",
-				o.ID, o.HorseName, o.Price, o.FromStable)
+				o.ID, o.HorseName, o.Price, o.FromStableID)
 		}
 	}
 
@@ -1209,7 +1209,7 @@ func cmdOffers(state *cliState, args []string) {
 		fmt.Println("=== OUTGOING OFFERS ===")
 		for _, o := range outgoing {
 			fmt.Printf("  [%s] %s for %d Cummies to stable %s\n",
-				o.ID, o.HorseName, o.Price, o.ToStable)
+				o.ID, o.HorseName, o.Price, o.ToStableID)
 		}
 	}
 }
@@ -1228,7 +1228,7 @@ func cmdAccept(state *cliState, args []string) {
 	}
 
 	// Transfer cummies from the accepting stable to the offering stable.
-	transferErr := state.sm.TransferCummies(offer.ToStable, offer.FromStable, offer.Price)
+	transferErr := state.sm.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price)
 	if transferErr != nil {
 		fmt.Printf("Trade accepted but currency transfer failed: %v\n", transferErr)
 		return
@@ -1239,10 +1239,10 @@ func cmdAccept(state *cliState, args []string) {
 	fmt.Printf("  Price paid:  %d Cummies\n", offer.Price)
 
 	// Persist updated stables after trade.
-	if fromStable, err := state.sm.GetStable(offer.FromStable); err == nil {
+	if fromStable, err := state.sm.GetStable(offer.FromStableID); err == nil {
 		state.persistStable(fromStable)
 	}
-	if toStable, err := state.sm.GetStable(offer.ToStable); err == nil {
+	if toStable, err := state.sm.GetStable(offer.ToStableID); err == nil {
 		state.persistStable(toStable)
 	}
 }

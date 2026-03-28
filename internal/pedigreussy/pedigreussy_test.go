@@ -527,11 +527,11 @@ func TestTradeManager_CreateOffer(t *testing.T) {
 	if offer.HorseName != "Lightning" {
 		t.Errorf("HorseName = %q, want Lightning", offer.HorseName)
 	}
-	if offer.FromStable != "stable-A" {
-		t.Errorf("FromStable = %q, want stable-A", offer.FromStable)
+	if offer.FromStableID != "stable-A" {
+		t.Errorf("FromStableID = %q, want stable-A", offer.FromStableID)
 	}
-	if offer.ToStable != "stable-B" {
-		t.Errorf("ToStable = %q, want stable-B", offer.ToStable)
+	if offer.ToStableID != "stable-B" {
+		t.Errorf("ToStableID = %q, want stable-B", offer.ToStableID)
 	}
 	if offer.Price != 5000 {
 		t.Errorf("Price = %d, want 5000", offer.Price)

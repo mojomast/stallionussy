@@ -17,6 +17,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mojomast/stallionussy/internal/authussy"
@@ -125,6 +126,17 @@ func NewServer(db *postgres.DB) *Server {
 
 	// Start the WebSocket hub event loop.
 	go s.hub.Run()
+
+	// Set up the chat command callback so the hub can forward commands
+	// (e.g. /send, /trade) to the server for processing.
+	s.hub.OnChatCommand = func(senderUserID, senderUsername, command string, args map[string]interface{}) {
+		switch command {
+		case "send":
+			s.handleChatSend(senderUserID, senderUsername, args)
+		case "trade":
+			s.handleChatTrade(senderUserID, senderUsername, args)
+		}
+	}
 
 	// Seed legendary horses only if no stables exist yet (fresh start).
 	if len(s.stables.ListStables()) == 0 {
@@ -287,7 +299,13 @@ func (s *Server) handleCreateStable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	// FIX: default ownerID to "player" if empty.
+
+	// Prefer JWT-authenticated user ID over client-sent ownerID.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		req.OwnerID = claims.UserID
+	}
+
+	// Fall back: default ownerID to "player" if empty (guest mode).
 	if req.OwnerID == "" {
 		req.OwnerID = "player"
 	}
@@ -902,6 +920,8 @@ func (s *Server) addEarningsToStable(horse *models.Horse, earnings int64) {
 				stable.Cummies += earnings
 				stable.TotalEarnings += earnings
 				stable.TotalRaces++
+				// Write-through: persist updated stable balance to DB.
+				s.persistStable(context.Background(), stable)
 				return
 			}
 		}
@@ -1219,6 +1239,35 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+
+	// If authenticated, resolve buyerStableID from JWT and verify ownership.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if req.BuyerStableID == "" {
+			// Auto-resolve: find the stable owned by this user.
+			for _, stable := range s.stables.ListStables() {
+				if stable.OwnerID == claims.UserID {
+					req.BuyerStableID = stable.ID
+					break
+				}
+			}
+			if req.BuyerStableID == "" {
+				writeError(w, http.StatusBadRequest, "no stable found for authenticated user")
+				return
+			}
+		} else {
+			// Client sent a buyerStableID — verify the authenticated user owns it.
+			buyerStable, err := s.stables.GetStable(req.BuyerStableID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, "buyer stable not found: "+err.Error())
+				return
+			}
+			if buyerStable.OwnerID != claims.UserID {
+				writeError(w, http.StatusForbidden, "buyer stable does not belong to authenticated user")
+				return
+			}
+		}
+	}
+
 	if req.BuyerStableID == "" {
 		writeError(w, http.StatusBadRequest, "buyerStableID is required")
 		return
@@ -1270,6 +1319,14 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 	if err := s.stables.TransferCummies(req.BuyerStableID, sellerStableID, transferAmount); err != nil {
 		writeError(w, http.StatusBadRequest, "payment failed: "+err.Error())
 		return
+	}
+
+	// Write-through: persist updated balances for both buyer and seller stables.
+	if updatedBuyer, err := s.stables.GetStable(req.BuyerStableID); err == nil {
+		s.persistStable(r.Context(), updatedBuyer)
+	}
+	if updatedSeller, err := s.stables.GetStable(sellerStableID); err == nil {
+		s.persistStable(r.Context(), updatedSeller)
 	}
 
 	// The buyer needs a mare to breed with the stud.
@@ -1325,28 +1382,49 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDelistListing(w http.ResponseWriter, r *http.Request) {
 	listingID := r.PathValue("id")
 
-	// FIX: require ownerID in query param or body.
-	ownerID := r.URL.Query().Get("ownerID")
-	if ownerID == "" {
-		// Try reading from body.
-		var req struct {
-			OwnerID string `json:"ownerID"`
-		}
-		if err := readJSON(r, &req); err == nil && req.OwnerID != "" {
-			ownerID = req.OwnerID
-		}
-	}
-
-	// Look up the listing.
+	// Look up the listing first so we can verify ownership.
 	listing, err := s.market.GetListing(listingID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	// If ownerID still empty, default to listing owner for backward compat.
-	if ownerID == "" {
-		ownerID = listing.OwnerID
+	// Determine the ownerID: prefer JWT-authenticated user over client-sent value.
+	ownerID := ""
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		// Authenticated: verify the listing belongs to this user.
+		// The listing's OwnerID should match the JWT user's ID, or the user
+		// should own the stable that owns the listed horse.
+		ownerID = claims.UserID
+		if listing.OwnerID != ownerID {
+			// Check if the user owns a stable that matches the listing's ownerID.
+			ownerMatch := false
+			for _, stable := range s.stables.ListStables() {
+				if stable.OwnerID == claims.UserID && stable.OwnerID == listing.OwnerID {
+					ownerMatch = true
+					break
+				}
+			}
+			if !ownerMatch {
+				writeError(w, http.StatusForbidden, "you do not own this listing")
+				return
+			}
+		}
+	} else {
+		// Guest mode fallback: read ownerID from query param or body.
+		ownerID = r.URL.Query().Get("ownerID")
+		if ownerID == "" {
+			var req struct {
+				OwnerID string `json:"ownerID"`
+			}
+			if err := readJSON(r, &req); err == nil && req.OwnerID != "" {
+				ownerID = req.OwnerID
+			}
+		}
+		// If ownerID still empty, default to listing owner for backward compat.
+		if ownerID == "" {
+			ownerID = listing.OwnerID
+		}
 	}
 
 	if err := s.market.DelistStud(listingID, ownerID); err != nil {
@@ -1695,6 +1773,19 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If authenticated, verify the user owns the source stable (fromStable).
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		fromStable, err := s.stables.GetStable(req.FromStable)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "source stable not found: "+err.Error())
+			return
+		}
+		if fromStable.OwnerID != claims.UserID {
+			writeError(w, http.StatusForbidden, "you do not own the source stable")
+			return
+		}
+	}
+
 	horse, err := s.stables.GetHorse(req.HorseID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "horse not found: "+err.Error())
@@ -1712,11 +1803,37 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offer := s.trades.CreateOffer(req.HorseID, horse.Name, req.FromStable, req.ToStable, req.Price)
+
+	// Write-through: persist the new trade offer to DB.
+	if s.tradeRepo != nil {
+		if err := s.tradeRepo.CreateTrade(r.Context(), offer); err != nil {
+			log.Printf("server: failed to persist trade offer %s: %v", offer.ID, err)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, offer)
 }
 
 func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 	tradeID := r.PathValue("id")
+
+	// If authenticated, verify the user owns the receiving stable (ToStable).
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		offer, err := s.trades.GetOffer(tradeID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		toStable, err := s.stables.GetStable(offer.ToStableID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "destination stable not found: "+err.Error())
+			return
+		}
+		if toStable.OwnerID != claims.UserID {
+			writeError(w, http.StatusForbidden, "only the recipient stable owner can accept this trade")
+			return
+		}
+	}
 
 	offer, err := s.trades.AcceptOffer(tradeID)
 	if err != nil {
@@ -1726,13 +1843,20 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 
 	// Execute the transfer: move horse and transfer Cummies.
 	if offer.Price > 0 {
-		if err := s.stables.TransferCummies(offer.ToStable, offer.FromStable, offer.Price); err != nil {
+		if err := s.stables.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price); err != nil {
 			writeError(w, http.StatusBadRequest, "payment failed: "+err.Error())
 			return
 		}
+		// Write-through: persist updated balances for both stables after cummies transfer.
+		if updatedTo, err := s.stables.GetStable(offer.ToStableID); err == nil {
+			s.persistStable(r.Context(), updatedTo)
+		}
+		if updatedFrom, err := s.stables.GetStable(offer.FromStableID); err == nil {
+			s.persistStable(r.Context(), updatedFrom)
+		}
 	}
 
-	if err := s.stables.MoveHorse(offer.HorseID, offer.FromStable, offer.ToStable); err != nil {
+	if err := s.stables.MoveHorse(offer.HorseID, offer.FromStableID, offer.ToStableID); err != nil {
 		writeError(w, http.StatusInternalServerError, "transfer failed: "+err.Error())
 		return
 	}
@@ -1740,13 +1864,21 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 	// Write-through: persist horse move in DB.
 	if s.horseRepo != nil {
 		ctx := r.Context()
-		if err := s.horseRepo.MoveHorse(ctx, offer.HorseID, offer.FromStable, offer.ToStable); err != nil {
+		if err := s.horseRepo.MoveHorse(ctx, offer.HorseID, offer.FromStableID, offer.ToStableID); err != nil {
 			log.Printf("server: failed to persist horse move for trade %s: %v", tradeID, err)
 		}
 	}
 
 	log.Printf("server: trade accepted — horse %s moved from stable %s to %s for %d cummies",
-		offer.HorseName, offer.FromStable, offer.ToStable, offer.Price)
+		offer.HorseName, offer.FromStableID, offer.ToStableID, offer.Price)
+
+	// Write-through: persist updated trade status to DB.
+	if s.tradeRepo != nil {
+		offer.UpdatedAt = time.Now()
+		if err := s.tradeRepo.UpdateTrade(r.Context(), offer); err != nil {
+			log.Printf("server: failed to persist trade accept for %s: %v", tradeID, err)
+		}
+	}
 
 	writeJSON(w, http.StatusOK, offer)
 }
@@ -1757,6 +1889,16 @@ func (s *Server) handleRejectTrade(w http.ResponseWriter, r *http.Request) {
 	if err := s.trades.RejectOffer(tradeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Write-through: persist updated trade status to DB.
+	if s.tradeRepo != nil {
+		if offer, err := s.trades.GetOffer(tradeID); err == nil {
+			offer.UpdatedAt = time.Now()
+			if err := s.tradeRepo.UpdateTrade(r.Context(), offer); err != nil {
+				log.Printf("server: failed to persist trade reject for %s: %v", tradeID, err)
+			}
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rejected", "tradeID": tradeID})
@@ -1770,6 +1912,16 @@ func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write-through: persist updated trade status to DB.
+	if s.tradeRepo != nil {
+		if offer, err := s.trades.GetOffer(tradeID); err == nil {
+			offer.UpdatedAt = time.Now()
+			if err := s.tradeRepo.UpdateTrade(r.Context(), offer); err != nil {
+				log.Printf("server: failed to persist trade cancel for %s: %v", tradeID, err)
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "tradeID": tradeID})
 }
 
@@ -1778,6 +1930,16 @@ func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 
 func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
+	// Parse optional season from request body. Default to 0 (any season).
+	var req struct {
+		Season int `json:"season"`
+	}
+	// Ignore decode errors — body may be empty or missing; season defaults to 0.
+	_ = readJSON(r, &req)
+
+	// Roll a seasonal event for this season.
+	event := trainussy.RollSeasonalEvent(req.Season)
+
 	allHorses := s.stables.GetLeaderboard()
 
 	type agingResult struct {
@@ -1790,6 +1952,7 @@ func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var results []agingResult
+	var eventMessages []string
 
 	for _, horse := range allHorses {
 		if horse.Retired {
@@ -1797,6 +1960,13 @@ func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 		}
 
 		trainussy.AgeHorse(horse)
+
+		// Apply seasonal event effects to non-retired horses.
+		if event != nil {
+			if msg := trainussy.ApplySeasonalEffect(event, horse); msg != "" {
+				eventMessages = append(eventMessages, msg)
+			}
+		}
 
 		result := agingResult{
 			HorseID:   horse.ID,
@@ -1825,10 +1995,35 @@ func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 		s.persistHorse(r.Context(), horse)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	// Build response payload.
+	response := map[string]interface{}{
 		"season":  "advanced",
 		"results": results,
-	})
+	}
+
+	// Include the seasonal event in the response if one was rolled.
+	if event != nil {
+		eventData := map[string]interface{}{
+			"name":        event.Name,
+			"description": event.Description,
+			"effect":      event.Effect,
+		}
+		response["seasonalEvent"] = eventData
+
+		if len(eventMessages) > 0 {
+			response["seasonalEventMessages"] = eventMessages
+		}
+
+		// Broadcast the seasonal event via WebSocket if the hub is available.
+		if s.hub != nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "seasonal_event",
+				"data": eventData,
+			})
+		}
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 // ===========================================================================
@@ -1856,7 +2051,134 @@ func (s *Server) handleGetWeather(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	commussy.ServeWs(s.hub, w, r)
+	// Extract identity from optional JWT token.
+	userID := ""
+	username := ""
+	isGuest := true
+
+	if token := r.URL.Query().Get("token"); token != "" {
+		if s.auth != nil {
+			claims, err := s.auth.ValidateToken(token)
+			if err != nil {
+				log.Printf("ws: invalid token from %s: %v (allowing as guest)", r.RemoteAddr, err)
+			} else {
+				userID = claims.UserID
+				username = claims.DisplayName
+				if username == "" {
+					username = claims.Username
+				}
+				isGuest = false
+				log.Printf("ws: authenticated user %s (id=%s) from %s", claims.Username, claims.UserID, r.RemoteAddr)
+			}
+		} else {
+			log.Printf("ws: token provided but auth service not configured, ignoring")
+		}
+	} else {
+		log.Printf("ws: anonymous connection from %s", r.RemoteAddr)
+	}
+
+	// Generate a guest username from the remote address if no identity was set.
+	if username == "" {
+		addr := r.RemoteAddr
+		suffix := addr
+		if len(suffix) > 4 {
+			suffix = suffix[len(suffix)-4:]
+		}
+		username = fmt.Sprintf("guest_%s", suffix)
+	}
+
+	commussy.ServeWs(s.hub, w, r, userID, username, isGuest)
+}
+
+// ===========================================================================
+// Chat command handlers (called via Hub's OnChatCommand callback)
+// ===========================================================================
+
+// handleChatSend processes a /send command from chat: transfers cummies from
+// the sender's stable to the target's stable.
+func (s *Server) handleChatSend(senderUserID, senderUsername string, args map[string]interface{}) {
+	target, _ := args["target"].(string)
+	amountF, _ := args["amount"].(float64) // JSON numbers are float64
+	amount := int64(amountF)
+	note, _ := args["note"].(string)
+
+	if target == "" || amount <= 0 {
+		return
+	}
+
+	// Strip @ prefix from target username.
+	if strings.HasPrefix(target, "@") {
+		target = target[1:]
+	}
+
+	// Find sender's stable.
+	var senderStable *models.Stable
+	for _, st := range s.stables.ListStables() {
+		if st.OwnerID == senderUserID {
+			senderStable = st
+			break
+		}
+	}
+	if senderStable == nil {
+		return
+	}
+
+	// Find target's stable by username (look up user by username).
+	var targetStable *models.Stable
+	for _, st := range s.stables.ListStables() {
+		if st.Name == target+"'s Stable" || st.OwnerID == target {
+			targetStable = st
+			break
+		}
+	}
+	if targetStable == nil {
+		return
+	}
+
+	// Transfer cummies.
+	if err := s.stables.TransferCummies(senderStable.ID, targetStable.ID, amount); err != nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Transfer failed: %v", err),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Persist both stables.
+	s.persistStable(context.Background(), senderStable)
+	s.persistStable(context.Background(), targetStable)
+
+	msg := fmt.Sprintf("*** %s sent ₵%d to %s", senderUsername, amount, target)
+	if note != "" {
+		msg += fmt.Sprintf(` — "%s"`, note)
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_money",
+		"text": msg,
+		"ts":   time.Now().Unix(),
+	})
+}
+
+// handleChatTrade processes a /trade command from chat: broadcasts a trade
+// offer to all connected clients.
+func (s *Server) handleChatTrade(senderUserID, senderUsername string, args map[string]interface{}) {
+	target, _ := args["target"].(string)
+	horseName, _ := args["horse"].(string)
+
+	if target == "" || horseName == "" {
+		return
+	}
+	if strings.HasPrefix(target, "@") {
+		target = target[1:]
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_trade",
+		"text": fmt.Sprintf("*** TRADE: %s offers %s to %s — use /accept or /reject", senderUsername, horseName, target),
+		"ts":   time.Now().Unix(),
+	})
 }
 
 // ===========================================================================
@@ -2108,6 +2430,34 @@ func (s *Server) loadFromDB() {
 		}
 		if len(dbListings) > 0 {
 			log.Printf("server: loadFromDB: loaded %d active market listings", len(dbListings))
+		}
+	}
+
+	// 3. Load race history into the in-memory RaceHistory store.
+	if s.raceResultRepo != nil {
+		// GetRecentResults returns newest-first, which matches the in-memory ordering.
+		// Use a high limit to load all historical results.
+		dbResults, err := s.raceResultRepo.GetRecentResults(ctx, 100000)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load race results: %v", err)
+		} else if len(dbResults) > 0 {
+			s.raceHistory.ImportResults(dbResults)
+			log.Printf("server: loadFromDB: loaded %d race results into history", len(dbResults))
+		}
+	}
+
+	// 4. Load tournaments into the in-memory TournamentManager.
+	if s.tournamentRepo != nil {
+		dbTournaments, err := s.tournamentRepo.ListTournaments(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load tournaments: %v", err)
+		} else {
+			for _, t := range dbTournaments {
+				s.tournaments.ImportTournament(t)
+			}
+			if len(dbTournaments) > 0 {
+				log.Printf("server: loadFromDB: loaded %d tournaments", len(dbTournaments))
+			}
 		}
 	}
 

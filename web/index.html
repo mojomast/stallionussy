@@ -528,6 +528,246 @@ select.term-input option {
   text-shadow: var(--glow-amber);
 }
 
+/* ─── CHAT SIDEBAR ─────────────────────────────────────────────────────── */
+#app-layout {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+}
+#chat-sidebar {
+  width: 300px;
+  min-width: 300px;
+  max-width: 300px;
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  background: #050a05;
+  border-right: 1px solid var(--border);
+  z-index: 100;
+  font-size: 12px;
+}
+#app-content {
+  flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
+}
+#app-content #main {
+  max-width: 1100px;
+}
+#chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-light);
+  flex-shrink: 0;
+}
+.chat-channel { color: var(--fg); font-weight: bold; text-shadow: var(--glow-green); font-size: 13px; }
+.chat-usercount { color: var(--fg-dim); font-size: 10px; }
+.chat-toggle-users {
+  background: transparent; border: 1px solid var(--border); color: var(--fg-dim);
+  font-family: inherit; font-size: 12px; padding: 2px 6px; cursor: pointer;
+}
+.chat-toggle-users:hover { border-color: var(--fg); color: var(--fg); }
+#chat-users {
+  border-bottom: 1px solid var(--border); background: #040804;
+  overflow-y: auto; transition: max-height 0.2s ease; flex-shrink: 0;
+}
+#chat-users.chat-users-collapsed { max-height: 0; border-bottom: none; overflow: hidden; }
+#chat-users.chat-users-expanded { max-height: 180px; padding: 6px 10px; }
+.chat-user-entry { display: flex; align-items: center; gap: 6px; padding: 1px 0; font-size: 11px; color: var(--fg-dim); }
+.chat-user-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.chat-user-dot.online { background: var(--fg); box-shadow: 0 0 4px var(--fg); }
+.chat-user-dot.idle { background: var(--amber); }
+.chat-user-dot.guest { background: #555; }
+.chat-user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-user-name.is-you { color: var(--fg); font-weight: bold; }
+#chat-messages {
+  flex: 1; overflow-y: auto; padding: 6px 8px;
+  display: flex; flex-direction: column; gap: 1px; scroll-behavior: smooth;
+}
+.chat-msg { font-size: 12px; line-height: 1.4; word-wrap: break-word; overflow-wrap: break-word; animation: chatMsgIn 0.15s ease-out; }
+@keyframes chatMsgIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.chat-msg .chat-ts { color: #444; font-size: 10px; margin-right: 4px; }
+.chat-msg .chat-nick { font-weight: bold; margin-right: 4px; }
+.chat-msg .chat-text { color: var(--fg); }
+.chat-msg.msg-user .chat-nick { color: var(--cyan); }
+.chat-msg.msg-self .chat-nick { color: var(--fg-bright); }
+.chat-msg.msg-system { color: var(--amber); font-style: italic; }
+.chat-msg.msg-system .chat-ts { color: var(--amber-dim); }
+.chat-msg.msg-race { color: var(--fg); font-weight: bold; }
+.chat-msg.msg-trade { color: var(--cyan); }
+.chat-msg.msg-money { color: var(--gold); }
+.chat-msg.msg-team { color: var(--purple); }
+.chat-msg.msg-emote { color: var(--fg-dim); font-style: italic; }
+.chat-msg.msg-error { color: var(--red); }
+.chat-msg.msg-join { color: var(--fg-dim); font-size: 10px; }
+.chat-msg.msg-part { color: #555; font-size: 10px; }
+.chat-msg.msg-mention { background: rgba(0,255,65,0.06); border-left: 2px solid var(--fg); padding-left: 6px; }
+.chat-msg.msg-whisper { color: var(--purple); font-style: italic; }
+#chat-input-area { border-top: 1px solid var(--border); background: var(--bg-input); flex-shrink: 0; }
+.chat-prompt { padding: 4px 10px 0 10px; font-size: 10px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; }
+.chat-prompt-user { color: var(--fg); }
+.chat-prompt-at { color: var(--fg-dim); }
+.chat-prompt-sep { color: var(--fg-dim); }
+.chat-prompt-path { color: var(--cyan); }
+.chat-prompt-dollar { color: var(--fg); }
+#chat-input {
+  width: 100%; border: none; border-top: 1px solid rgba(26,58,26,0.3);
+  background: transparent; padding: 6px 10px; font-size: 12px; color: var(--fg);
+  font-family: inherit;
+}
+#chat-input:focus { border-top-color: var(--fg-dim); box-shadow: none; outline: none; }
+#chat-input::placeholder { color: #333; }
+.chat-mobile-toggle {
+  display: none; position: fixed; bottom: 12px; left: 12px; z-index: 200;
+  background: var(--bg-light); border: 1px solid var(--fg-dim); color: var(--fg);
+  font-family: inherit; font-size: 11px; padding: 6px 12px; cursor: pointer;
+}
+@media (max-width: 900px) {
+  #chat-sidebar { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; max-width: 100vw; min-width: 100vw; z-index: 10000; border-right: none; }
+  #chat-sidebar.mobile-open { display: flex; }
+  .chat-mobile-toggle { display: block; }
+  #app-content #main { max-width: 1200px; }
+}
+
+/* ─── RACE VISUALIZER ──────────────────────────────────────────────────── */
+.race-viz {
+  background: #000;
+  border: 2px solid var(--amber);
+  padding: 0;
+  margin: 8px 0 12px 0;
+  overflow: hidden;
+  font-family: 'Fira Code', 'Courier New', 'Consolas', monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  position: relative;
+}
+.race-viz::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.08) 2px,
+    rgba(0,0,0,0.08) 4px
+  );
+}
+.race-viz-header {
+  background: var(--bg-light);
+  border-bottom: 1px solid var(--amber-dim);
+  padding: 6px 12px;
+  color: var(--amber);
+  font-weight: bold;
+  white-space: pre;
+  overflow: hidden;
+}
+.race-viz-tracks {
+  padding: 8px 12px;
+  min-height: 40px;
+}
+.race-viz-footer {
+  background: var(--bg-light);
+  border-top: 1px solid var(--border);
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  max-height: 60px;
+  overflow: hidden;
+}
+.track-row {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.track-row:hover {
+  background: rgba(0,255,65,0.03);
+}
+.track-row .track-pos {
+  width: 3ch;
+  text-align: right;
+  color: var(--fg-dim);
+  margin-right: 4px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.track-row .track-label {
+  width: 20ch;
+  overflow: hidden;
+  text-overflow: '';
+  color: var(--fg);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.track-row .track-line {
+  flex: 1;
+  overflow: hidden;
+  color: var(--fg-dim);
+  letter-spacing: 0;
+  margin: 0;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: pre;
+}
+.track-row .track-pct {
+  width: 5ch;
+  text-align: right;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-left: 4px;
+}
+/* Event state colors for track rows */
+.track-row.viz-panic .track-line { color: var(--red); }
+.track-row.viz-panic .track-label { color: var(--red); animation: panic-flash 0.15s infinite alternate; }
+.track-row.viz-ghost .track-line { color: #555; opacity: 0.6; }
+.track-row.viz-ghost .track-label { color: #888; font-style: italic; }
+.track-row.viz-turbo .track-line { color: var(--amber); text-shadow: 0 0 4px var(--amber); }
+.track-row.viz-turbo .track-label { color: var(--amber); }
+.track-row.viz-glitch .track-line { animation: glitch-shake 0.08s infinite; color: var(--purple); }
+.track-row.viz-glitch .track-label { color: var(--purple); }
+.track-row.viz-anomalous .track-line { color: var(--purple); text-shadow: 0 0 6px var(--purple); }
+.track-row.viz-anomalous .track-label { color: var(--purple); }
+.track-row.viz-divine .track-line { color: var(--gold); text-shadow: var(--glow-gold); }
+.track-row.viz-divine .track-label { color: var(--gold); }
+.track-row.viz-derulo .track-line { color: #FF69B4; }
+.track-row.viz-derulo .track-label { color: #FF69B4; font-style: italic; }
+.track-row.viz-mittens .track-line { color: #DDA0DD; }
+.track-row.viz-mittens .track-label { color: #DDA0DD; }
+.track-row.viz-burst .track-line { color: var(--cyan); text-shadow: var(--glow-cyan); }
+.track-row.viz-burst .track-label { color: var(--cyan); }
+.track-row.viz-finished .track-label { color: var(--amber); }
+.track-row.viz-finished .track-line { color: var(--amber); }
+.track-row.viz-finished .track-pct { color: var(--amber); font-weight: bold; }
+.track-row.viz-winner .track-label { color: var(--gold); text-shadow: var(--glow-gold); }
+.track-row.viz-winner .track-line { color: var(--gold); text-shadow: var(--glow-gold); }
+.track-row.viz-winner .track-pct { color: var(--gold); }
+@keyframes panic-flash {
+  from { color: var(--red); }
+  to { color: #ff6600; }
+}
+@keyframes glitch-shake {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(-2px, 1px); }
+  50%  { transform: translate(1px, -1px); }
+  75%  { transform: translate(-1px, 2px); }
+  100% { transform: translate(2px, 0); }
+}
+.race-viz-legend {
+  padding: 4px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
 /* ─── PROGRESS BAR ───────────────────────────────────────────────────────── */
 .progress-bar {
   display: flex;
@@ -1324,6 +1564,27 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
      MAIN APP WRAPPER
      ═══════════════════════════════════════════════════════════════════════════ -->
 <div id="app">
+<div id="app-layout">
+
+  <!-- CHAT SIDEBAR -->
+  <aside id="chat-sidebar">
+    <div id="chat-header">
+      <span class="chat-channel">#general</span>
+      <span class="chat-usercount" id="chat-usercount">0 online</span>
+      <button class="chat-toggle-users" id="btn-toggle-users" title="Toggle user list">▤</button>
+    </div>
+    <div id="chat-users" class="chat-users-collapsed"></div>
+    <div id="chat-messages"></div>
+    <div id="chat-input-area">
+      <div class="chat-prompt">
+        <span class="chat-prompt-user" id="chat-prompt-user">guest</span><span class="chat-prompt-at">@ussy</span><span class="chat-prompt-sep">:</span><span class="chat-prompt-path">~</span><span class="chat-prompt-dollar">$ </span>
+      </div>
+      <input type="text" id="chat-input" class="term-input" placeholder="/help for commands..." autocomplete="off" maxlength="500">
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div id="app-content">
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      MARKET TICKER BAR
@@ -1561,6 +1822,12 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <hr>
     <h3 id="race-live-title">// RACE IN PROGRESS</h3>
     <div class="section-hdr">Track: <span id="race-live-track"></span> | Distance: <span id="race-live-dist"></span>m | Weather: <span id="race-live-weather" class="text-amber">—</span> | Status: <span id="race-live-status" class="text-amber">RUNNING</span></div>
+    <div id="race-visualizer" class="race-viz mt-8">
+      <div class="race-viz-header" id="race-viz-header"></div>
+      <div class="race-viz-tracks" id="race-viz-tracks"></div>
+      <div class="race-viz-legend">═══ trail  ─── ahead  ♞ horse  │ finish</div>
+      <div class="race-viz-footer" id="race-viz-footer"></div>
+    </div>
     <div id="race-bars" class="mt-8 mb-8"></div>
     <h3>// LIVE COMMENTARY</h3>
     <div class="narrative-log" id="race-narrative"></div>
@@ -1731,6 +1998,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 </div>
 
 </div><!-- /main -->
+  </div><!-- /app-content -->
+</div><!-- /app-layout -->
+<button class="chat-mobile-toggle" id="btn-chat-mobile" onclick="document.getElementById('chat-sidebar').classList.toggle('mobile-open')">[ CHAT ]</button>
 </div><!-- /app -->
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
@@ -1796,6 +2066,7 @@ let currentWeather = null;
 let ws = null;
 let currentRace = null;
 let raceNarrativeLog = [];
+let raceViz = null;
 let leaderboardFilter = 'active';
 
 // ─── DOM HELPERS ───────────────────────────────────────────────────────────
@@ -2157,10 +2428,11 @@ function navigate() {
 // ─── WEBSOCKET ─────────────────────────────────────────────────────────────
 function connectWebSocket() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const url = `${proto}//${location.host}/ws`;
+  let wsUrl = `${proto}//${location.host}/ws`;
+  if (authToken) wsUrl += `?token=${encodeURIComponent(authToken)}`;
 
   try {
-    ws = new WebSocket(url);
+    ws = new WebSocket(wsUrl);
   } catch (e) {
     console.warn('WebSocket connection failed:', e);
     $('#ws-status').textContent = 'WS: UNAVAILABLE';
@@ -2202,6 +2474,16 @@ function handleWsMessage(msg) {
     case 'race_end': onRaceEnd(msg); break;
     case 'narrative': onNarrative(msg); break;
     case 'narrative_tick': onNarrativeTick(msg); break;
+    // Chat message types
+    case 'chat_msg':
+    case 'chat_emote':
+    case 'chat_system':
+    case 'chat_money':
+    case 'chat_trade':
+    case 'chat_team':
+    case 'users_update':
+      handleChatWsMessage(msg);
+      break;
   }
 }
 
@@ -2235,6 +2517,16 @@ function onRaceStart(msg) {
       barsEl.appendChild(bar);
     });
   }
+
+    // Initialize ASCII race visualizer for WS race
+    if (raceViz) raceViz.destroy();
+    const vizContainer = $('#race-visualizer');
+    if (vizContainer && currentRace) {
+      vizContainer.classList.remove('hidden');
+      const entries = currentRace.entries || [];
+      const vizHorses = entries.map((e, i) => ({ id: e.horse_id, name: e.horse_name, index: i }));
+      raceViz = new RaceVisualizer(vizContainer, vizHorses, currentRace.distance || 1600, currentRace.track_type);
+    }
 
   addNarrativeLine('═══ RACE STARTED ═══', 'event-burst');
 }
@@ -2275,6 +2567,20 @@ function onRaceTick(msg) {
       addNarrativeLine(`[T${msg.tick}] ${e.horseName}: ${e.event}`, getEventClass(e.event));
     }
   });
+
+    // Feed ASCII visualizer
+    if (raceViz && currentRace) {
+      const raceEntries = currentRace.entries || [];
+      const vizTick = entries.map(e => {
+        const idx = raceEntries.findIndex(re => re.horse_id === e.horseID);
+        return { index: idx >= 0 ? idx : 0, position: e.position || 0, speed: e.speed || 0, event: e.event || '' };
+      });
+      raceViz.updateTick(vizTick);
+      // Log notable events to visualizer footer
+      entries.forEach(e => {
+        if (e.event) raceViz.addEventLog(`${e.horseName}: ${e.event}`);
+      });
+    }
 }
 
 function onRaceEnd(msg) {
@@ -2286,7 +2592,15 @@ function onRaceEnd(msg) {
 
   addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
 
+  // Forward race result to chat
   if (race && race.entries) {
+    const sorted = [...race.entries].sort((a, b) => (a.finish_place || 999) - (b.finish_place || 999));
+    const top3 = sorted.slice(0, 3).map((e, i) => `${i+1}. ${e.horse_name}`).join(' | ');
+    addChatMsg('msg-race', null, `*** RACE: ${top3}`);
+  }
+
+  if (race && race.entries) {
+    if (raceViz) raceViz.setFinished();
     showRaceResults(race);
   }
 }
@@ -2301,6 +2615,253 @@ function onNarrativeTick(msg) {
   lines.forEach(line => {
     addNarrativeLine(line.text, line.class || getEventClass(line.text || ''));
   });
+}
+
+// ─── RACE VISUALIZER ──────────────────────────────────────────────────────
+// ASCII art race track with animated horse glyphs
+const HORSE_RUN_FRAMES = ['~/>','-/>','~/}','-/}'];
+const HORSE_PANIC_FRAMES = ['?!>','!!<','!?>','?!<'];
+const HORSE_GHOST_FRAMES = ['░▒▓','▒▓░','▓░▒','░▓▒'];
+const HORSE_GLITCH_FRAMES = ['█▓░','░█▓','▓░█','█░▓'];
+const HORSE_TURBO_FRAMES = ['»»>','>>>','»»>','⇒⇒>'];
+const HORSE_DIVINE_FRAMES = ['†/>','✝/>','†/}','✝/}'];
+const HORSE_DERULO_FRAMES = ['♪/>','♫/>','♪/}','♫/}'];
+const HORSE_DEAD_FRAMES = ['zzz','zZz','Zzz','zZz'];
+const HORSE_FINISH_GLYPHS = ['♛1♛','·2·','·3·','·4·','·5·','·6·','·7·','·8·'];
+const LANE_COLORS = ['var(--fg)','var(--cyan)','var(--amber)','var(--purple)','#FF69B4','var(--gold)','var(--red)','var(--blue)'];
+
+class RaceVisualizer {
+  constructor(containerEl, horses, trackDistance, trackType) {
+    this.headerEl = containerEl.querySelector('#race-viz-header') || containerEl.querySelector('.race-viz-header');
+    this.tracksEl = containerEl.querySelector('#race-viz-tracks') || containerEl.querySelector('.race-viz-tracks');
+    this.footerEl = containerEl.querySelector('#race-viz-footer') || containerEl.querySelector('.race-viz-footer');
+    this.horses = horses; // [{id, name, index}, ...]
+    this.trackDistance = trackDistance;
+    this.trackType = trackType || '';
+    this.trackWidth = 50;
+    this.frameCounter = 0;
+    this.horseStates = new Map();
+    this.rows = [];
+    this.finishOrder = [];
+    this.footerLines = [];
+
+    this.horses.forEach((h, i) => {
+      this.horseStates.set(i, { pos: 0, prevPos: 0, event: null, eventTTL: 0, frame: 0, finished: false, place: 0 });
+    });
+
+    this._calculateTrackWidth();
+    this._buildDOM();
+
+    this._resizeHandler = () => this._calculateTrackWidth();
+    window.addEventListener('resize', this._resizeHandler);
+  }
+
+  destroy() {
+    window.removeEventListener('resize', this._resizeHandler);
+  }
+
+  _calculateTrackWidth() {
+    const parent = this.tracksEl ? this.tracksEl.parentElement : null;
+    if (!parent) { this.trackWidth = 50; return; }
+    const containerPx = parent.clientWidth - 24; // padding
+    const charWidthPx = 7.8;
+    const totalChars = Math.floor(containerPx / charWidthPx);
+    // overhead: position(4ch) + label(21ch) + pct(6ch) + gaps(3ch) = 34ch
+    this.trackWidth = Math.max(20, Math.min(80, totalChars - 34));
+  }
+
+  _buildDOM() {
+    // Header
+    const trackLabel = this.trackType.toUpperCase() || 'UNKNOWN';
+    const distLabel = `${this.trackDistance}m`;
+    this.headerEl.textContent = ` STALLIONUSSY DOWNS  |  ${trackLabel}  |  ${distLabel}  |  ${this.horses.length} ENTRIES`;
+
+    // Track rows
+    this.tracksEl.innerHTML = '';
+    this.horses.forEach((horse, i) => {
+      const row = document.createElement('div');
+      row.className = 'track-row';
+      row.dataset.idx = i;
+
+      const pos = document.createElement('span');
+      pos.className = 'track-pos';
+      pos.textContent = '-';
+
+      const label = document.createElement('span');
+      label.className = 'track-label';
+      label.style.color = LANE_COLORS[i % LANE_COLORS.length];
+      label.textContent = this._truncName(horse.name, 19);
+
+      const trackLine = document.createElement('span');
+      trackLine.className = 'track-line';
+
+      const pct = document.createElement('span');
+      pct.className = 'track-pct';
+      pct.textContent = '0%';
+
+      row.appendChild(pos);
+      row.appendChild(label);
+      row.appendChild(trackLine);
+      row.appendChild(pct);
+      this.tracksEl.appendChild(row);
+
+      this.rows.push({ row, pos, label, trackLine, pct, defaultColor: LANE_COLORS[i % LANE_COLORS.length] });
+    });
+
+    // Initial render
+    this._render();
+  }
+
+  _truncName(name, max) {
+    if (name.length <= max) return name;
+    return name.substring(0, max - 2) + '..';
+  }
+
+  // Called each tick with array of {index, position, speed, event}
+  updateTick(tickData) {
+    this.frameCounter++;
+    tickData.forEach(td => {
+      const state = this.horseStates.get(td.index);
+      if (!state) return;
+      state.prevPos = state.pos;
+      state.pos = td.position;
+
+      if (td.event && td.event.length > 0) {
+        state.event = td.event;
+        state.eventTTL = 12;
+      }
+      if (state.eventTTL > 0) state.eventTTL--;
+      else state.event = null;
+
+      state.frame = (state.frame + 1) % 4;
+
+      // Detect finish
+      if (!state.finished && state.pos >= this.trackDistance) {
+        state.finished = true;
+        this.finishOrder.push(td.index);
+        state.place = this.finishOrder.length;
+      }
+    });
+    this._render();
+  }
+
+  _render() {
+    const tw = this.trackWidth;
+
+    // Sort by position for placing
+    const sorted = [...this.horses.map((h, i) => ({ i, pos: this.horseStates.get(i).pos }))].sort((a, b) => b.pos - a.pos);
+
+    this.horses.forEach((horse, i) => {
+      const state = this.horseStates.get(i);
+      const { row, pos, label, trackLine, pct } = this.rows[i];
+      const progress = Math.min(1, state.pos / this.trackDistance);
+
+      // Position number (race position, not distance)
+      const racePos = sorted.findIndex(s => s.i === i) + 1;
+      pos.textContent = state.finished ? (state.place <= 3 ? ['','1st','2nd','3rd'][state.place] : `${state.place}th`) : `#${racePos}`;
+
+      // Percentage
+      const pctVal = Math.floor(progress * 100);
+      pct.textContent = state.finished ? 'DONE' : `${pctVal}%`;
+
+      // Get glyph
+      const glyph = state.finished ? this._getFinishGlyph(state.place) : this._getGlyph(state);
+      const glyphLen = glyph.length;
+
+      // Character position on track
+      const charPos = Math.min(Math.floor(progress * (tw - glyphLen - 1)), tw - glyphLen - 1);
+
+      // Build track line
+      const trail = this._buildTrail(charPos, state);
+      const ahead = '─'.repeat(Math.max(0, tw - charPos - glyphLen - 1));
+      const finish = '│';
+      trackLine.textContent = trail + glyph + ahead + finish;
+
+      // CSS class for event state
+      row.className = 'track-row';
+      if (state.finished) {
+        row.classList.add(state.place === 1 ? 'viz-winner' : 'viz-finished');
+      } else if (state.event) {
+        const cls = this._eventToVizClass(state.event);
+        if (cls) row.classList.add(cls);
+      }
+    });
+  }
+
+  _buildTrail(len, state) {
+    if (len <= 0) return '';
+    let trail = '═'.repeat(len);
+    // Inject artifacts for certain events
+    if (state.event && state.eventTTL > 5) {
+      if (state.event.includes('GHOST') || state.event.includes('FLICKER') || state.event.includes('HAUNT')) {
+        trail = this._injectChars(trail, '░', 0.2);
+      } else if (state.event.includes('GLITCH') || state.event.includes('FRACTURE') || state.event.includes('ANOMAL')) {
+        trail = this._injectChars(trail, '▓', 0.25);
+      } else if (state.event.includes('MUD') || state.event.includes('SPLATTER')) {
+        trail = this._injectChars(trail, '~', 0.15);
+      } else if (state.event.includes('FROST') || state.event.includes('ICE') || state.event.includes('SLIP')) {
+        trail = this._injectChars(trail, '*', 0.12);
+      }
+    }
+    return trail;
+  }
+
+  _injectChars(str, ch, prob) {
+    let out = '';
+    for (let i = 0; i < str.length; i++) {
+      out += Math.random() < prob ? ch : str[i];
+    }
+    return out;
+  }
+
+  _getGlyph(state) {
+    const frames = this._getFrameSet(state.event);
+    return frames[state.frame % frames.length];
+  }
+
+  _getFrameSet(event) {
+    if (!event) return HORSE_RUN_FRAMES;
+    const e = event.toUpperCase();
+    if (e.includes('PANIC') || e.includes('MELTDOWN') || e.includes('SPOOKED') || e.includes('STUMBLE')) return HORSE_PANIC_FRAMES;
+    if (e.includes('GHOST') || e.includes('HAUNT') || e.includes('PHANTOM') || e.includes('FLICKER')) return HORSE_GHOST_FRAMES;
+    if (e.includes('GLITCH') || e.includes('ANOMAL') || e.includes('FRACTURE') || e.includes('YOGURT') || e.includes('E-008') || e.includes('RESONANCE')) return HORSE_GLITCH_FRAMES;
+    if (e.includes('ACCELERATION') || e.includes('SURGE') || e.includes('BURST') || e.includes('SECOND WIND') || e.includes('CAFFEINE') || e.includes('CROWD') || e.includes('GEOFFRUSSY')) return HORSE_TURBO_FRAMES;
+    if (e.includes('DIVINE') || e.includes('PASTOR') || e.includes('PACKET')) return HORSE_DIVINE_FRAMES;
+    if (e.includes('DERULO')) return HORSE_DERULO_FRAMES;
+    if (e.includes('MITTENS') || e.includes('NAP')) return HORSE_DEAD_FRAMES;
+    return HORSE_RUN_FRAMES;
+  }
+
+  _getFinishGlyph(place) {
+    if (place >= 1 && place <= HORSE_FINISH_GLYPHS.length) return HORSE_FINISH_GLYPHS[place - 1];
+    return '···';
+  }
+
+  _eventToVizClass(event) {
+    if (!event) return null;
+    const e = event.toUpperCase();
+    if (e.includes('PANIC') || e.includes('MELTDOWN') || e.includes('SPOOKED')) return 'viz-panic';
+    if (e.includes('GHOST') || e.includes('HAUNT') || e.includes('PHANTOM') || e.includes('FLICKER')) return 'viz-ghost';
+    if (e.includes('GLITCH') || e.includes('ANOMAL') || e.includes('FRACTURE') || e.includes('E-008') || e.includes('YOGURT') || e.includes('RESONANCE')) return 'viz-glitch';
+    if (e.includes('ACCELERATION') || e.includes('SURGE') || e.includes('BURST') || e.includes('SECOND WIND') || e.includes('CAFFEINE') || e.includes('CROWD') || e.includes('GEOFFRUSSY')) return 'viz-burst';
+    if (e.includes('DIVINE') || e.includes('PASTOR') || e.includes('PACKET')) return 'viz-divine';
+    if (e.includes('DERULO')) return 'viz-derulo';
+    if (e.includes('MITTENS') || e.includes('NAP')) return 'viz-mittens';
+    if (e.includes('MUD') || e.includes('THUNDER') || e.includes('FROST') || e.includes('LIGHTNING') || e.includes('WEATHER') || e.includes('SLIP')) return 'viz-turbo';
+    return null;
+  }
+
+  addEventLog(msg) {
+    this.footerLines.push(msg);
+    if (this.footerLines.length > 3) this.footerLines.shift();
+    if (this.footerEl) this.footerEl.textContent = this.footerLines.map(l => `>> ${l}`).join('\n');
+  }
+
+  setFinished() {
+    if (this.headerEl) {
+      this.headerEl.textContent += '  |  FINISHED';
+    }
+  }
 }
 
 function getEventClass(text) {
@@ -2376,6 +2937,301 @@ function formatDuration(ns) {
     return `${s}.${String(remainder).padStart(3, '0')}s`;
   }
   return String(ns);
+}
+
+// ─── CHAT SYSTEM ──────────────────────────────────────────────────────────
+let chatHistory = [];
+let chatCommandHistory = [];
+let chatHistoryIndex = -1;
+const MAX_CHAT_MESSAGES = 200;
+let lastChatSend = 0;
+
+function initChat() {
+  const input = $('#chat-input');
+  if (!input) return;
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+
+      // Rate limit: 500ms between messages
+      const now = Date.now();
+      if (now - lastChatSend < 500) {
+        addChatMsg('msg-error', null, '*** Slow down! Wait a moment before sending.');
+        return;
+      }
+      lastChatSend = now;
+
+      // Save to command history
+      chatCommandHistory.push(text);
+      if (chatCommandHistory.length > 50) chatCommandHistory.shift();
+      chatHistoryIndex = chatCommandHistory.length;
+
+      // Parse and send
+      if (text.startsWith('/')) {
+        handleChatCommand(text);
+      } else {
+        sendChatMessage(text);
+      }
+      input.value = '';
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (chatHistoryIndex > 0) {
+        chatHistoryIndex--;
+        input.value = chatCommandHistory[chatHistoryIndex] || '';
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (chatHistoryIndex < chatCommandHistory.length - 1) {
+        chatHistoryIndex++;
+        input.value = chatCommandHistory[chatHistoryIndex] || '';
+      } else {
+        chatHistoryIndex = chatCommandHistory.length;
+        input.value = '';
+      }
+    }
+  });
+
+  // Toggle user list
+  const toggleBtn = $('#btn-toggle-users');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const users = $('#chat-users');
+      if (users.classList.contains('chat-users-collapsed')) {
+        users.classList.remove('chat-users-collapsed');
+        users.classList.add('chat-users-expanded');
+      } else {
+        users.classList.remove('chat-users-expanded');
+        users.classList.add('chat-users-collapsed');
+      }
+    });
+  }
+
+  // Update prompt with username
+  updateChatPrompt();
+
+  // Welcome message
+  addChatMsg('msg-system', null, '*** Welcome to #general — Type /help for commands');
+  addChatMsg('msg-system', null, '*** "The yogurt is always listening."');
+}
+
+function updateChatPrompt() {
+  const promptUser = $('#chat-prompt-user');
+  if (promptUser) {
+    promptUser.textContent = (currentUser && currentUser.username) ? currentUser.username : (guestID ? `guest_${guestID.slice(-4)}` : 'guest');
+  }
+}
+
+function sendChatMessage(text) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addChatMsg('msg-error', null, '*** Not connected to server');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'chat', text: text }));
+}
+
+function handleChatCommand(input) {
+  const parts = input.slice(1).split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+
+  switch (cmd) {
+    case 'help':
+      addChatMsg('msg-system', null, '*** ═══ CHAT COMMANDS ═══');
+      addChatMsg('msg-system', null, '***   /send @user amount [note] — Send cummies');
+      addChatMsg('msg-system', null, '***   /trade @user horseName — Offer trade');
+      addChatMsg('msg-system', null, '***   /me action — Emote/roleplay');
+      addChatMsg('msg-system', null, '***   /who — Show online users');
+      addChatMsg('msg-system', null, '***   /clear — Clear chat');
+      addChatMsg('msg-system', null, '***   /shrug — ¯\\_(ツ)_/¯');
+      addChatMsg('msg-system', null, '*** ═════════════════════');
+      break;
+
+    case 'me':
+      if (parts.length < 2) { addChatMsg('msg-error', null, '*** Usage: /me <action>'); return; }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'chat_emote', text: parts.slice(1).join(' ') }));
+      }
+      break;
+
+    case 'send':
+      if (parts.length < 3) { addChatMsg('msg-error', null, '*** Usage: /send @user amount [note]'); return; }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'chat_command', command: 'send',
+          target: parts[1], amount: parseInt(parts[2]) || 0,
+          note: parts.slice(3).join(' ')
+        }));
+      }
+      break;
+
+    case 'trade':
+      if (parts.length < 3) { addChatMsg('msg-error', null, '*** Usage: /trade @user horseName'); return; }
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'chat_command', command: 'trade',
+          target: parts[1], horse: parts.slice(2).join(' ')
+        }));
+      }
+      break;
+
+    case 'who':
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'chat_command', command: 'who' }));
+      }
+      break;
+
+    case 'clear':
+      const msgs = $('#chat-messages');
+      if (msgs) msgs.innerHTML = '';
+      chatHistory = [];
+      addChatMsg('msg-system', null, '*** Chat cleared');
+      break;
+
+    case 'shrug':
+      sendChatMessage('¯\\_(ツ)_/¯');
+      break;
+
+    default:
+      addChatMsg('msg-error', null, `*** Unknown command: /${cmd} — Type /help`);
+  }
+}
+
+function addChatMsg(cls, user, text) {
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
+
+  const div = document.createElement('div');
+  div.className = `chat-msg ${cls}`;
+
+  const now = new Date();
+  const ts = `[${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}]`;
+
+  let html = `<span class="chat-ts">${ts}</span>`;
+  if (user) {
+    html += `<span class="chat-nick">&lt;${escHtml(user)}&gt;</span>`;
+  }
+  html += `<span class="chat-text">${escHtml(text)}</span>`;
+  div.innerHTML = html;
+
+  // Check for mention of current user
+  if (currentUser && currentUser.username && text.toLowerCase().includes(currentUser.username.toLowerCase())) {
+    div.classList.add('msg-mention');
+  }
+
+  msgs.appendChild(div);
+  chatHistory.push({ cls, user, text });
+
+  // Trim old messages
+  while (msgs.children.length > MAX_CHAT_MESSAGES) {
+    msgs.removeChild(msgs.firstChild);
+    chatHistory.shift();
+  }
+
+  // Auto-scroll if near bottom
+  const isNearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
+  if (isNearBottom) {
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+}
+
+function addChatMsgFromTs(cls, user, text, unixTs) {
+  const msgs = $('#chat-messages');
+  if (!msgs) return;
+
+  const div = document.createElement('div');
+  div.className = `chat-msg ${cls}`;
+
+  const d = unixTs ? new Date(unixTs * 1000) : new Date();
+  const ts = `[${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}]`;
+
+  let html = `<span class="chat-ts">${ts}</span>`;
+  if (user) {
+    html += `<span class="chat-nick">&lt;${escHtml(user)}&gt;</span>`;
+  }
+  html += `<span class="chat-text">${escHtml(text)}</span>`;
+  div.innerHTML = html;
+
+  if (currentUser && currentUser.username && text.toLowerCase().includes(currentUser.username.toLowerCase())) {
+    div.classList.add('msg-mention');
+  }
+
+  msgs.appendChild(div);
+
+  while (msgs.children.length > MAX_CHAT_MESSAGES) {
+    msgs.removeChild(msgs.firstChild);
+  }
+
+  const isNearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
+  if (isNearBottom) {
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+}
+
+function updateUserList(users) {
+  const container = $('#chat-users');
+  const countEl = $('#chat-usercount');
+  if (!container) return;
+
+  if (countEl) countEl.textContent = `${users.length} online`;
+
+  container.innerHTML = '';
+  const myName = currentUser ? currentUser.username : '';
+
+  // Sort: you first, then alphabetical
+  users.sort((a, b) => {
+    if (a.username === myName) return -1;
+    if (b.username === myName) return 1;
+    if (a.isGuest && !b.isGuest) return 1;
+    if (!a.isGuest && b.isGuest) return -1;
+    return a.username.localeCompare(b.username);
+  });
+
+  users.forEach(u => {
+    const entry = document.createElement('div');
+    entry.className = 'chat-user-entry';
+
+    const dot = document.createElement('span');
+    dot.className = `chat-user-dot ${u.isGuest ? 'guest' : 'online'}`;
+
+    const name = document.createElement('span');
+    name.className = `chat-user-name${u.username === myName ? ' is-you' : ''}`;
+    name.textContent = u.username + (u.username === myName ? ' (you)' : '') + (u.isGuest ? ' [guest]' : '');
+
+    entry.appendChild(dot);
+    entry.appendChild(name);
+    container.appendChild(entry);
+  });
+}
+
+// Hook chat messages into the WS message handler
+function handleChatWsMessage(msg) {
+  switch (msg.type) {
+    case 'chat_msg': {
+      const isSelf = currentUser && msg.userID === currentUser.id;
+      addChatMsgFromTs(isSelf ? 'msg-self' : 'msg-user', msg.user, msg.text, msg.ts);
+      break;
+    }
+    case 'chat_emote':
+      addChatMsgFromTs('msg-emote', null, `* ${msg.user} ${msg.text}`, msg.ts);
+      break;
+    case 'chat_system':
+      addChatMsgFromTs(msg.text && msg.text.includes('-->') ? 'msg-join' : msg.text && msg.text.includes('<--') ? 'msg-part' : 'msg-system', null, msg.text, msg.ts);
+      break;
+    case 'chat_money':
+      addChatMsgFromTs('msg-money', null, msg.text, msg.ts);
+      break;
+    case 'chat_trade':
+      addChatMsgFromTs('msg-trade', null, msg.text, msg.ts);
+      break;
+    case 'chat_team':
+      addChatMsgFromTs('msg-team', null, msg.text, msg.ts);
+      break;
+    case 'users_update':
+      updateUserList(msg.users || []);
+      break;
+  }
 }
 
 // ─── GENOME HELPERS ────────────────────────────────────────────────────────
@@ -3486,6 +4342,15 @@ function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
     barsEl.appendChild(bar);
   });
 
+    // Initialize ASCII race visualizer
+    if (raceViz) raceViz.destroy();
+    const vizContainer = $('#race-visualizer');
+    if (vizContainer) {
+      vizContainer.classList.remove('hidden');
+      const vizHorses = entries.map((e, i) => ({ id: e.horse_id, name: e.horse_name, index: i }));
+      raceViz = new RaceVisualizer(vizContainer, vizHorses, dist, race.track_type);
+    }
+
   // Build tick-indexed narrative map from the server's indexed narrative
   const narrativeByTick = new Map();
   if (narrativeIndexed && Array.isArray(narrativeIndexed)) {
@@ -3543,6 +4408,7 @@ function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
         }
       });
 
+        if (raceViz) raceViz.setFinished();
       showRaceResults(race);
       return;
     }
@@ -3576,6 +4442,15 @@ function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
         }
       }
     });
+
+      // Feed ASCII visualizer
+      if (raceViz) {
+        const vizTick = entries.map((e, i) => {
+          const te = (e.tick_log && tick < e.tick_log.length) ? e.tick_log[tick] : null;
+          return { index: i, position: te ? te.position : (e.position || 0), speed: te ? te.speed : 0, event: te ? (te.event || '') : '' };
+        });
+        raceViz.updateTick(vizTick);
+      }
 
     // The actual tick number in the sim (1-indexed)
     const simTick = tick + 1;
@@ -4379,6 +5254,7 @@ async function login(username, password) {
     localStorage.removeItem('stallionussy_guest_id');
 
     showAuthStatus('ACCESS GRANTED — Welcome, ' + (currentUser.display_name || currentUser.username), 'success');
+    updateChatPrompt();
 
     // Brief delay to show success, then enter app
     setTimeout(() => {
@@ -4420,6 +5296,7 @@ async function register(username, password, displayName) {
     localStorage.removeItem('stallionussy_guest_id');
 
     showAuthStatus('ACCOUNT CREATED — Welcome, ' + (currentUser.display_name || currentUser.username), 'success');
+    updateChatPrompt();
 
     setTimeout(() => {
       showApp();
@@ -4501,6 +5378,7 @@ async function checkAuth() {
 
     if (resp.ok) {
       currentUser = await resp.json();
+      updateChatPrompt();
       showApp();
       loadDashboard();
     } else {
@@ -4609,6 +5487,9 @@ function init() {
 
     // Connect WebSocket (delayed to let boot finish)
     setTimeout(connectWebSocket, 2500);
+
+    // Initialize chat sidebar
+    initChat();
 
     // Initial navigation (if app is visible)
     setTimeout(() => {

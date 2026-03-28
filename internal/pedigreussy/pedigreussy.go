@@ -409,18 +409,11 @@ func dynastyTier(strength float64) string {
 // Horse Trading
 // ---------------------------------------------------------------------------
 
-// TradeOffer represents a pending, accepted, rejected, or cancelled trade
-// between two stables for a single horse.
-type TradeOffer struct {
-	ID         string    `json:"id"`
-	HorseID    string    `json:"horse_id"`
-	HorseName  string    `json:"horse_name"`
-	FromStable string    `json:"from_stable"`
-	ToStable   string    `json:"to_stable"`
-	Price      int64     `json:"price"`  // in Cummies
-	Status     string    `json:"status"` // "Pending", "Accepted", "Rejected", "Cancelled"
-	CreatedAt  time.Time `json:"created_at"`
-}
+// TradeOffer is an alias for models.TradeOffer — the canonical trade type
+// used by the repository layer. Previously pedigreussy had its own copy with
+// different field names (FromStable/ToStable vs FromStableID/ToStableID),
+// which caused persistence mismatches. Now unified.
+type TradeOffer = models.TradeOffer
 
 // TradeManager provides concurrency-safe trade offer management.
 type TradeManager struct {
@@ -441,15 +434,17 @@ func (tm *TradeManager) CreateOffer(horseID, horseName, fromStable, toStable str
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
+	now := time.Now()
 	offer := &TradeOffer{
-		ID:         uuid.New().String(),
-		HorseID:    horseID,
-		HorseName:  horseName,
-		FromStable: fromStable,
-		ToStable:   toStable,
-		Price:      price,
-		Status:     "Pending",
-		CreatedAt:  time.Now(),
+		ID:           uuid.New().String(),
+		HorseID:      horseID,
+		HorseName:    horseName,
+		FromStableID: fromStable,
+		ToStableID:   toStable,
+		Price:        price,
+		Status:       "Pending",
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	tm.trades[offer.ID] = offer
@@ -522,7 +517,7 @@ func (tm *TradeManager) ListPendingOffers(stableID string) []*TradeOffer {
 
 	var result []*TradeOffer
 	for _, offer := range tm.trades {
-		if offer.ToStable == stableID && offer.Status == "Pending" {
+		if offer.ToStableID == stableID && offer.Status == "Pending" {
 			result = append(result, offer)
 		}
 	}
@@ -537,7 +532,7 @@ func (tm *TradeManager) ListOutgoingOffers(stableID string) []*TradeOffer {
 
 	var result []*TradeOffer
 	for _, offer := range tm.trades {
-		if offer.FromStable == stableID && offer.Status == "Pending" {
+		if offer.FromStableID == stableID && offer.Status == "Pending" {
 			result = append(result, offer)
 		}
 	}
@@ -555,7 +550,7 @@ func (tm *TradeManager) ListAllPending(stableID string) []*TradeOffer {
 		if offer.Status != "Pending" {
 			continue
 		}
-		if stableID == "" || offer.FromStable == stableID || offer.ToStable == stableID {
+		if stableID == "" || offer.FromStableID == stableID || offer.ToStableID == stableID {
 			result = append(result, offer)
 		}
 	}

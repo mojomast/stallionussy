@@ -124,12 +124,13 @@ CREATE TABLE IF NOT EXISTS tournaments (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
     track_type     TEXT NOT NULL DEFAULT '',
-    status         TEXT NOT NULL DEFAULT 'Open',
+    rounds         INT NOT NULL DEFAULT 0,
     current_round  INT NOT NULL DEFAULT 0,
-    total_rounds   INT NOT NULL DEFAULT 0,
     entry_fee      BIGINT NOT NULL DEFAULT 0,
-    weather        TEXT NOT NULL DEFAULT '',
+    prize_pool     BIGINT NOT NULL DEFAULT 0,
     standings      JSONB NOT NULL DEFAULT '[]',
+    races          JSONB NOT NULL DEFAULT '[]',
+    status         TEXT NOT NULL DEFAULT 'Open',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

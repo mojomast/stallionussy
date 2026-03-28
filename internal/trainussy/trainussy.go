@@ -1452,6 +1452,133 @@ func RollSeasonalEvent(season int) *SeasonalEvent {
 	return &picked
 }
 
+// ApplySeasonalEffect applies a seasonal event's effect to a single horse,
+// modifying its stats in place. Returns a short summary string describing what
+// happened, or "" if the event didn't affect this horse.
+//
+// Effects are mapped as follows:
+//
+//	all_horses_chaos_boost   → +3% fitness ceiling (yogurt energy)
+//	tmp_penalty              → −5% current fitness (Derulo distraction)
+//	int_bonus                → +2% fitness ceiling for INT AA horses only
+//	stm_penalty_low_int      → −3% current fitness for INT BB horses
+//	training_nerf            → +10 fatigue (reduced training effectiveness)
+//	training_minor_nerf      → +5 fatigue (sourdough distraction)
+//	paranoia_debuff          → +8 fatigue (Mothman-induced anxiety)
+//	haunted_boost / haunted_buff → +2% fitness ceiling for horses with haunted traits
+//	sappho_boost             → +5% fitness ceiling for horses with Sapphic Power trait
+//	gen0_boost               → +3% fitness ceiling for generation 0 horses
+//	iso_penalty              → −5% current fitness for INT BB horses
+//	k8s_nerf                 → −3% current fitness for horses with Kubernetes Native trait
+//	lot11_boost              → +5% fitness ceiling for descendants (generation > 0)
+//
+// Events with purely economic or quarantine effects (market_discount, purse_double,
+// anomalous_quarantine, etc.) don't modify horse stats and return "".
+func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
+	if event == nil || horse == nil {
+		return ""
+	}
+
+	switch event.Effect {
+	case "all_horses_chaos_boost":
+		horse.FitnessCeiling *= 1.03
+		return fmt.Sprintf("%s gained +3%% fitness ceiling from yogurt energy", horse.Name)
+
+	case "tmp_penalty":
+		horse.CurrentFitness *= 0.95
+		if horse.CurrentFitness < 0 {
+			horse.CurrentFitness = 0
+		}
+		return fmt.Sprintf("%s lost 5%% fitness — distracted by Jason Derulo", horse.Name)
+
+	case "int_bonus":
+		if geneExpress(horse.Genome, models.GeneINT) == "AA" {
+			horse.FitnessCeiling *= 1.02
+			return fmt.Sprintf("%s (INT AA) gained Dr. Mittens' blessing: +2%% ceiling", horse.Name)
+		}
+		return ""
+
+	case "stm_penalty_low_int":
+		if geneExpress(horse.Genome, models.GeneINT) == "BB" {
+			horse.CurrentFitness *= 0.97
+			return fmt.Sprintf("%s (INT BB) zoned out during sermon: −3%% fitness", horse.Name)
+		}
+		return ""
+
+	case "training_nerf":
+		horse.Fatigue += 10
+		if horse.Fatigue > 100 {
+			horse.Fatigue = 100
+		}
+		return fmt.Sprintf("%s gained +10 fatigue from oat shortage stress", horse.Name)
+
+	case "training_minor_nerf":
+		horse.Fatigue += 5
+		if horse.Fatigue > 100 {
+			horse.Fatigue = 100
+		}
+		return fmt.Sprintf("%s gained +5 fatigue from sourdough fumes", horse.Name)
+
+	case "paranoia_debuff":
+		horse.Fatigue += 8
+		if horse.Fatigue > 100 {
+			horse.Fatigue = 100
+		}
+		return fmt.Sprintf("%s gained +8 fatigue from Mothman-induced paranoia", horse.Name)
+
+	case "haunted_boost", "haunted_buff":
+		if has, _ := hasTraitEffect(horse, "haunted_boost"); has {
+			horse.FitnessCeiling *= 1.02
+			return fmt.Sprintf("%s (haunted trait) gained +2%% ceiling from spectral energy", horse.Name)
+		}
+		return ""
+
+	case "sappho_boost":
+		if has, _ := hasTraitEffect(horse, "panic_resist"); has {
+			horse.FitnessCeiling *= 1.05
+			return fmt.Sprintf("%s gained +5%% ceiling from Sappho Poetry Festival inspiration", horse.Name)
+		}
+		return ""
+
+	case "gen0_boost":
+		if horse.Generation == 0 {
+			horse.FitnessCeiling *= 1.03
+			return fmt.Sprintf("%s (Gen 0) gained +3%% ceiling — Margaret Chen approved", horse.Name)
+		}
+		return ""
+
+	case "iso_penalty":
+		if geneExpress(horse.Genome, models.GeneINT) == "BB" {
+			horse.CurrentFitness *= 0.95
+			return fmt.Sprintf("%s (INT BB) failed ISO 69420 recertification: −5%% fitness", horse.Name)
+		}
+		return ""
+
+	case "k8s_nerf":
+		if has, _ := hasTraitEffect(horse, "speed_boost"); has {
+			// Check specifically for Kubernetes Native trait by name.
+			for _, t := range horse.Traits {
+				if t.Name == "Kubernetes Native" {
+					horse.CurrentFitness *= 0.97
+					return fmt.Sprintf("%s (Kubernetes Native) lost 3%% fitness from cluster meltdown", horse.Name)
+				}
+			}
+		}
+		return ""
+
+	case "lot11_boost":
+		if horse.Generation > 0 {
+			horse.FitnessCeiling *= 1.05
+			return fmt.Sprintf("%s gained +5%% ceiling from STARDUSTUSSY transmission", horse.Name)
+		}
+		return ""
+
+	default:
+		// Economic/quarantine/non-stat effects — no direct horse modification.
+		return ""
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Gene helpers — safe extraction from a Genome
 // ---------------------------------------------------------------------------

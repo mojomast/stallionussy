@@ -62,6 +62,22 @@ func (rh *RaceHistory) RecordResult(result *models.RaceResult) {
 	)
 }
 
+// ImportResults bulk-loads pre-sorted race results (newest first) into the
+// history store. This is used during startup to hydrate in-memory state from
+// the database. Existing results are preserved; imported results are appended
+// after any current entries.
+func (rh *RaceHistory) ImportResults(results []*models.RaceResult) {
+	rh.mu.Lock()
+	defer rh.mu.Unlock()
+
+	rh.results = append(rh.results, results...)
+
+	for _, r := range results {
+		rh.byHorse[r.HorseID] = append(rh.byHorse[r.HorseID], r)
+		rh.byRace[r.RaceID] = append(rh.byRace[r.RaceID], r)
+	}
+}
+
 // GetHorseHistory returns all results for a horse, most recent first.
 // Returns nil if the horse has no recorded results.
 func (rh *RaceHistory) GetHorseHistory(horseID string) []*models.RaceResult {
@@ -738,6 +754,16 @@ func (tm *TournamentManager) GetTournament(id string) (*models.Tournament, error
 		return nil, fmt.Errorf("tournament %s not found", id)
 	}
 	return t, nil
+}
+
+// ImportTournament adds a previously-persisted tournament to the in-memory
+// map. This is used during startup to hydrate state from the database.
+// If a tournament with the same ID already exists, it is overwritten.
+func (tm *TournamentManager) ImportTournament(t *models.Tournament) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	tm.tournaments[t.ID] = t
 }
 
 // ===========================================================================
