@@ -1162,16 +1162,28 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 						fmt.Sprintf("😱 [%.1fs] %s: PANIC! They've completely lost it! Dead stop on the track!", ts, name),
 						fmt.Sprintf("🫣 [%.1fs] OH NO! %s has SPOOKED! They're frozen in place! The crowd gasps!", ts, name),
 						fmt.Sprintf("💥 [%.1fs] %s: TOTAL MELTDOWN! Legs locked, eyes wide — that horse is NOT moving!", ts, name),
+						fmt.Sprintf("😱 [%.1fs] %s just remembered its browser history isn't deleted! FULL STOP!", ts, name),
+						fmt.Sprintf("🫣 [%.1fs] Someone played a Derulo song near the track — %s has entered a catatonic state!", ts, name),
+						fmt.Sprintf("💥 [%.1fs] %s heard a B.U.R.P. siren and FROZE! Containment trauma is REAL!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["PANIC"]%len(msgs)], "event-panic")
 				}
 			case "ANOMALOUS ACCELERATION":
 				if canReport("ANOMALOUS ACCELERATION") {
-					add(t, fmt.Sprintf("🧪 [%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION! The yogurt REMEMBERS! %s rockets forward with impossible speed!", ts, name), "event-e008")
+					msgs := []string{
+						fmt.Sprintf("🧪 [%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION! The yogurt REMEMBERS! %s rockets forward with impossible speed!", ts, name),
+						fmt.Sprintf("🧪 [%.1fs] %s: The yogurt containment field FLUCTUATES! E-008 sends its REGARDS! B.U.R.P. sirens blare from the observation deck!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["ANOMALOUS ACCELERATION"]%len(msgs)], "event-e008")
 				}
 			case "GHOST SIGHTING":
 				if canReport("GHOST SIGHTING") {
-					add(t, fmt.Sprintf("👻 [%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track! The horse RECOILS in terror!", ts, name), "event-ghost")
+					msgs := []string{
+						fmt.Sprintf("👻 [%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track! The horse RECOILS in terror!", ts, name),
+						fmt.Sprintf("👻 [%.1fs] %s sees something that ISN'T THERE! Or IS it?! B.U.R.P. agents are taking notes from the stands!", ts, name),
+						fmt.Sprintf("👻 [%.1fs] The ghost of a Victorian-era jockey appears before %s! It offers unsolicited form advice! The horse is NOT having it!", ts, name),
+					}
+					add(t, msgs[eventCounts[i]["GHOST SIGHTING"]%len(msgs)], "event-ghost")
 				}
 			case "THE LIGHTS FLICKER":
 				if canReportGlobal("THE LIGHTS FLICKER") {
@@ -1195,6 +1207,8 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("💨 [%.1fs] %s: SECOND WIND! From the depths of exhaustion — a SURGE! The crowd is on their FEET!", ts, name),
 						fmt.Sprintf("🔥 [%.1fs] %s REFUSES TO DIE! Somehow they've found another gear! Where was THIS energy hiding?!", ts, name),
+						fmt.Sprintf("💨 [%.1fs] This horse runs like it owes the yogurt money! %s EXPLODES from nowhere!", ts, name),
+						fmt.Sprintf("🔥 [%.1fs] %s just channeled pure Grindussy energy! The comeback is ON!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["SECOND WIND"]%len(msgs)], "event-burst")
 				}
@@ -1204,6 +1218,7 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("☕ [%.1fs] %s: CAFFEINE KICK! They found a discarded oat milk latte on the track! INSTANT ENERGY! Dr. Mittens left it there. Allegedly.", ts, name),
 						fmt.Sprintf("☕ [%.1fs] %s just inhaled someone's abandoned cold brew! Their eyes are ENORMOUS! They're VIBRATING!", ts, name),
+						fmt.Sprintf("☕ [%.1fs] %s found a triple-shot espresso from the Oat Milk Dispensary! They're running at 2x speed and TWITCHING!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["CAFFEINE KICK"]%len(msgs)], "event-burst")
 				}
@@ -1238,6 +1253,7 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("📣 [%.1fs] %s: CROWD SURGE! The fans ROAR! The energy is ELECTRIC! The leader feeds off the adulation!", ts, name),
 						fmt.Sprintf("🎉 [%.1fs] The crowd is going ABSOLUTELY FERAL for %s! The noise is DEAFENING! It's propelling them forward!", ts, name),
+						fmt.Sprintf("📣 [%.1fs] Dr. Mittens would approve — a purrfect run! %s is riding the crowd's energy to GLORY!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["CROWD SURGE"]%len(msgs)], "event-burst")
 				}
@@ -1247,6 +1263,8 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("🎤 [%.1fs] %s: DERULO SIGHTING! Jason Derulo is in the crowd! The horse STOPS DEAD to stare! He insists he's not here! \"Jason Derulo!\" he whispers, unable to help himself.", ts, name),
 						fmt.Sprintf("🎤 [%.1fs] %s has FROZEN! Is that... JASON DERULO?! In the VIP box?! He's wearing a disguise but it's CLEARLY him! The horse is MESMERIZED!", ts, name),
+						fmt.Sprintf("🎤 [%.1fs] %s: Jason Derulo just dropped his phone from the stands! The horse STOPS to return it! Derulo is MORTIFIED! 'I'm not even supposed to BE here!'", ts, name),
+						fmt.Sprintf("🎤 [%.1fs] DERULO ALERT! %s hears 'Whatcha Say' from the PA system and LOCKS UP! Someone in the sound booth is getting fired!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["DERULO SIGHTING"]%len(msgs)], "event-panic")
 				}
@@ -1256,6 +1274,7 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("😺 [%.1fs] %s: MITTENS NAP! Dr. Mittens has materialized on the horse's back and FALLEN ASLEEP! The horse dare not disturb her! Speed PLUMMETS out of respect!", ts, name),
 						fmt.Sprintf("🐱 [%.1fs] A soft *poof* and Dr. Mittens APPEARS on %s's hindquarters, curling into a perfect circle! The horse slows to a reverent tippy-tap! You do NOT wake the doctor!", ts, name),
+						fmt.Sprintf("😺 [%.1fs] Dr. Mittens would approve — a purrfect nap spot! She's chosen %s as her bed and that is now LEGALLY BINDING! The horse creeps forward at minimum speed!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["MITTENS NAP"]%len(msgs)], "event-ghost")
 				}
@@ -1265,6 +1284,7 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("📡 [%.1fs] %s: DIVINE PACKET! A golden beam of pure 802.11ax descends from the clouds! Pastor Router McEthernet III has sent his BLESSING! Speed BOOST!", ts, name),
 						fmt.Sprintf("🙏 [%.1fs] %s receives a DIVINE PACKET from Pastor Router! The horse's latency drops to ZERO! They're running on GOD'S OWN BANDWIDTH!", ts, name),
+						fmt.Sprintf("📡 [%.1fs] Pastor Router blesses this performance from the commentary booth! %s's TCP handshake with victory is COMPLETE! Zero packet loss!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["DIVINE PACKET"]%len(msgs)], "event-burst")
 				}
@@ -1274,6 +1294,8 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 					msgs := []string{
 						fmt.Sprintf("⚙️ [%.1fs] %s: GEOFFRUSSY OPTIMIZATION! The Go orchestrator has optimized their race line! Goroutines DEPLOYED! The path to the finish is CALCULATED!", ts, name),
 						fmt.Sprintf("🔧 [%.1fs] Geoffrussy's pipeline kicks in for %s! runtime.GOMAXPROCS set to MAXIMUM! The horse's route is now O(1) to the finish line!", ts, name),
+						fmt.Sprintf("⚙️ [%.1fs] Geoffrussy's pipeline just deployed a hotfix mid-race! %s's legs have been RECOMPILED with optimizations! -O3 galloping engaged!", ts, name),
+						fmt.Sprintf("🔧 [%.1fs] B.U.R.P. agents are monitoring %s closely... but Geoffrussy already pushed a patch! The horse's CI/CD pipeline is PRISTINE!", ts, name),
 					}
 					add(t, msgs[eventCounts[i]["GEOFFRUSSY OPTIMIZATION"]%len(msgs)], "event-burst")
 				}
@@ -1356,13 +1378,36 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 		var flair string
 		switch e.FinishPlace {
 		case 1:
-			flair = " — 🏆 CHAMPION! ABSOLUTE UNIT!"
+			flairs := []string{
+				" — 🏆 CHAMPION! ABSOLUTE UNIT!",
+				" — 🏆 Dr. Mittens would approve — a purrfect victory!",
+				" — 🏆 Geoffrussy's pipeline rates this run: FLAWLESS!",
+				" — 🏆 CHAMPION! The Ussyverse BOWS before this horse!",
+				" — 🏆 Pastor Router blesses this performance! Amen!",
+			}
+			flair = flairs[rand.IntN(len(flairs))]
 		case 2:
-			flair = " — 🥈 So close. The crowd weeps."
+			flairs := []string{
+				" — 🥈 So close. The crowd weeps.",
+				" — 🥈 Almost had it. Jason Derulo sends sympathies (unwillingly).",
+				" — 🥈 Silver is just gold with commitment issues.",
+			}
+			flair = flairs[rand.IntN(len(flairs))]
 		case 3:
-			flair = " — 🥉 Podium secured. Respectable."
+			flairs := []string{
+				" — 🥉 Podium secured. Respectable.",
+				" — 🥉 Bronze! B.U.R.P. has no complaints (for once).",
+				" — 🥉 Third place! The yogurt acknowledges your effort.",
+			}
+			flair = flairs[rand.IntN(len(flairs))]
 		default:
-			flair = " — Ran their heart out."
+			flairs := []string{
+				" — Ran their heart out.",
+				" — An honest effort. Margaret Chen nods stoically.",
+				" — Finished upright. That's more than some can say.",
+				" — The Sappho Scale rates this run: 'participated.'",
+			}
+			flair = flairs[rand.IntN(len(flairs))]
 		}
 
 		add(maxTick+2, fmt.Sprintf("  %s: %s (%s)%s", placeStr, e.HorseName, timeStr, flair), "event-announcer")

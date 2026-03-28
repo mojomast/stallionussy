@@ -41,6 +41,74 @@ var geneWeights = map[models.GeneType]float64{
 }
 
 // ---------------------------------------------------------------------------
+// Horse Lore Generation — every foal deserves a backstory
+// ---------------------------------------------------------------------------
+
+// birthLoreSnippets is the pool of random lore snippets assigned to foals at
+// birth. Each one references key Ussyverse characters and events.
+var birthLoreSnippets = []string{
+	"Born during a B.U.R.P. containment breach.",
+	"Dr. Mittens was the attending veterinarian (cat).",
+	"Jason Derulo was coincidentally performing nearby during birth.",
+	"First words were binary. B.U.R.P. has opened a file.",
+	"The foaling stable smelled faintly of artisanal yogurt.",
+	"Pastor Router McEthernet III blessed the birth with an RFC reading.",
+	"Geoffrussy allocated exactly 128 goroutines to optimize this delivery.",
+	"Margaret Chen observed the birth and made exactly one note: 'Adequate.'",
+	"Born during a full moon. The Hauntedussy track shuddered.",
+	"STARDUSTUSSY's 2089 logs mention this horse by name. Concerning.",
+	"E-008 pulsed softly during the foaling. The yogurt approves.",
+	"The Sappho Scale was temporarily recalibrated after this birth.",
+	"Agent Mothman was spotted observing from the rafters.",
+	"Born in the shadow of Building 7. The sourdough stirred.",
+	"A B.U.R.P. field agent was dispatched within 3 minutes of birth. Standard procedure.",
+	"Jason Derulo's restraining order now covers this horse by default.",
+	"Dr. Mittens slow-blinked exactly once during delivery. A rare honor.",
+	"The stable's Kubernetes cluster auto-scaled during the birth event.",
+	"Born during the Great Oat Shortage. Had to make do with regular oats (tragic).",
+	"Pastor Router's ethernet cathedral bells rang spontaneously at the moment of birth.",
+	"Geoffrussy logged the birth as a successful deployment. Version 1.0.0.",
+	"Margaret Chen's genetic analysis returned: 'Shows promise. Don't ruin it.'",
+	"The foaling room's wifi dropped to 1 bar. Pastor Router is investigating.",
+	"A small jar of yogurt was found in the foaling straw. Nobody knows how it got there.",
+	"Born during a Cummies market crash. Economists are drawing parallels.",
+	"The attending vet (not Dr. Mittens) was slow-blinked AT by Dr. Mittens. A power move.",
+	"This horse's birth certificate was automatically filed by Geoffrussy's CI/CD pipeline.",
+	"STARDUSTUSSY sent a congratulatory transmission from 2089. It arrived before the birth.",
+	"Born on Hauntedussy grounds. Three ghosts attended. They brought a gift basket.",
+	"Dr. Mittens' official medical notes read: 'Horse. Alive. Acceptable. -Dr. Mittens, DVM'",
+	"The ISO 69420 certification process began at birth. It's still pending.",
+	"Jason Derulo was NOT present. His lawyers have confirmed this preemptively.",
+	"B.U.R.P. threat assessment: LOW (for now).",
+	"Born while Pastor Router was streaming a sermon. The horse's first sound was a dial-up tone.",
+	"Geoffrussy's garbage collector paused respectfully during the birth.",
+}
+
+// generateBirthLore creates a lore string for a newly bred foal by combining
+// genetic information with a random backstory snippet.
+func generateBirthLore(foalGenome models.Genome, sire, mare *models.Horse) string {
+	snippet := birthLoreSnippets[rand.IntN(len(birthLoreSnippets))]
+
+	// Build a brief genetic summary.
+	ceiling := CalcFitnessCeiling(foalGenome)
+	rating := ceiling * 12.0 // Sappho Scale approximation
+
+	lore := fmt.Sprintf("Sappho ~%.1f — Generation %d foal of %s × %s. %s",
+		rating, maxGen(sire.Generation, mare.Generation)+1,
+		sire.Name, mare.Name, snippet)
+
+	return lore
+}
+
+// maxGen returns the larger of two generation numbers.
+func maxGen(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -149,6 +217,26 @@ func Breed(sire, mare *models.Horse) *models.Horse {
 		ceiling = 0.0
 	}
 
+	// Trait: breed_boost (e.g. Breed Supremacy) — if EITHER parent has the
+	// breed_boost trait, apply a fitness ceiling bonus to the foal.
+	// Formula: bonus = 1 + (magnitude - 1) * 0.5 (so 1.40 → 1.20, a 20% boost).
+	// Cap the ceiling at 0.99 to leave room for training.
+	breedBoostMag := 0.0
+	for _, parent := range []*models.Horse{sire, mare} {
+		for _, t := range parent.Traits {
+			if t.Effect == "breed_boost" && t.Magnitude > breedBoostMag {
+				breedBoostMag = t.Magnitude
+			}
+		}
+	}
+	if breedBoostMag > 0 {
+		bonus := 1.0 + (breedBoostMag-1.0)*0.5
+		ceiling *= bonus
+		if ceiling > 0.99 {
+			ceiling = 0.99
+		}
+	}
+
 	generation := sire.Generation
 	if mare.Generation > generation {
 		generation = mare.Generation
@@ -157,6 +245,9 @@ func Breed(sire, mare *models.Horse) *models.Horse {
 
 	// Generate a gloriously ridiculous name for the foal.
 	name := nameussy.GenerateName()
+
+	// Generate a backstory for the foal — every horse deserves lore.
+	lore := generateBirthLore(foalGenome, sire, mare)
 
 	foal := &models.Horse{
 		ID:             uuid.New().String(),
@@ -173,6 +264,7 @@ func Breed(sire, mare *models.Horse) *models.Horse {
 		Races:          0,
 		ELO:            1200,
 		IsLegendary:    false,
+		Lore:           lore,
 		CreatedAt:      time.Now(),
 	}
 

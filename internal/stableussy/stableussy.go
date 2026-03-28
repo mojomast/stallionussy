@@ -6,6 +6,7 @@ package stableussy
 
 import (
 	"fmt"
+	"math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -14,6 +15,57 @@ import (
 	"github.com/mojomast/stallionussy/internal/genussy"
 	"github.com/mojomast/stallionussy/internal/models"
 )
+
+// ---------------------------------------------------------------------------
+// Stable Mottos — every stable needs a motto, and every motto needs ussy
+// ---------------------------------------------------------------------------
+
+// StableMottos is the pool of randomly-assigned mottos for newly created
+// stables. Each one captures the essence of the Ussyverse in a single
+// pithy sentence.
+var StableMottos = []string{
+	"Where every horse is a git commit",
+	"Certified by Dr. Mittens, DVM (cat)",
+	"Not currently under B.U.R.P. investigation (probably)",
+	"Powered by Geoffrussy's CI/CD pipeline",
+	"Blessed by Pastor Router's 802.11 prayer",
+	"Jason Derulo has never been here (his lawyers confirm)",
+	"ISO 69420 compliant since day one",
+	"E-008 containment level: STABLE (get it?)",
+	"Our horses run on oat milk and existential dread",
+	"Margaret Chen would be mildly impressed",
+	"Sappho Scale rating: off the charts",
+	"We deploy on Fridays and race on Sundays",
+	"Built different. Compiled faster.",
+	"The yogurt watches over us all",
+	"Our latency is lower than our ELO",
+	"Flannel-forward equine excellence",
+	"Where the sourdough rises and so do our horses",
+	"STARDUSTUSSY 2089 forecast: dominant",
+	"Kubernetes-orchestrated hooves since 2024",
+	"The Sappho Scale fears us",
+	"We put the 'stable' in 'emotionally unstable'",
+	"Pastor Router's ping: 0ms. Our horses: same energy.",
+	"B.U.R.P. clearance level: it's complicated",
+	"Cottagecore vibes, Thunderussy results",
+	"Geoffrussy rates our pipeline: immaculate",
+	"Agent Mothman is our biggest fan (we think)",
+	"Our horses have better uptime than your servers",
+	"The only stable where 'git push --force' is a training exercise",
+	"Dr. Mittens slow-blinked at our application. We're in.",
+	"We breed champions and occasionally sentient yogurt",
+	"Hauntedussy track record holders (the ghosts helped)",
+	"Running on caffeine, cummies, and prayer packets",
+	"Our foals come pre-optimized by Geoffrussy",
+	"Margaret Chen's second-favorite stable (don't tell her)",
+	"Every horse here has cleared a B.U.R.P. background check*",
+	"*B.U.R.P. background checks are purely decorative",
+}
+
+// pickStableMotto returns a random motto from the pool.
+func pickStableMotto() string {
+	return StableMottos[rand.IntN(len(StableMottos))]
+}
 
 // ---------------------------------------------------------------------------
 // StableManager — the central in-memory registry
@@ -52,6 +104,7 @@ func (sm *StableManager) CreateStable(name, ownerID string) *models.Stable {
 		Cummies:   5000,
 		Horses:    []models.Horse{},
 		CreatedAt: time.Now(),
+		Motto:     pickStableMotto(),
 	}
 
 	sm.stables[stable.ID] = stable
@@ -223,6 +276,26 @@ func (sm *StableManager) syncHorseToStable(horse *models.Horse) {
 				return
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Import — load pre-existing data (for DB hydration on startup)
+// ---------------------------------------------------------------------------
+
+// ImportStable adds an existing stable (e.g. loaded from DB) directly into the
+// in-memory registry. If a stable with the same ID already exists it is replaced.
+// The stable's horses are also registered in the global horse registry.
+func (sm *StableManager) ImportStable(stable *models.Stable) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.stables[stable.ID] = stable
+
+	// Register all horses from the stable in the global registry.
+	for i := range stable.Horses {
+		h := &stable.Horses[i]
+		sm.horses[h.ID] = h
 	}
 }
 

@@ -947,6 +947,211 @@ select.term-input option {
 
 .fire-text { animation: fire 1.5s ease-in-out infinite; }
 
+/* ─── AUTH SCREEN ────────────────────────────────────────────────────────── */
+#auth-screen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+}
+
+#auth-screen.hidden { display: none; }
+
+.auth-box {
+  border: 2px solid var(--fg-dim);
+  padding: 0;
+  width: 460px;
+  max-width: 95vw;
+  background: var(--bg-light);
+  box-shadow: 0 0 30px rgba(0,255,65,0.1), 0 0 60px rgba(0,255,65,0.05);
+  position: relative;
+}
+
+.auth-box .auth-header {
+  border-bottom: 2px solid var(--fg-dim);
+  padding: 12px 20px;
+  text-align: center;
+  background: rgba(0,255,65,0.03);
+}
+
+.auth-box .auth-header h2 {
+  font-size: 15px;
+  margin: 0;
+  letter-spacing: 2px;
+}
+
+.auth-box .auth-header .auth-sub {
+  font-size: 10px;
+  color: var(--fg-dim);
+  margin-top: 2px;
+}
+
+.auth-box .auth-body {
+  padding: 20px 24px;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.auth-tabs button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-dim);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  transition: all 0.15s;
+}
+
+.auth-tabs button:hover {
+  color: var(--fg);
+  background: rgba(0,255,65,0.05);
+}
+
+.auth-tabs button.active {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+  text-shadow: var(--glow-green);
+}
+
+.auth-form-row {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-form-row .auth-prompt {
+  color: var(--fg);
+  font-size: 12px;
+  min-width: 14px;
+}
+
+.auth-form-row label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  min-width: 100px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.auth-form-row .term-input {
+  flex: 1;
+  max-width: none;
+}
+
+.auth-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-actions .term-btn {
+  width: 100%;
+  padding: 10px 16px;
+  font-size: 13px;
+  letter-spacing: 2px;
+}
+
+.auth-status {
+  margin-top: 12px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  min-height: 32px;
+}
+
+.auth-status.error {
+  color: var(--red);
+  border-color: rgba(255,0,64,0.4);
+  background: rgba(255,0,64,0.05);
+  animation: auth-error-flash 0.3s ease-in-out 2;
+}
+
+.auth-status.success {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+}
+
+@keyframes auth-error-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; background: rgba(255,0,64,0.15); }
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  font-size: 10px;
+  color: var(--fg-dim);
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
+.auth-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 20px;
+  text-align: center;
+  font-size: 9px;
+  color: var(--fg-dim);
+}
+
+/* user info in nav */
+.user-info {
+  color: var(--fg);
+  font-size: 11px;
+  text-shadow: var(--glow-green);
+  white-space: nowrap;
+}
+
+#nav .nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+#nav .nav-right a {
+  color: var(--fg-dim);
+}
+
+#nav .nav-right .user-info {
+  padding: 8px 12px;
+  font-size: 10px;
+}
+
+#nav .nav-right a.logout-btn {
+  color: var(--red);
+  border-left: 1px solid var(--border);
+}
+
+#nav .nav-right a.logout-btn:hover {
+  color: var(--red);
+  background: rgba(255,0,64,0.08);
+}
+
 /* ─── HIDDEN ─────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
 
@@ -1046,6 +1251,81 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
+     AUTH SCREEN
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="auth-screen" class="hidden">
+  <div class="auth-box">
+    <div class="auth-header">
+      <h2 class="glow">STALLIONUSSY ACCESS TERMINAL v2.0</h2>
+      <div class="auth-sub">╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌</div>
+      <div class="auth-sub">Premium Equine Genetics Exchange — Secure Access</div>
+    </div>
+    <div class="auth-body">
+      <div class="auth-tabs">
+        <button class="active" id="auth-tab-login" onclick="window.SU.switchAuthTab('login')">[LOGIN]</button>
+        <button id="auth-tab-register" onclick="window.SU.switchAuthTab('register')">[REGISTER]</button>
+      </div>
+
+      <div id="auth-form-login">
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Username:</label>
+          <input class="term-input" id="auth-username" placeholder="breeder_01" maxlength="32" autocomplete="username">
+        </div>
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Password:</label>
+          <input class="term-input" id="auth-password" type="password" placeholder="••••••••" maxlength="128" autocomplete="current-password">
+        </div>
+      </div>
+
+      <div id="auth-form-register" class="hidden">
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Username:</label>
+          <input class="term-input" id="reg-username" placeholder="breeder_01" maxlength="32" autocomplete="username">
+        </div>
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Display Name:</label>
+          <input class="term-input" id="reg-display-name" placeholder="Dr. Mittens Jr." maxlength="64">
+        </div>
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Password:</label>
+          <input class="term-input" id="reg-password" type="password" placeholder="••••••••" maxlength="128" autocomplete="new-password">
+        </div>
+        <div class="auth-form-row">
+          <span class="auth-prompt">&gt;</span>
+          <label>Confirm:</label>
+          <input class="term-input" id="reg-password-confirm" type="password" placeholder="••••••••" maxlength="128" autocomplete="new-password">
+        </div>
+      </div>
+
+      <div class="auth-actions">
+        <button class="term-btn" id="btn-auth-submit" onclick="window.SU.submitAuth()">⚡ AUTHENTICATE ⚡</button>
+      </div>
+
+      <div class="auth-divider">OR</div>
+
+      <div class="auth-actions">
+        <button class="term-btn amber" id="btn-guest" onclick="window.SU.continueAsGuest()">👤 CONTINUE AS GUEST</button>
+      </div>
+
+      <div class="auth-status" id="auth-status">STATUS: AWAITING CREDENTIALS</div>
+    </div>
+    <div class="auth-footer">
+      ╚═ Monitored by Geoffrussy Anti-Fraud Division ═ All yogurt containers sealed ═╝
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     MAIN APP WRAPPER
+     ═══════════════════════════════════════════════════════════════════════════ -->
+<div id="app">
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
      MARKET TICKER BAR
      ═══════════════════════════════════════════════════════════════════════════ -->
 <div id="ticker-bar">
@@ -1087,6 +1367,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#trades" data-page="trades">[TRADE]</a>
   <a href="#leaderboard" data-page="leaderboard">[RANKS]</a>
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
+  <div class="nav-right">
+    <span class="user-info" id="user-display">guest@stallionussy:~$</span>
+    <a href="#" class="logout-btn" id="nav-logout" onclick="event.preventDefault(); window.SU.logout();">[LOGOUT]</a>
+  </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
@@ -1447,6 +1731,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 </div>
 
 </div><!-- /main -->
+</div><!-- /app -->
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      JAVASCRIPT
@@ -1470,11 +1755,21 @@ async function api(path, opts = {}) {
       headers: { 'Content-Type': 'application/json' },
       ...opts,
     };
+    // Inject auth token into all API requests
+    if (authToken) {
+      fetchOpts.headers = fetchOpts.headers || {};
+      fetchOpts.headers['Authorization'] = 'Bearer ' + authToken;
+    }
     if (opts.body && typeof opts.body === 'object') {
       fetchOpts.body = JSON.stringify(opts.body);
     }
     const res = await fetch(`${API}/api${path}`, fetchOpts);
     if (!res.ok) {
+      // If we get 401, token may be expired — trigger logout
+      if (res.status === 401 && authToken && !isGuest) {
+        logout();
+        throw new Error('Session expired. Please log in again.');
+      }
       const text = await res.text();
       throw new Error(`HTTP ${res.status}: ${text}`);
     }
@@ -1488,6 +1783,11 @@ async function api(path, opts = {}) {
 }
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
+let authToken = localStorage.getItem('stallionussy_token') || null;
+let currentUser = null;
+let isGuest = false;
+let guestID = localStorage.getItem('stallionussy_guest_id') || null;
+
 let allHorses = [];
 let allStables = [];
 let allListings = [];
@@ -2492,7 +2792,7 @@ async function createStable() {
   msgEl.style.color = 'var(--fg-dim)';
 
   try {
-    const result = await api('/stables', { method: 'POST', body: { name, ownerID: 'player' } });
+    const result = await api('/stables', { method: 'POST', body: { name, ownerID: getOwnerID() } });
     msgEl.textContent = `mkdir: created stable '${result.name || name}' [${(result.id || '').substring(0, 8)}]`;
     msgEl.style.color = 'var(--fg)';
     nameInput.value = '';
@@ -3933,6 +4233,291 @@ async function loadAchievements() {
   gridEl.innerHTML = html || '<span class="text-dim">No achievement definitions found.</span>';
 }
 
+// ─── AUTH SYSTEM ───────────────────────────────────────────────────────────
+function getOwnerID() {
+  if (currentUser && currentUser.id) return currentUser.id;
+  if (isGuest && guestID) return guestID;
+  return 'player';
+}
+
+function showAuthScreen() {
+  const authEl = $('#auth-screen');
+  const appEl = $('#app');
+  if (authEl) authEl.classList.remove('hidden');
+  if (appEl) appEl.style.display = 'none';
+}
+
+function showApp() {
+  const authEl = $('#auth-screen');
+  const appEl = $('#app');
+  if (authEl) authEl.classList.add('hidden');
+  if (appEl) appEl.style.display = '';
+  updateUserDisplay();
+}
+
+function updateUserDisplay() {
+  const displayEl = $('#user-display');
+  const logoutEl = $('#nav-logout');
+  if (!displayEl) return;
+
+  if (currentUser && currentUser.display_name) {
+    displayEl.textContent = `${currentUser.display_name}@stallionussy:~$`;
+  } else if (currentUser && currentUser.username) {
+    displayEl.textContent = `${currentUser.username}@stallionussy:~$`;
+  } else if (isGuest) {
+    displayEl.textContent = 'guest@stallionussy:~$';
+  } else {
+    displayEl.textContent = 'anon@stallionussy:~$';
+  }
+
+  // Show/hide logout depending on auth state
+  if (logoutEl) {
+    logoutEl.style.display = (authToken || isGuest) ? '' : 'none';
+  }
+}
+
+function switchAuthTab(tab) {
+  const loginTab = $('#auth-tab-login');
+  const registerTab = $('#auth-tab-register');
+  const loginForm = $('#auth-form-login');
+  const registerForm = $('#auth-form-register');
+  const submitBtn = $('#btn-auth-submit');
+
+  if (tab === 'login') {
+    loginTab.classList.add('active');
+    registerTab.classList.remove('active');
+    loginForm.classList.remove('hidden');
+    registerForm.classList.add('hidden');
+    submitBtn.textContent = '⚡ AUTHENTICATE ⚡';
+  } else {
+    loginTab.classList.remove('active');
+    registerTab.classList.add('active');
+    loginForm.classList.add('hidden');
+    registerForm.classList.remove('hidden');
+    submitBtn.textContent = '⚡ CREATE ACCOUNT ⚡';
+  }
+
+  showAuthStatus('STATUS: AWAITING CREDENTIALS', '');
+}
+
+function showAuthStatus(msg, type) {
+  const statusEl = $('#auth-status');
+  if (!statusEl) return;
+  statusEl.textContent = msg;
+  statusEl.className = 'auth-status';
+  if (type === 'error') statusEl.classList.add('error');
+  else if (type === 'success') statusEl.classList.add('success');
+}
+
+function showAuthError(msg) {
+  showAuthStatus('ERROR: ' + msg, 'error');
+}
+
+async function submitAuth() {
+  const loginForm = $('#auth-form-login');
+  const isLogin = !loginForm.classList.contains('hidden');
+
+  if (isLogin) {
+    const username = ($('#auth-username').value || '').trim();
+    const password = $('#auth-password').value || '';
+
+    if (!username || !password) {
+      showAuthError('Username and password required');
+      return;
+    }
+
+    await login(username, password);
+  } else {
+    const username = ($('#reg-username').value || '').trim();
+    const displayName = ($('#reg-display-name').value || '').trim();
+    const password = $('#reg-password').value || '';
+    const confirm = $('#reg-password-confirm').value || '';
+
+    if (!username || !password) {
+      showAuthError('Username and password required');
+      return;
+    }
+    if (password !== confirm) {
+      showAuthError('Passwords do not match');
+      return;
+    }
+    if (password.length < 4) {
+      showAuthError('Password too short (min 4 characters)');
+      return;
+    }
+
+    await register(username, password, displayName || username);
+  }
+}
+
+async function login(username, password) {
+  showAuthStatus('STATUS: AUTHENTICATING...', '');
+
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!resp.ok) {
+      let errMsg = 'Login failed';
+      try {
+        const err = await resp.json();
+        errMsg = err.error || errMsg;
+      } catch(e) {
+        errMsg = `HTTP ${resp.status}`;
+      }
+      throw new Error(errMsg);
+    }
+
+    const data = await resp.json();
+    authToken = data.token;
+    currentUser = data.user;
+    isGuest = false;
+    localStorage.setItem('stallionussy_token', authToken);
+    localStorage.removeItem('stallionussy_guest_id');
+
+    showAuthStatus('ACCESS GRANTED — Welcome, ' + (currentUser.display_name || currentUser.username), 'success');
+
+    // Brief delay to show success, then enter app
+    setTimeout(() => {
+      showApp();
+      loadDashboard();
+    }, 600);
+
+  } catch(e) {
+    showAuthError(e.message);
+  }
+}
+
+async function register(username, password, displayName) {
+  showAuthStatus('STATUS: CREATING ACCOUNT...', '');
+
+  try {
+    const resp = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, display_name: displayName }),
+    });
+
+    if (!resp.ok) {
+      let errMsg = 'Registration failed';
+      try {
+        const err = await resp.json();
+        errMsg = err.error || errMsg;
+      } catch(e) {
+        errMsg = `HTTP ${resp.status}`;
+      }
+      throw new Error(errMsg);
+    }
+
+    const data = await resp.json();
+    authToken = data.token;
+    currentUser = data.user;
+    isGuest = false;
+    localStorage.setItem('stallionussy_token', authToken);
+    localStorage.removeItem('stallionussy_guest_id');
+
+    showAuthStatus('ACCOUNT CREATED — Welcome, ' + (currentUser.display_name || currentUser.username), 'success');
+
+    setTimeout(() => {
+      showApp();
+      loadDashboard();
+    }, 600);
+
+  } catch(e) {
+    showAuthError(e.message);
+  }
+}
+
+function continueAsGuest() {
+  // Generate a persistent guest ID if we don't have one
+  if (!guestID) {
+    guestID = 'guest_' + Math.random().toString(36).substring(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem('stallionussy_guest_id', guestID);
+  }
+
+  authToken = null;
+  currentUser = null;
+  isGuest = true;
+
+  showAuthStatus('GUEST MODE — Limited functionality', 'success');
+
+  setTimeout(() => {
+    showApp();
+    loadDashboard();
+  }, 400);
+}
+
+function logout() {
+  authToken = null;
+  currentUser = null;
+  isGuest = false;
+  guestID = null;
+  localStorage.removeItem('stallionussy_token');
+  localStorage.removeItem('stallionussy_guest_id');
+
+  // Reset auth form fields
+  const fields = ['#auth-username', '#auth-password', '#reg-username', '#reg-display-name', '#reg-password', '#reg-password-confirm'];
+  fields.forEach(sel => {
+    const el = $(sel);
+    if (el) el.value = '';
+  });
+
+  showAuthStatus('STATUS: AWAITING CREDENTIALS', '');
+  switchAuthTab('login');
+  showAuthScreen();
+}
+
+async function checkAuth() {
+  // If no token and not a guest, show auth screen
+  if (!authToken && !isGuest) {
+    // Check if we have a stored guest ID (returning guest)
+    const storedGuestID = localStorage.getItem('stallionussy_guest_id');
+    if (storedGuestID) {
+      guestID = storedGuestID;
+      isGuest = true;
+      showApp();
+      loadDashboard();
+      return;
+    }
+    showAuthScreen();
+    return;
+  }
+
+  // If guest mode, just show the app
+  if (isGuest && !authToken) {
+    showApp();
+    loadDashboard();
+    return;
+  }
+
+  // We have a token — validate it
+  try {
+    const resp = await fetch('/api/auth/me', {
+      headers: { 'Authorization': 'Bearer ' + authToken },
+    });
+
+    if (resp.ok) {
+      currentUser = await resp.json();
+      showApp();
+      loadDashboard();
+    } else {
+      // Token expired/invalid — clear it and show auth screen
+      authToken = null;
+      localStorage.removeItem('stallionussy_token');
+      showAuthScreen();
+    }
+  } catch(e) {
+    // Network error — try to show app anyway (might be offline)
+    // If token exists, assume it's valid and let API calls fail gracefully
+    console.warn('Auth check failed:', e);
+    showApp();
+    loadDashboard();
+  }
+}
+
 // ─── EVENT LISTENERS ───────────────────────────────────────────────────────
 function bindEvents() {
   window.addEventListener('hashchange', navigate);
@@ -3985,34 +4570,55 @@ window.SU = {
   acceptTrade,
   rejectTrade,
   cancelTrade,
+  // Auth functions
+  switchAuthTab,
+  submitAuth,
+  continueAsGuest,
+  logout,
 };
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────
 function init() {
   runBootSequence();
 
-  initTicker();
-
-  flickerWarningBanner();
-
   updateClock();
   setInterval(updateClock, 1000);
 
-  // Refresh ticker periodically
-  setInterval(initTicker, 30000);
-
   bindEvents();
 
-  // Connect WebSocket (delayed to let boot finish)
-  setTimeout(connectWebSocket, 2500);
+  // Bind auth form keyboard events
+  const authInputs = ['#auth-username', '#auth-password', '#reg-username', '#reg-display-name', '#reg-password', '#reg-password-confirm'];
+  authInputs.forEach(sel => {
+    const input = $(sel);
+    if (input) {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitAuth();
+      });
+    }
+  });
 
-  // Initial navigation
-  setTimeout(() => {
-    navigate();
-  }, 100);
+  // Check authentication after boot sequence completes
+  // The boot screen takes ~3-4s, so we check auth behind it
+  checkAuth().then(() => {
+    // Only init ticker and other background tasks if app is shown
+    initTicker();
+    flickerWarningBanner();
 
-  // Refresh weather periodically
-  setInterval(fetchWeather, 60000);
+    // Refresh ticker periodically
+    setInterval(initTicker, 30000);
+
+    // Connect WebSocket (delayed to let boot finish)
+    setTimeout(connectWebSocket, 2500);
+
+    // Initial navigation (if app is visible)
+    setTimeout(() => {
+      if (!$('#auth-screen').classList.contains('hidden')) return;
+      navigate();
+    }, 100);
+
+    // Refresh weather periodically
+    setInterval(fetchWeather, 60000);
+  });
 }
 
 if (document.readyState === 'loading') {

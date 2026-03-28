@@ -179,6 +179,16 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) *models
 	if !ok {
 		delta = 10 // fallback
 	}
+
+	// Trait: fatigue_recovery (e.g. Couch Potato, The Flannel Gene) — when the
+	// fatigue delta is negative (i.e. recovery), multiply the magnitude of the
+	// reduction. So -30 fatigue × 1.5 = -45 fatigue recovered.
+	if delta < 0 {
+		if has, mag := hasTraitEffect(horse, "fatigue_recovery"); has {
+			delta *= mag
+		}
+	}
+
 	horse.Fatigue += delta
 	if horse.Fatigue < 0 {
 		horse.Fatigue = 0
@@ -234,6 +244,11 @@ func calcXP(horse *models.Horse, workout models.WorkoutType) float64 {
 		xp *= 0.25 // quartered
 	} else if horse.Fatigue > 50 {
 		xp *= 0.5 // halved
+	}
+
+	// Trait: training_boost (e.g. Sappho's Chosen) — multiply XP by magnitude.
+	if has, mag := hasTraitEffect(horse, "training_boost"); has {
+		xp *= mag
 	}
 
 	return xp
@@ -301,6 +316,12 @@ func rollInjury(horse *models.Horse) (bool, string) {
 		chance = 0.15
 	} else if horse.Fatigue > 70 {
 		chance = 0.05
+	}
+
+	// Trait: injury_resist (e.g. Titanium Tendons) — divide injury chance by magnitude.
+	// So at magnitude 1.50, a 2% base becomes 1.33%, 15% becomes 10%, etc.
+	if has, mag := hasTraitEffect(horse, "injury_resist"); has && mag > 0 {
+		chance /= mag
 	}
 
 	if rand.Float64() < chance {
@@ -1211,6 +1232,17 @@ func AgeHorse(horse *models.Horse) {
 
 	horse.Age++
 
+	// Trait: aging_resist (e.g. Eternal Youth Serum) — reduces ceiling decay.
+	// Instead of ceiling *= decayFactor, we use ceiling *= (1 - (1-decayFactor)/magnitude).
+	// At magnitude 1.50, a 1% decay (0.99) becomes 0.67% decay (0.9933).
+	hasAgingResist, agingResistMag := hasTraitEffect(horse, "aging_resist")
+	adjustDecay := func(decayFactor float64) float64 {
+		if hasAgingResist && agingResistMag > 0 {
+			return 1.0 - (1.0-decayFactor)/agingResistMag
+		}
+		return decayFactor
+	}
+
 	switch {
 	case horse.Age <= 3:
 		// Youth: ceiling grows +2% per season
@@ -1221,15 +1253,15 @@ func AgeHorse(horse *models.Horse) {
 
 	case horse.Age <= 12:
 		// Veteran: ceiling decays -1% per season
-		horse.FitnessCeiling *= 0.99
+		horse.FitnessCeiling *= adjustDecay(0.99)
 
 	case horse.Age <= 15:
 		// Elder: ceiling decays -3% per season
-		horse.FitnessCeiling *= 0.97
+		horse.FitnessCeiling *= adjustDecay(0.97)
 
 	default:
 		// Ancient: ceiling decays -5% per season
-		horse.FitnessCeiling *= 0.95
+		horse.FitnessCeiling *= adjustDecay(0.95)
 
 		// 10% chance of forced retirement
 		if rand.Float64() < 0.10 {
@@ -1316,6 +1348,108 @@ func RetireHorse(horse *models.Horse, reason string) {
 // pickRetirementMessage selects a random retirement message.
 func pickRetirementMessage() string {
 	return retirementMessages[rand.IntN(len(retirementMessages))]
+}
+
+// ---------------------------------------------------------------------------
+// Trait helpers — check if a horse has a specific trait effect
+// ---------------------------------------------------------------------------
+
+// hasTraitEffect checks whether the horse has at least one trait with the
+// given effect string. If found, returns (true, magnitude). If the horse has
+// multiple traits with the same effect, returns the highest magnitude.
+func hasTraitEffect(horse *models.Horse, effect string) (bool, float64) {
+	found := false
+	bestMag := 0.0
+	for _, t := range horse.Traits {
+		if t.Effect == effect {
+			if !found || t.Magnitude > bestMag {
+				bestMag = t.Magnitude
+			}
+			found = true
+		}
+	}
+	return found, bestMag
+}
+
+// ---------------------------------------------------------------------------
+// Seasonal Events System — the Ussyverse has seasons, and they are CHAOTIC
+// ---------------------------------------------------------------------------
+
+// SeasonalEvent represents something bizarre that happens to all horses
+// during a particular season. Blame the yogurt.
+type SeasonalEvent struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Effect      string `json:"effect"` // what it does
+	Season      int    `json:"season"` // which season it activates (0 = any)
+}
+
+// SeasonalEvents is the complete pool of seasonal chaos that the Ussyverse
+// inflicts upon its equine inhabitants. Each event is thematically tied to
+// key Ussyverse characters and phenomena.
+var SeasonalEvents = []SeasonalEvent{
+	{ID: "yogurt_bloom", Name: "The Yogurt Blooms", Description: "E-008 enters its reproductive cycle. All horses within 500m experience mild reality distortion.", Effect: "all_horses_chaos_boost", Season: 0},
+	{ID: "derulo_concert", Name: "Derulo Concert Nearby", Description: "Jason Derulo is performing at the adjacent venue. Horses with high TMP are agitated.", Effect: "tmp_penalty", Season: 0},
+	{ID: "mittens_inspection", Name: "Dr. Mittens' Annual Inspection", Description: "Dr. Mittens slow-blinks at each horse. INT AA horses gain a temporary blessing.", Effect: "int_bonus", Season: 0},
+	{ID: "router_sermon", Name: "Pastor Router's Ethernet Sermon", Description: "All horses must sit through a 3-hour sermon about packet loss. STM penalties for low INT horses.", Effect: "stm_penalty_low_int", Season: 0},
+	{ID: "burp_audit", Name: "B.U.R.P. Containment Audit", Description: "Anomalous horses are temporarily quarantined. Horses with anomalous traits cannot race this season.", Effect: "anomalous_quarantine", Season: 0},
+	{ID: "cummies_crash", Name: "Cummies Market Crash", Description: "The Cummies-to-USD exchange rate plummets. All stud fees halved.", Effect: "market_discount", Season: 0},
+	{ID: "cummies_boom", Name: "Cummies Bull Run", Description: "r/wallstreetussy is pumping Cummies. Race purses doubled.", Effect: "purse_double", Season: 0},
+	{ID: "geoffrussy_update", Name: "Geoffrussy Pipeline Update", Description: "Geoffrussy pushes a breaking change. Horses with 'Geoffrussy Optimized' trait temporarily lose their bonus.", Effect: "geoffrussy_nerf", Season: 0},
+	{ID: "haunted_convergence", Name: "The Haunted Convergence", Description: "Hauntedussy track becomes 3x longer. All ghost-related events more frequent.", Effect: "haunted_boost", Season: 0},
+	{ID: "stardustussy_signal", Name: "STARDUSTUSSY Transmission", Description: "A signal from 2089 boosts all Lot 11 descendants. +10% speed for the season.", Effect: "lot11_boost", Season: 0},
+	{ID: "full_moon", Name: "Full Moon Over the Stables", Description: "Horses with Haunted traits become temporarily faster. All others slightly spooked.", Effect: "haunted_buff", Season: 0},
+	{ID: "oat_shortage", Name: "Great Oat Shortage of the Season", Description: "Training effectiveness reduced by 20% for all horses without 'Oat Milk Privilege'.", Effect: "training_nerf", Season: 0},
+	{ID: "sappho_festival", Name: "Annual Sappho Poetry Festival", Description: "All horses gather to hear readings from the island of Lesbos. Sapphic Power trait users gain +15% speed.", Effect: "sappho_boost", Season: 1},
+	{ID: "firmware_rollback", Name: "Emergency Firmware Rollback", Description: "Geoffrussy's latest update bricked half the stable. Horses with 'Firmware Update Required' are temporarily cured.", Effect: "firmware_fix", Season: 2},
+	{ID: "chen_inspection", Name: "Margaret Chen's Bloodline Audit", Description: "Margaret Chen inspects all horses. Generation 0 horses get a prestige bonus. She is unimpressed by everything else.", Effect: "gen0_boost", Season: 3},
+	{ID: "yogurt_migration", Name: "The Great Yogurt Migration", Description: "E-008 spawns begin their annual migration through the stables. Anomalous trait frequency doubles.", Effect: "anomalous_frequency_boost", Season: 1},
+	{ID: "ethernet_outage", Name: "The Great Ethernet Outage", Description: "Pastor Router's cathedral loses connectivity. All 'Divine Packet' events are suppressed this season.", Effect: "divine_suppress", Season: 2},
+	{ID: "derulo_restraining_order", Name: "Derulo Restraining Order Hearing", Description: "Jason Derulo's 8th restraining order against Derulo's Regret goes to trial. All Derulo-related events are amplified.", Effect: "derulo_amplify", Season: 3},
+	{ID: "sourdough_uprising", Name: "The Sourdough Uprising", Description: "The artisanal sourdough starters in Building 7 have gained sentience. Training sessions smell incredible but are 10% less effective.", Effect: "training_minor_nerf", Season: 0},
+	{ID: "kubernetes_outage", Name: "Kubernetes Cluster Meltdown", Description: "Geoffrussy's pods are crashing. Horses with 'Kubernetes Native' trait experience existential doubt.", Effect: "k8s_nerf", Season: 0},
+	{ID: "mothman_sighting", Name: "Agent Mothman's Report", Description: "Agent Mothman has filed a classified report about unusual activity in the paddock. All horses gain a minor paranoia debuff.", Effect: "paranoia_debuff", Season: 0},
+	{ID: "iso_recertification", Name: "ISO 69420 Recertification", Description: "All horses must re-take the ISO 69420 compliance exam. INT BB horses fail automatically and lose 5% fitness.", Effect: "iso_penalty", Season: 0},
+}
+
+// RollSeasonalEvent returns a random seasonal event. If season > 0, it
+// preferentially selects events matching that season, but falls back to
+// universal events (Season == 0) if no season-specific event is available.
+// Returns nil if the event pool is empty (which should never happen, but
+// the yogurt works in mysterious ways).
+func RollSeasonalEvent(season int) *SeasonalEvent {
+	if len(SeasonalEvents) == 0 {
+		return nil
+	}
+
+	// Try to find season-specific events first.
+	var seasonSpecific []SeasonalEvent
+	var universal []SeasonalEvent
+	for _, e := range SeasonalEvents {
+		if e.Season == season && season > 0 {
+			seasonSpecific = append(seasonSpecific, e)
+		}
+		if e.Season == 0 {
+			universal = append(universal, e)
+		}
+	}
+
+	// 40% chance to pick a season-specific event if available.
+	if len(seasonSpecific) > 0 && rand.Float64() < 0.40 {
+		picked := seasonSpecific[rand.IntN(len(seasonSpecific))]
+		return &picked
+	}
+
+	// Otherwise pick from universal pool.
+	if len(universal) > 0 {
+		picked := universal[rand.IntN(len(universal))]
+		return &picked
+	}
+
+	// Final fallback: any event at all.
+	picked := SeasonalEvents[rand.IntN(len(SeasonalEvents))]
+	return &picked
 }
 
 // ---------------------------------------------------------------------------

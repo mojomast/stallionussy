@@ -151,6 +151,7 @@ type Stable struct {
 	Achievements  []Achievement `json:"achievements"`
 	TotalEarnings int64         `json:"total_earnings"`
 	TotalRaces    int64         `json:"total_races"`
+	Motto         string        `json:"motto"` // Random flavor motto assigned at creation
 }
 
 // ---------------------------------------------------------------------------
@@ -398,4 +399,36 @@ type Achievement struct {
 	Icon        string    `json:"icon"`   // emoji or ASCII art
 	Rarity      string    `json:"rarity"` // "common", "rare", "epic", "legendary"
 	UnlockedAt  time.Time `json:"unlocked_at"`
+}
+
+// ---------------------------------------------------------------------------
+// User Accounts
+// ---------------------------------------------------------------------------
+
+// User represents a player account.
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"-"` // Never sent to client
+	DisplayName  string    `json:"display_name"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ---------------------------------------------------------------------------
+// Trading
+// ---------------------------------------------------------------------------
+
+// TradeOffer represents a pending, accepted, rejected, or cancelled trade
+// between two stables for a single horse.
+type TradeOffer struct {
+	ID           string    `json:"id"`
+	HorseID      string    `json:"horse_id"`
+	HorseName    string    `json:"horse_name"`
+	FromStableID string    `json:"from_stable_id"`
+	ToStableID   string    `json:"to_stable_id"`
+	Price        int64     `json:"price"`  // in Cummies
+	Status       string    `json:"status"` // "Pending", "Accepted", "Rejected", "Cancelled"
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }

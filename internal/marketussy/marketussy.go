@@ -38,6 +38,19 @@ func NewMarket() *Market {
 }
 
 // ---------------------------------------------------------------------------
+// Import — load pre-existing data (for DB hydration on startup)
+// ---------------------------------------------------------------------------
+
+// ImportListing adds an existing listing (e.g. loaded from DB) directly into
+// the in-memory registry. If a listing with the same ID already exists it is
+// replaced.
+func (m *Market) ImportListing(listing *models.StudListing) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listings[listing.ID] = listing
+}
+
+// ---------------------------------------------------------------------------
 // Listing CRUD
 // ---------------------------------------------------------------------------
 

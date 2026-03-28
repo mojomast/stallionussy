@@ -7,6 +7,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,12 +19,15 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/mojomast/stallionussy/internal/authussy"
 	"github.com/mojomast/stallionussy/internal/commussy"
 	"github.com/mojomast/stallionussy/internal/genussy"
 	"github.com/mojomast/stallionussy/internal/marketussy"
 	"github.com/mojomast/stallionussy/internal/models"
 	"github.com/mojomast/stallionussy/internal/pedigreussy"
 	"github.com/mojomast/stallionussy/internal/racussy"
+	"github.com/mojomast/stallionussy/internal/repository"
+	"github.com/mojomast/stallionussy/internal/repository/postgres"
 	"github.com/mojomast/stallionussy/internal/stableussy"
 	"github.com/mojomast/stallionussy/internal/tournussy"
 	"github.com/mojomast/stallionussy/internal/trainussy"
@@ -35,6 +39,7 @@ import (
 
 // Server holds all subsystem references and the HTTP mux.
 type Server struct {
+	// Existing in-memory managers (business logic layer).
 	stables     *stableussy.StableManager
 	market      *marketussy.Market
 	hub         *commussy.Hub
@@ -44,11 +49,31 @@ type Server struct {
 	pedigree    *pedigreussy.PedigreeEngine
 	trades      *pedigreussy.TradeManager
 	mux         *http.ServeMux
+
+	// Persistence layer (nil when running without DB).
+	userRepo        repository.UserRepository
+	stableRepo      repository.StableRepository
+	horseRepo       repository.HorseRepository
+	raceResultRepo  repository.RaceResultRepository
+	marketRepo      repository.MarketRepository
+	tournamentRepo  repository.TournamentRepository
+	tradeRepo       repository.TradeRepository
+	achievementRepo repository.AchievementRepository
+
+	// Auth (nil when running without DB).
+	auth        *authussy.AuthService
+	authHandler *authussy.AuthHandler
 }
 
 // NewServer initializes all subsystems, seeds the legendary horses into a
 // "House of USSY" stable, registers all routes, and returns a ready Server.
-func NewServer() *Server {
+//
+// If db is non-nil, PostgreSQL repositories are created and existing data is
+// loaded from the database into the in-memory managers. All state-mutating
+// handlers then write through to the database in addition to updating
+// in-memory state. If db is nil, the server operates in pure in-memory mode
+// (backward-compatible with the pre-database setup).
+func NewServer(db *postgres.DB) *Server {
 	sm := stableussy.NewStableManager()
 	rh := tournussy.NewRaceHistory()
 
@@ -64,25 +89,67 @@ func NewServer() *Server {
 		mux:         http.NewServeMux(),
 	}
 
+	// If a DB connection is provided, wire up persistence and auth.
+	if db != nil {
+		// Create repository instances.
+		s.userRepo = postgres.NewUserRepo(db)
+		s.stableRepo = postgres.NewStableRepo(db)
+		s.horseRepo = postgres.NewHorseRepo(db)
+		s.raceResultRepo = postgres.NewRaceResultRepo(db)
+		s.marketRepo = postgres.NewMarketRepo(db)
+		s.tournamentRepo = postgres.NewTournamentRepo(db)
+		s.tradeRepo = postgres.NewTradeRepo(db)
+		s.achievementRepo = postgres.NewAchievementRepo(db)
+
+		// Create auth service.
+		jwtSecret := os.Getenv("JWT_SECRET")
+		if jwtSecret == "" {
+			jwtSecret = "stallionussy-default-secret-change-me"
+		}
+		s.auth = authussy.NewAuthService(jwtSecret, 72*time.Hour)
+
+		// Create auth handler with stable creation callback.
+		s.authHandler = authussy.NewAuthHandler(s.auth, s.userRepo, func(name, ownerID string) *models.Stable {
+			stable := s.stables.CreateStable(name, ownerID)
+			// Also persist the new stable to the database.
+			ctx := context.Background()
+			if err := s.stableRepo.CreateStable(ctx, stable); err != nil {
+				log.Printf("server: failed to persist stable %s to DB: %v", stable.ID, err)
+			}
+			return stable
+		})
+
+		// Load persisted data from DB into in-memory managers.
+		s.loadFromDB()
+	}
+
 	// Start the WebSocket hub event loop.
 	go s.hub.Run()
 
-	// Seed the canonical legendary horses into the "House of USSY" stable.
-	houseOfUSSY := s.stables.CreateStable("House of USSY", "system")
-	s.stables.SeedLegendaries(houseOfUSSY.ID)
+	// Seed legendary horses only if no stables exist yet (fresh start).
+	if len(s.stables.ListStables()) == 0 {
+		houseOfUSSY := s.stables.CreateStable("House of USSY", "system")
+		s.stables.SeedLegendaries(houseOfUSSY.ID)
 
-	// Assign traits to each legendary horse.
-	legendaryHorses := s.stables.ListHorses(houseOfUSSY.ID)
-	for _, h := range legendaryHorses {
-		// Legendaries are founders so parents are nil — AssignTraitsAtBirth
-		// handles nil parents gracefully (no parental inheritance, no
-		// anomalous/legendary eligibility from parents — but we pass the
-		// horse itself as a "sire" for legendary eligibility check since
-		// the horse IS legendary).
-		s.trainer.AssignTraitsAtBirth(h, h, nil)
+		// Assign traits to each legendary horse.
+		legendaryHorses := s.stables.ListHorses(houseOfUSSY.ID)
+		for _, h := range legendaryHorses {
+			s.trainer.AssignTraitsAtBirth(h, h, nil)
+		}
+
+		log.Printf("server: seeded 12 legendary horses into stable %q (%s)", houseOfUSSY.Name, houseOfUSSY.ID)
+
+		// Persist the newly seeded stable and horses to DB.
+		if s.stableRepo != nil {
+			ctx := context.Background()
+			if err := s.stableRepo.CreateStable(ctx, houseOfUSSY); err != nil {
+				log.Printf("server: failed to persist House of USSY stable: %v", err)
+			}
+			for _, h := range legendaryHorses {
+				s.persistHorse(ctx, h)
+			}
+		}
 	}
-
-	log.Printf("server: seeded 12 legendary horses into stable %q (%s)", houseOfUSSY.Name, houseOfUSSY.ID)
 
 	// Register all routes.
 	s.routes()
@@ -95,6 +162,11 @@ func NewServer() *Server {
 // ---------------------------------------------------------------------------
 
 func (s *Server) routes() {
+	// --- Auth (only when DB/auth is configured) ---
+	if s.authHandler != nil {
+		s.registerAuthRoutes()
+	}
+
 	// --- Stables ---
 	s.mux.HandleFunc("GET /api/stables", s.handleListStables)
 	s.mux.HandleFunc("POST /api/stables", s.handleCreateStable)
@@ -181,7 +253,14 @@ func (s *Server) routes() {
 // Start begins listening on the given address (e.g. ":8080") and serves
 // HTTP requests. It blocks until the server errors or is shut down.
 func (s *Server) Start(addr string) error {
-	handler := enableCORS(loggingMiddleware(s.mux))
+	var handler http.Handler
+	if s.auth != nil {
+		// Auth mode: CORS → AuthMiddleware → Logging → Mux
+		handler = enableCORS(s.auth.AuthMiddleware(loggingMiddleware(s.mux)))
+	} else {
+		// No-auth mode (backward compatible).
+		handler = enableCORS(loggingMiddleware(s.mux))
+	}
 	log.Printf("server: StallionUSSY listening on %s", addr)
 	return http.ListenAndServe(addr, handler)
 }
@@ -214,6 +293,10 @@ func (s *Server) handleCreateStable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stable := s.stables.CreateStable(req.Name, req.OwnerID)
+
+	// Write-through: persist stable to DB.
+	s.persistStable(r.Context(), stable)
+
 	writeJSON(w, http.StatusCreated, stable)
 }
 
@@ -321,6 +404,9 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 	// Sync horse state back to stable.
 	s.syncHorseToStable(horse)
 
+	// Write-through: persist trained horse to DB.
+	s.persistHorse(r.Context(), horse)
+
 	writeJSON(w, http.StatusCreated, session)
 }
 
@@ -353,6 +439,9 @@ func (s *Server) handleRestHorse(w http.ResponseWriter, r *http.Request) {
 	// Run a RestDay workout which reduces fatigue by 30.
 	session := s.trainer.Train(horse, models.WorkoutRecovery)
 	s.syncHorseToStable(horse)
+
+	// Write-through: persist rested horse to DB.
+	s.persistHorse(r.Context(), horse)
 
 	writeJSON(w, http.StatusCreated, session)
 }
@@ -515,6 +604,9 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "failed to add foal to stable: "+err.Error())
 		return
 	}
+
+	// Write-through: persist the new foal to DB.
+	s.persistHorse(r.Context(), foal)
 
 	log.Printf("server: bred foal %q (%s) from sire %q and mare %q into stable %s (bloodline: %.4f)",
 		foal.Name, foal.ID, sire.Name, mare.Name, req.StableID, bloodlineBonus)
@@ -693,7 +785,17 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		}
 
 		oldELO := horse.ELO
-		newELO := horse.ELO + eloDeltas[horse.ID]
+		eloDelta := eloDeltas[horse.ID]
+
+		// Trait: elo_boost (e.g. ELO Farmer) — multiply positive ELO gains by magnitude.
+		// Only applies to winners (positive delta).
+		if eloDelta > 0 {
+			if has, mag := hasTraitEffect(horse, "elo_boost"); has {
+				eloDelta *= mag
+			}
+		}
+
+		newELO := horse.ELO + eloDelta
 
 		wins := 0
 		losses := 0
@@ -718,6 +820,14 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		if share, ok := purseDistribution[entry.FinishPlace]; ok {
 			earnings = int64(float64(purse) * share)
 		}
+
+		// Trait: earnings_boost (e.g. Cummies Magnet) — multiply earnings by magnitude.
+		if earnings > 0 {
+			if has, mag := hasTraitEffect(horse, "earnings_boost"); has {
+				earnings = int64(float64(earnings) * mag)
+			}
+		}
+
 		horse.TotalEarnings += earnings
 
 		// Add earnings to the horse's stable.
@@ -749,6 +859,11 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 			CreatedAt:   time.Now(),
 		}
 		s.raceHistory.RecordResult(result)
+
+		// Write-through: persist race result and horse state to DB.
+		ctx := context.Background()
+		s.persistRaceResult(ctx, result)
+		s.persistHorse(ctx, horse)
 
 		// Sync horse state back to stable.
 		s.syncHorseToStable(horse)
@@ -814,6 +929,9 @@ func (s *Server) checkAndApplyAchievements(horse *models.Horse) {
 						stable.Achievements = append(stable.Achievements, a)
 						log.Printf("server: achievement unlocked for stable %s: %s (%s)",
 							stable.Name, a.Name, a.Description)
+
+						// Write-through: persist achievement to DB.
+						s.persistAchievement(context.Background(), stable.ID, &a)
 					}
 				}
 				return
@@ -1033,6 +1151,9 @@ func (s *Server) handleCheckHorseAchievements(w http.ResponseWriter, r *http.Req
 	for _, a := range newAchievements {
 		if !hasAchievement(stable.Achievements, a.ID) {
 			stable.Achievements = append(stable.Achievements, a)
+
+			// Write-through: persist achievement to DB.
+			s.persistAchievement(r.Context(), stable.ID, &a)
 		}
 	}
 
@@ -1080,6 +1201,9 @@ func (s *Server) handleCreateListing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	// Write-through: persist listing to DB.
+	s.persistListing(r.Context(), listing)
 
 	log.Printf("server: listed horse %q (%s) on stud market for %d cummies", horse.Name, horse.ID, req.Price)
 	writeJSON(w, http.StatusCreated, listing)
@@ -1177,6 +1301,16 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write-through: persist the new foal and update the listing (now inactive).
+	s.persistHorse(r.Context(), foal)
+	if s.marketRepo != nil {
+		// The listing is no longer active after purchase.
+		listing.Active = false
+		if err := s.marketRepo.UpdateListing(r.Context(), listing); err != nil {
+			log.Printf("server: failed to update listing %s after purchase: %v", listing.ID, err)
+		}
+	}
+
 	tx.FoalID = foal.ID
 
 	log.Printf("server: stud purchase — %s bought breeding from %s, foal %q (%s) for %d cummies (burned %d)",
@@ -1220,6 +1354,14 @@ func (s *Server) handleDelistListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write-through: mark listing inactive in DB.
+	if s.marketRepo != nil {
+		listing.Active = false
+		if err := s.marketRepo.UpdateListing(r.Context(), listing); err != nil {
+			log.Printf("server: failed to update listing %s after delist: %v", listingID, err)
+		}
+	}
+
 	log.Printf("server: delisted stud listing %s for horse %s", listingID, listing.HorseID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "delisted", "listingID": listingID})
 }
@@ -1259,6 +1401,10 @@ func (s *Server) handleCreateTournament(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tournament := s.tournaments.CreateTournament(req.Name, req.TrackType, req.Rounds, req.EntryFee)
+
+	// Write-through: persist tournament to DB.
+	s.persistTournament(r.Context(), tournament)
+
 	writeJSON(w, http.StatusCreated, tournament)
 }
 
@@ -1377,6 +1523,12 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	// Apply all post-race processing (ELO, fatigue, history, achievements).
 	s.applyPostRaceEffects(race, horses, weather)
 
+	// Write-through: persist tournament state after round.
+	updatedTournament, _ := s.tournaments.GetTournament(tournamentID)
+	if updatedTournament != nil {
+		s.persistTournament(r.Context(), updatedTournament)
+	}
+
 	// Broadcast replay.
 	go s.broadcastRaceReplay(race, narrativeIndexed)
 
@@ -1436,7 +1588,16 @@ func (s *Server) applyPostRaceEffects(race *models.Race, horses []*models.Horse,
 		}
 
 		oldELO := horse.ELO
-		newELO := horse.ELO + eloDeltas[horse.ID]
+		eloDelta := eloDeltas[horse.ID]
+
+		// Trait: elo_boost (e.g. ELO Farmer) — multiply positive ELO gains by magnitude.
+		if eloDelta > 0 {
+			if has, mag := hasTraitEffect(horse, "elo_boost"); has {
+				eloDelta *= mag
+			}
+		}
+
+		newELO := horse.ELO + eloDelta
 
 		wins := 0
 		losses := 0
@@ -1458,6 +1619,14 @@ func (s *Server) applyPostRaceEffects(race *models.Race, horses []*models.Horse,
 		if share, ok := purseDistribution[entry.FinishPlace]; ok {
 			earnings = int64(float64(race.Purse) * share)
 		}
+
+		// Trait: earnings_boost (e.g. Cummies Magnet) — multiply earnings by magnitude.
+		if earnings > 0 {
+			if has, mag := hasTraitEffect(horse, "earnings_boost"); has {
+				earnings = int64(float64(earnings) * mag)
+			}
+		}
+
 		horse.TotalEarnings += earnings
 
 		if earnings > 0 {
@@ -1486,6 +1655,11 @@ func (s *Server) applyPostRaceEffects(race *models.Race, horses []*models.Horse,
 			CreatedAt:   time.Now(),
 		}
 		s.raceHistory.RecordResult(result)
+
+		// Write-through: persist race result and horse state to DB.
+		ctx := context.Background()
+		s.persistRaceResult(ctx, result)
+		s.persistHorse(ctx, horse)
 
 		s.syncHorseToStable(horse)
 		s.checkAndApplyAchievements(horse)
@@ -1563,6 +1737,14 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Write-through: persist horse move in DB.
+	if s.horseRepo != nil {
+		ctx := r.Context()
+		if err := s.horseRepo.MoveHorse(ctx, offer.HorseID, offer.FromStable, offer.ToStable); err != nil {
+			log.Printf("server: failed to persist horse move for trade %s: %v", tradeID, err)
+		}
+	}
+
 	log.Printf("server: trade accepted — horse %s moved from stable %s to %s for %d cummies",
 		offer.HorseName, offer.FromStable, offer.ToStable, offer.Price)
 
@@ -1638,6 +1820,9 @@ func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 
 		s.syncHorseToStable(horse)
 		results = append(results, result)
+
+		// Write-through: persist aged horse state to DB.
+		s.persistHorse(r.Context(), horse)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1677,6 +1862,23 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 // Helper functions
 // ===========================================================================
+
+// hasTraitEffect checks whether the horse has at least one trait with the
+// given effect string. If found, returns (true, magnitude). If the horse has
+// multiple traits with the same effect, returns the highest magnitude.
+func hasTraitEffect(horse *models.Horse, effect string) (bool, float64) {
+	found := false
+	bestMag := 0.0
+	for _, t := range horse.Traits {
+		if t.Effect == effect {
+			if !found || t.Magnitude > bestMag {
+				bestMag = t.Magnitude
+			}
+			found = true
+		}
+	}
+	return found, bestMag
+}
 
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -1754,4 +1956,160 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 		return hj.Hijack()
 	}
 	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+}
+
+// ===========================================================================
+// Auth route registration
+// ===========================================================================
+
+// registerAuthRoutes adds authentication endpoints to the mux. Only called
+// when auth is configured (DB mode).
+func (s *Server) registerAuthRoutes() {
+	s.mux.HandleFunc("POST /api/auth/register", s.authHandler.HandleRegister)
+	s.mux.HandleFunc("POST /api/auth/login", s.authHandler.HandleLogin)
+	s.mux.HandleFunc("GET /api/auth/me", s.authHandler.HandleMe)
+}
+
+// ===========================================================================
+// Persistence helpers — write-through to PostgreSQL
+// ===========================================================================
+
+// persistHorse creates or updates a horse in the database. If CreateHorse
+// fails (e.g. duplicate key), falls back to UpdateHorse. No-op when DB is nil.
+func (s *Server) persistHorse(ctx context.Context, horse *models.Horse) {
+	if s.horseRepo == nil {
+		return
+	}
+	if err := s.horseRepo.CreateHorse(ctx, horse); err != nil {
+		if err2 := s.horseRepo.UpdateHorse(ctx, horse); err2 != nil {
+			log.Printf("server: persistHorse %s: create=%v update=%v", horse.ID, err, err2)
+		}
+	}
+}
+
+// persistStable creates or updates a stable in the database. No-op when DB is nil.
+func (s *Server) persistStable(ctx context.Context, stable *models.Stable) {
+	if s.stableRepo == nil {
+		return
+	}
+	if err := s.stableRepo.CreateStable(ctx, stable); err != nil {
+		if err2 := s.stableRepo.UpdateStable(ctx, stable); err2 != nil {
+			log.Printf("server: persistStable %s: create=%v update=%v", stable.ID, err, err2)
+		}
+	}
+}
+
+// persistRaceResult writes a race result to the database. No-op when DB is nil.
+func (s *Server) persistRaceResult(ctx context.Context, result *models.RaceResult) {
+	if s.raceResultRepo == nil {
+		return
+	}
+	if err := s.raceResultRepo.RecordResult(ctx, result); err != nil {
+		log.Printf("server: persistRaceResult race=%s horse=%s: %v", result.RaceID, result.HorseID, err)
+	}
+}
+
+// persistListing creates or updates a market listing in the database. No-op when DB is nil.
+func (s *Server) persistListing(ctx context.Context, listing *models.StudListing) {
+	if s.marketRepo == nil {
+		return
+	}
+	if err := s.marketRepo.CreateListing(ctx, listing); err != nil {
+		if err2 := s.marketRepo.UpdateListing(ctx, listing); err2 != nil {
+			log.Printf("server: persistListing %s: create=%v update=%v", listing.ID, err, err2)
+		}
+	}
+}
+
+// persistTournament creates or updates a tournament in the database. No-op when DB is nil.
+func (s *Server) persistTournament(ctx context.Context, tournament *models.Tournament) {
+	if s.tournamentRepo == nil {
+		return
+	}
+	if err := s.tournamentRepo.CreateTournament(ctx, tournament); err != nil {
+		if err2 := s.tournamentRepo.UpdateTournament(ctx, tournament); err2 != nil {
+			log.Printf("server: persistTournament %s: create=%v update=%v", tournament.ID, err, err2)
+		}
+	}
+}
+
+// persistAchievement writes an achievement to the database. No-op when DB is nil.
+func (s *Server) persistAchievement(ctx context.Context, stableID string, achievement *models.Achievement) {
+	if s.achievementRepo == nil {
+		return
+	}
+	if err := s.achievementRepo.AddAchievement(ctx, stableID, achievement); err != nil {
+		log.Printf("server: persistAchievement stable=%s achievement=%s: %v", stableID, achievement.ID, err)
+	}
+}
+
+// ===========================================================================
+// Database loading — hydrate in-memory state from PostgreSQL on startup
+// ===========================================================================
+
+// loadFromDB loads stables, horses, market listings, and achievements from
+// the database into the in-memory managers. Called from NewServer when a DB
+// connection is provided.
+func (s *Server) loadFromDB() {
+	ctx := context.Background()
+
+	// 1. Load all stables.
+	dbStables, err := s.stableRepo.ListStables(ctx)
+	if err != nil {
+		log.Printf("server: loadFromDB: failed to list stables: %v", err)
+		return
+	}
+
+	for _, stable := range dbStables {
+		// Ensure non-nil slices for in-memory use.
+		if stable.Horses == nil {
+			stable.Horses = []models.Horse{}
+		}
+		if stable.Achievements == nil {
+			stable.Achievements = []models.Achievement{}
+		}
+
+		// Load horses for this stable. The horse repo queries by owner_id,
+		// so we pass the stable's OwnerID.
+		dbHorses, err := s.horseRepo.ListHorsesByStable(ctx, stable.OwnerID)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to list horses for stable %s (owner %s): %v",
+				stable.ID, stable.OwnerID, err)
+		} else {
+			for _, h := range dbHorses {
+				stable.Horses = append(stable.Horses, *h)
+			}
+		}
+
+		// Load achievements for this stable.
+		dbAchievements, err := s.achievementRepo.GetAchievements(ctx, stable.ID)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load achievements for stable %s: %v", stable.ID, err)
+		} else {
+			for _, a := range dbAchievements {
+				stable.Achievements = append(stable.Achievements, *a)
+			}
+		}
+
+		// Import into the in-memory manager (registers horses globally too).
+		s.stables.ImportStable(stable)
+
+		log.Printf("server: loadFromDB: loaded stable %q (%s) with %d horses, %d achievements",
+			stable.Name, stable.ID, len(stable.Horses), len(stable.Achievements))
+	}
+
+	// 2. Load active market listings.
+	dbListings, err := s.marketRepo.ListActiveListings(ctx)
+	if err != nil {
+		log.Printf("server: loadFromDB: failed to list market listings: %v", err)
+	} else {
+		for _, listing := range dbListings {
+			s.market.ImportListing(listing)
+		}
+		if len(dbListings) > 0 {
+			log.Printf("server: loadFromDB: loaded %d active market listings", len(dbListings))
+		}
+	}
+
+	log.Printf("server: loadFromDB: completed — %d stables loaded from database", len(dbStables))
 }

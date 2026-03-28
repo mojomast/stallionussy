@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -396,6 +397,13 @@ var tournamentAdjectives = []string{
 	"Cloud-Native", "Zero-Downtime", "Uncontained", "Recursive",
 	"Fermented", "Asymptotic", "Haunted-Adjacent", "Overclocked",
 	"Sourdough-Infused", "Ethernet-Blessed", "Defragmented", "Unbothered",
+	// ---- Batch 2: Even more adjectives (Ussyverse deep cuts) ----
+	"Tax-Exempt", "Probiotic", "Load-Balanced", "Mildly-Haunted",
+	"Dry-Aged", "Hyperthreaded", "Sapphically-Charged", "Unpatched",
+	"Free-Range", "Turbo-Blessed", "Non-Euclidean", "Bluetooth-Enabled",
+	"Triple-Fermented", "Ketogenic", "Bureaucratically-Approved",
+	"Poorly-Documented", "Self-Replicating", "Microserviced",
+	"Glitch-Hardened", "Oat-Milk-Powered",
 }
 
 var tournamentNouns = []string{
@@ -411,6 +419,12 @@ var tournamentNouns = []string{
 	"Singularity", "Sacrament", "Firmware", "Stampede",
 	"Inquisition", "Symposium", "Referendum", "Exorcism",
 	"Cummification", "Rebuke",
+	// ---- Batch 2: Even more nouns (Ussyverse deep cuts) ----
+	"Baptism", "Rollback", "Stampede", "Confessional",
+	"Calibration", "Recklessness", "Tribunal", "Defragmentation",
+	"Transfiguration", "Benchmark", "Purification", "Shakedown",
+	"Overflow", "Reconciliation", "Bloodmoon", "Pilgrimage",
+	"Manifesto", "Thunderclap", "Incantation", "Firmware-Update",
 }
 
 var tournamentPlaces = []string{
@@ -434,6 +448,17 @@ var tournamentPlaces = []string{
 	"the Thunderussy Arena", "the Cottagecore Commune",
 	"Margaret Chen's Secret Garden", "the Recursive Meadow",
 	"the Anomalous Paddock Overflow", "the Sourdough Fermenting Room",
+	// ---- Batch 2: Even more places (Ussyverse deep cuts) ----
+	"Jason Derulo's Dressing Room (he said no)", "the Sentient Yogurt Vat",
+	"the Decommissioned Goroutine Graveyard", "the Forbidden Flannel Archive",
+	"the Sappho Scale Calibration Lab", "Agent Mothman's Rooftop Perch",
+	"the Oat Milk Hot Springs", "the B.U.R.P. Evidence Locker",
+	"STARDUSTUSSY's Temporal Lobby", "the Cummies Federal Reserve",
+	"the Hauntedussy Gift Shop", "Margaret Chen's Forbidden Genome Vault",
+	"the Ethernet Cathedral Crypt", "Pastor Router's Confession Booth",
+	"the Quantum Hay Bale Storage", "the Docker Container Pasture",
+	"the Yogurt-Stained Amphitheater", "E-008's Therapy Office",
+	"the Cottagecore War Room", "the Sprintussy Victory Lap Lounge",
 }
 
 // generateTournamentName creates an absurd tournament name from templates.
@@ -1305,11 +1330,10 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 	}
 
 	// comeback_kid — Win after being in last place at 75% mark.
-	// This requires tick log analysis which RaceResult doesn't carry.
-	// The caller should check this separately using race tick logs and call
-	// unlockAchievement directly. We leave the definition in AllAchievements
-	// but can't auto-detect it here without tick data.
-	// Placeholder: skip automated detection.
+	// This requires tick-log analysis which RaceResult doesn't carry.
+	// The race simulation engine should grant this directly when it detects
+	// a horse was in last place at the 75% distance mark and went on to win.
+	// NOTE: Cannot auto-detect from RaceResult alone — needs tick data.
 
 	// elder_statesman — Win a race at age 12+
 	if !hasAchievement(existing, "elder_statesman") && horse.Age >= 12 && stats.Wins >= 1 {
@@ -1318,6 +1342,261 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 		// current age. This is a reasonable approximation — if the horse is
 		// currently 12+ and has wins, at least one win happened at 12+.
 		unlocked = append(unlocked, unlockAchievement("elder_statesman"))
+	}
+
+	// -----------------------------------------------------------------------
+	// Track Mastery Achievements
+	// -----------------------------------------------------------------------
+
+	// frost_king — Win 5 Frostussy races
+	if !hasAchievement(existing, "frost_king") {
+		frostWins := 0
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackFrostussy && r.FinishPlace == 1 {
+				frostWins++
+			}
+		}
+		if frostWins >= 5 {
+			unlocked = append(unlocked, unlockAchievement("frost_king"))
+		}
+	}
+
+	// thunder_god — Win 5 Thunderussy races
+	if !hasAchievement(existing, "thunder_god") {
+		thunderWins := 0
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackThunderussy && r.FinishPlace == 1 {
+				thunderWins++
+			}
+		}
+		if thunderWins >= 5 {
+			unlocked = append(unlocked, unlockAchievement("thunder_god"))
+		}
+	}
+
+	// haunted_survivor — Win 3 Hauntedussy races
+	if !hasAchievement(existing, "haunted_survivor") {
+		hauntedWins := 0
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackHauntedussy && r.FinishPlace == 1 {
+				hauntedWins++
+			}
+		}
+		if hauntedWins >= 3 {
+			unlocked = append(unlocked, unlockAchievement("haunted_survivor"))
+		}
+	}
+
+	// sprint_master — Win 10 Sprintussy races
+	if !hasAchievement(existing, "sprint_master") {
+		sprintWins := 0
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackSprintussy && r.FinishPlace == 1 {
+				sprintWins++
+			}
+		}
+		if sprintWins >= 10 {
+			unlocked = append(unlocked, unlockAchievement("sprint_master"))
+		}
+	}
+
+	// grind_master — Win 10 Grindussy races
+	if !hasAchievement(existing, "grind_master") {
+		grindWins := 0
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackGrindussy && r.FinishPlace == 1 {
+				grindWins++
+			}
+		}
+		if grindWins >= 10 {
+			unlocked = append(unlocked, unlockAchievement("grind_master"))
+		}
+	}
+
+	// all_tracks — Win on all 6 track types
+	if !hasAchievement(existing, "all_tracks") {
+		trackWinsAll := make(map[models.TrackType]bool)
+		for _, r := range horseResults {
+			if r.FinishPlace == 1 {
+				trackWinsAll[r.TrackType] = true
+			}
+		}
+		if trackWinsAll[models.TrackSprintussy] && trackWinsAll[models.TrackGrindussy] &&
+			trackWinsAll[models.TrackMudussy] && trackWinsAll[models.TrackThunderussy] &&
+			trackWinsAll[models.TrackFrostussy] && trackWinsAll[models.TrackHauntedussy] {
+			unlocked = append(unlocked, unlockAchievement("all_tracks"))
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Weather Achievements
+	// -----------------------------------------------------------------------
+
+	// storm_chaser — Win a race in Stormy weather
+	if !hasAchievement(existing, "storm_chaser") {
+		for _, r := range horseResults {
+			if r.FinishPlace == 1 && r.Weather == string(models.WeatherStormy) {
+				unlocked = append(unlocked, unlockAchievement("storm_chaser"))
+				break
+			}
+		}
+	}
+
+	// fog_runner — Win in Foggy weather
+	if !hasAchievement(existing, "fog_runner") {
+		for _, r := range horseResults {
+			if r.FinishPlace == 1 && r.Weather == string(models.WeatherFoggy) {
+				unlocked = append(unlocked, unlockAchievement("fog_runner"))
+				break
+			}
+		}
+	}
+
+	// heat_stroke — Win in Scorching weather
+	if !hasAchievement(existing, "heat_stroke") {
+		for _, r := range horseResults {
+			if r.FinishPlace == 1 && r.Weather == string(models.WeatherScorching) {
+				unlocked = append(unlocked, unlockAchievement("heat_stroke"))
+				break
+			}
+		}
+	}
+
+	// weather_master — Win in all 6 weather types
+	if !hasAchievement(existing, "weather_master") {
+		weatherWins := make(map[string]bool)
+		for _, r := range horseResults {
+			if r.FinishPlace == 1 {
+				weatherWins[r.Weather] = true
+			}
+		}
+		if weatherWins[string(models.WeatherClear)] && weatherWins[string(models.WeatherRainy)] &&
+			weatherWins[string(models.WeatherStormy)] && weatherWins[string(models.WeatherFoggy)] &&
+			weatherWins[string(models.WeatherScorching)] && weatherWins[string(models.WeatherHaunted)] {
+			unlocked = append(unlocked, unlockAchievement("weather_master"))
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Lore Achievements
+	// -----------------------------------------------------------------------
+
+	// mittens_approved — Win 3+ races with a horse that has INT AA
+	if !hasAchievement(existing, "mittens_approved") && stats.Wins >= 3 {
+		if gene, ok := horse.Genome[models.GeneINT]; ok && gene.Express() == "AA" {
+			unlocked = append(unlocked, unlockAchievement("mittens_approved"))
+		}
+	}
+
+	// derulo_moment — Horse panics 3+ times in a single race and still finishes.
+	// Approximation: horse has TMP BB (highly volatile / panic-prone) and has
+	// finished at least one race. TMP BB horses have maximum panic chance, so
+	// surviving a race with multiple panics is expected for them.
+	if !hasAchievement(existing, "derulo_moment") && len(horseResults) > 0 {
+		if gene, ok := horse.Genome[models.GeneTMP]; ok && gene.Express() == "BB" {
+			unlocked = append(unlocked, unlockAchievement("derulo_moment"))
+		}
+	}
+
+	// burp_investigated — Race on Hauntedussy with E-008's Chosen present.
+	// Approximation: check if horse has raced on Hauntedussy and any other
+	// entry in that race has "E-008" or "Yogurt" in their name.
+	if !hasAchievement(existing, "burp_investigated") {
+		for _, r := range horseResults {
+			if r.TrackType == models.TrackHauntedussy {
+				raceResults := history.GetRaceResults(r.RaceID)
+				for _, rr := range raceResults {
+					if rr.HorseID != horse.ID {
+						nameLower := strings.ToLower(rr.HorseName)
+						if strings.Contains(nameLower, "e-008") || strings.Contains(nameLower, "yogurt") {
+							unlocked = append(unlocked, unlockAchievement("burp_investigated"))
+							break
+						}
+					}
+				}
+				if hasAchievement(unlocked, "burp_investigated") {
+					break
+				}
+			}
+		}
+	}
+
+	// pastor_blessing — Win a race with 0 panic events.
+	// Approximation: TMP AA (calm temperament = 0% panic) and won a race.
+	if !hasAchievement(existing, "pastor_blessing") && stats.Wins >= 1 {
+		if gene, ok := horse.Genome[models.GeneTMP]; ok && gene.Express() == "AA" {
+			unlocked = append(unlocked, unlockAchievement("pastor_blessing"))
+		}
+	}
+
+	// geoffrussy_certified — Complete a race in under 100 ticks.
+	// Approximation: fast race time relative to distance. We use a heuristic
+	// of FinalTime < (distance_meters * 3ms) as a proxy for sub-100-tick
+	// completion, since each tick represents ~distance/100 progress at speed.
+	// For Sprintussy (800m): < 2.4s, Hauntedussy (666m): < 2.0s, etc.
+	if !hasAchievement(existing, "geoffrussy_certified") {
+		for _, r := range horseResults {
+			if r.FinalTime > 0 && r.Distance > 0 {
+				// Threshold: approximately 3ms per meter of distance.
+				threshold := time.Duration(r.Distance) * 3 * time.Millisecond
+				if r.FinalTime < threshold {
+					unlocked = append(unlocked, unlockAchievement("geoffrussy_certified"))
+					break
+				}
+			}
+		}
+	}
+
+	// sappho_perfect — Win a race with a horse that has all AA genome
+	if !hasAchievement(existing, "sappho_perfect") && stats.Wins >= 1 {
+		allAA := true
+		for _, geneType := range models.AllGeneTypes {
+			if gene, ok := horse.Genome[geneType]; !ok || gene.Express() != "AA" {
+				allAA = false
+				break
+			}
+		}
+		if allAA {
+			unlocked = append(unlocked, unlockAchievement("sappho_perfect"))
+		}
+	}
+
+	// yogurt_whisperer — Breed a foal from E-008's Chosen (Lot 6).
+	// Check stable for any horse whose SireID or MareID matches a LotNumber 6 horse.
+	if !hasAchievement(existing, "yogurt_whisperer") && stable != nil {
+		// Build a set of IDs for Lot 6 horses.
+		lot6IDs := make(map[string]bool)
+		for _, h := range stable.Horses {
+			if h.LotNumber == 6 {
+				lot6IDs[h.ID] = true
+			}
+		}
+		if len(lot6IDs) > 0 {
+			for _, h := range stable.Horses {
+				if h.Generation > 0 && (lot6IDs[h.SireID] || lot6IDs[h.MareID]) {
+					unlocked = append(unlocked, unlockAchievement("yogurt_whisperer"))
+					break
+				}
+			}
+		}
+	}
+
+	// stardustussy_vision — Win 3 races with a Lot 11 descendant.
+	// Check if the current horse has LotNumber 11 or descends from a Lot 11
+	// horse (SireID or MareID matches a Lot 11 horse in the stable), and has 3+ wins.
+	if !hasAchievement(existing, "stardustussy_vision") && stats.Wins >= 3 && stable != nil {
+		isLot11Descendant := horse.LotNumber == 11
+		if !isLot11Descendant {
+			for _, h := range stable.Horses {
+				if h.LotNumber == 11 && (h.ID == horse.SireID || h.ID == horse.MareID) {
+					isLot11Descendant = true
+					break
+				}
+			}
+		}
+		if isLot11Descendant {
+			unlocked = append(unlocked, unlockAchievement("stardustussy_vision"))
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -1367,11 +1646,13 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 			}
 		}
 
-		// tournament_winner — Win a tournament (checked externally, but we can
-		// see if any horse in the stable has a tournament win — for now this
-		// is best checked by the caller after tournament completion).
-		// Placeholder: we check if any horse has enough wins/earnings to suggest
-		// tournament victory. Callers should explicitly grant this.
+		// tournament_winner — Win a tournament.
+		// This achievement should be granted directly by the tournament system
+		// (TournamentManager) when a tournament finishes and the winner is
+		// determined. Cannot be auto-detected from RaceResult/HorseStats alone
+		// because tournament standings are computed externally.
+		// NOTE: Grant via direct call to unlockAchievement("tournament_winner")
+		// in the tournament completion handler.
 
 		// full_stable — Own 20+ horses
 		if !hasAchievement(existing, "full_stable") && len(stable.Horses) >= 20 {
@@ -1396,6 +1677,183 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 				}
 			}
 		}
+
+		// -------------------------------------------------------------------
+		// Breeding Achievements
+		// -------------------------------------------------------------------
+
+		// genetic_disaster — Breed a foal with all BB genes
+		if !hasAchievement(existing, "genetic_disaster") {
+			for _, h := range stable.Horses {
+				if h.Generation > 0 {
+					allBB := true
+					for _, geneType := range models.AllGeneTypes {
+						if gene, ok := h.Genome[geneType]; !ok || gene.Express() != "BB" {
+							allBB = false
+							break
+						}
+					}
+					if allBB {
+						unlocked = append(unlocked, unlockAchievement("genetic_disaster"))
+						break
+					}
+				}
+			}
+		}
+
+		// super_foal — Breed a foal with fitness ceiling > 0.95
+		if !hasAchievement(existing, "super_foal") {
+			for _, h := range stable.Horses {
+				if h.Generation > 0 && h.FitnessCeiling > 0.95 {
+					unlocked = append(unlocked, unlockAchievement("super_foal"))
+					break
+				}
+			}
+		}
+
+		// inbreeding_moment — Breed horses with a common grandparent.
+		// Check if any horse in the stable has a sire and mare that share a
+		// parent (i.e., the foal's paternal and maternal grandparents overlap).
+		if !hasAchievement(existing, "inbreeding_moment") {
+			// Build parent lookup: horseID -> (sireID, mareID)
+			parentMap := make(map[string][2]string) // horseID -> [sireID, mareID]
+			for _, h := range stable.Horses {
+				if h.SireID != "" || h.MareID != "" {
+					parentMap[h.ID] = [2]string{h.SireID, h.MareID}
+				}
+			}
+			for _, h := range stable.Horses {
+				if h.Generation > 0 && h.SireID != "" && h.MareID != "" {
+					sireParents := parentMap[h.SireID]
+					mareParents := parentMap[h.MareID]
+					// Collect all grandparent IDs from the sire side.
+					sireGrandparents := make(map[string]bool)
+					if sireParents[0] != "" {
+						sireGrandparents[sireParents[0]] = true
+					}
+					if sireParents[1] != "" {
+						sireGrandparents[sireParents[1]] = true
+					}
+					// Check if any mare-side grandparent overlaps.
+					if len(sireGrandparents) > 0 {
+						if (mareParents[0] != "" && sireGrandparents[mareParents[0]]) ||
+							(mareParents[1] != "" && sireGrandparents[mareParents[1]]) {
+							unlocked = append(unlocked, unlockAchievement("inbreeding_moment"))
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// generation_5 — Have a generation 5+ horse
+		if !hasAchievement(existing, "generation_5") {
+			for _, h := range stable.Horses {
+				if h.Generation >= 5 {
+					unlocked = append(unlocked, unlockAchievement("generation_5"))
+					break
+				}
+			}
+		}
+
+		// mutation_witnessed — Breed a foal that gets a mutation.
+		// Check for any bred horse (Generation > 0) with MUT gene expressing AA.
+		if !hasAchievement(existing, "mutation_witnessed") {
+			for _, h := range stable.Horses {
+				if h.Generation > 0 {
+					if gene, ok := h.Genome[models.GeneMUT]; ok && gene.Express() == "AA" {
+						unlocked = append(unlocked, unlockAchievement("mutation_witnessed"))
+						break
+					}
+				}
+			}
+		}
+
+		// -------------------------------------------------------------------
+		// Racing Records
+		// -------------------------------------------------------------------
+
+		// total_wins_50 — 50 total wins across all horses in the stable
+		if !hasAchievement(existing, "total_wins_50") {
+			totalStableWins := 0
+			for _, h := range stable.Horses {
+				totalStableWins += h.Wins
+			}
+			if totalStableWins >= 50 {
+				unlocked = append(unlocked, unlockAchievement("total_wins_50"))
+			}
+		}
+
+		// total_races_200 — 200 total races across the stable
+		if !hasAchievement(existing, "total_races_200") && stable.TotalRaces >= 200 {
+			unlocked = append(unlocked, unlockAchievement("total_races_200"))
+		}
+
+		// elo_2000 — Any horse reaches 2000 ELO
+		if !hasAchievement(existing, "elo_2000") {
+			for _, h := range stable.Horses {
+				if h.ELO >= 2000 || h.PeakELO >= 2000 {
+					unlocked = append(unlocked, unlockAchievement("elo_2000"))
+					break
+				}
+			}
+		}
+
+		// elo_floor — Any horse drops below 800 ELO
+		if !hasAchievement(existing, "elo_floor") {
+			for _, h := range stable.Horses {
+				if h.ELO < 800 {
+					unlocked = append(unlocked, unlockAchievement("elo_floor"))
+					break
+				}
+			}
+		}
+
+		// losing_streak_10 — 10 losses in a row (any horse in the stable)
+		if !hasAchievement(existing, "losing_streak_10") {
+			for _, h := range stable.Horses {
+				hStats := history.GetHorseStats(h.ID)
+				if hStats.CurrentStreak <= -10 {
+					unlocked = append(unlocked, unlockAchievement("losing_streak_10"))
+					break
+				}
+			}
+		}
+
+		// -------------------------------------------------------------------
+		// Economy Achievements
+		// -------------------------------------------------------------------
+
+		// big_spender — Spend 100,000 cummies on stud fees.
+		// Approximation: TotalEarnings - current Cummies > 100,000 implies
+		// at least that much was spent. This is imperfect (earnings can be
+		// spent on other things) but is the best heuristic without dedicated
+		// spending tracking.
+		if !hasAchievement(existing, "big_spender") {
+			spent := stable.TotalEarnings - stable.Cummies
+			if spent >= 100_000 {
+				unlocked = append(unlocked, unlockAchievement("big_spender"))
+			}
+		}
+
+		// first_sale — List your first horse on the stud market.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the server code that handles stud
+		// market listing creation (e.g., in marketussy or the API handler).
+		// NOTE: Grant via direct call to unlockAchievement("first_sale") when
+		// a player creates their first StudListing.
+
+		// cummies_earned_100k — Earn 100,000 total cummies from races
+		if !hasAchievement(existing, "cummies_earned_100k") && stable.TotalEarnings >= 100_000 {
+			unlocked = append(unlocked, unlockAchievement("cummies_earned_100k"))
+		}
+
+		// market_mogul — Complete 10 stud market transactions.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the server code that handles stud
+		// market transaction completion (e.g., in marketussy or the API handler).
+		// NOTE: Grant via direct call to unlockAchievement("market_mogul") when
+		// a player completes their 10th MarketTransaction.
 	}
 
 	return unlocked

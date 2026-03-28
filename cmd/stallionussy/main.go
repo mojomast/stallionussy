@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -23,6 +24,8 @@ import (
 	"github.com/mojomast/stallionussy/internal/nameussy"
 	"github.com/mojomast/stallionussy/internal/pedigreussy"
 	"github.com/mojomast/stallionussy/internal/racussy"
+	"github.com/mojomast/stallionussy/internal/repository"
+	"github.com/mojomast/stallionussy/internal/repository/postgres"
 	"github.com/mojomast/stallionussy/internal/server"
 	"github.com/mojomast/stallionussy/internal/stableussy"
 	"github.com/mojomast/stallionussy/internal/tournussy"
@@ -126,6 +129,31 @@ func main() {
 // Server mode
 // ---------------------------------------------------------------------------
 
+// defaultDatabaseURL is the fallback PostgreSQL connection string when
+// the DATABASE_URL environment variable is not set.
+const defaultDatabaseURL = "postgres://stallionussy:h0rs3ussy420@localhost/stallionussy?sslmode=disable"
+
+// connectDB establishes a PostgreSQL connection and runs schema migrations.
+// Returns the *postgres.DB (caller must Close) or nil + error.
+func connectDB() (*postgres.DB, error) {
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		connStr = defaultDatabaseURL
+	}
+
+	db, err := postgres.New(connStr)
+	if err != nil {
+		return nil, fmt.Errorf("connect to database: %w", err)
+	}
+
+	if err := repository.RunMigrations(db.GetDB()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+
+	return db, nil
+}
+
 // runServe starts the HTTP API server on the given port.
 func runServe(port string) {
 	fmt.Print(banner)
@@ -134,7 +162,16 @@ func runServe(port string) {
 	addr := ":" + port
 	fmt.Printf("Starting StallionUSSY server on %s ...\n", addr)
 
-	srv := server.NewServer()
+	// Connect to PostgreSQL and run migrations.
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Close()
+	log.Println("Database connected and migrations applied.")
+
+	// Create server with DB — the server package will be updated to accept it.
+	srv := server.NewServer(db)
 	if err := srv.Start(addr); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
@@ -154,12 +191,90 @@ type cliState struct {
 	pedigree    *pedigreussy.PedigreeEngine
 	trades      *pedigreussy.TradeManager
 	season      int // current season counter
+
+	// Persistence repositories — nil if database is not available.
+	// When non-nil, mutations are written through to PostgreSQL.
+	horseRepo       repository.HorseRepository
+	stableRepo      repository.StableRepository
+	raceResultRepo  repository.RaceResultRepository
+	marketRepo      repository.MarketRepository
+	achievementRepo repository.AchievementRepository
+}
+
+// ---------------------------------------------------------------------------
+// Persistence helpers — nil-safe, best-effort write-through to PostgreSQL.
+// These log warnings on failure but never stop the CLI from functioning.
+// ---------------------------------------------------------------------------
+
+// persistHorse writes the current state of a horse to the database.
+// Safe to call when horseRepo is nil (DB unavailable).
+func (s *cliState) persistHorse(horse *models.Horse) {
+	if s.horseRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	// Try update first; if the horse doesn't exist yet, create it.
+	if err := s.horseRepo.UpdateHorse(ctx, horse); err != nil {
+		// Attempt a create in case this is a new horse.
+		if createErr := s.horseRepo.CreateHorse(ctx, horse); createErr != nil {
+			log.Printf("[DB] Warning: failed to persist horse %s: update=%v, create=%v", horse.ID, err, createErr)
+		}
+	}
+}
+
+// persistStable writes the current state of a stable to the database.
+// Safe to call when stableRepo is nil (DB unavailable).
+func (s *cliState) persistStable(stable *models.Stable) {
+	if s.stableRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	if err := s.stableRepo.UpdateStable(ctx, stable); err != nil {
+		if createErr := s.stableRepo.CreateStable(ctx, stable); createErr != nil {
+			log.Printf("[DB] Warning: failed to persist stable %s: update=%v, create=%v", stable.ID, err, createErr)
+		}
+	}
+}
+
+// persistRaceResult writes a race result to the database.
+// Safe to call when raceResultRepo is nil (DB unavailable).
+func (s *cliState) persistRaceResult(result *models.RaceResult) {
+	if s.raceResultRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	if err := s.raceResultRepo.RecordResult(ctx, result); err != nil {
+		log.Printf("[DB] Warning: failed to persist race result for horse %s: %v", result.HorseID, err)
+	}
+}
+
+// persistAchievement writes a newly unlocked achievement to the database.
+// Safe to call when achievementRepo is nil (DB unavailable).
+func (s *cliState) persistAchievement(stableID string, achievement *models.Achievement) {
+	if s.achievementRepo == nil {
+		return
+	}
+	ctx := context.Background()
+	if err := s.achievementRepo.AddAchievement(ctx, stableID, achievement); err != nil {
+		log.Printf("[DB] Warning: failed to persist achievement %s for stable %s: %v", achievement.ID, stableID, err)
+	}
 }
 
 // runCLI enters the interactive CLI loop.
 func runCLI() {
 	fmt.Print(banner)
 	fmt.Println()
+
+	// Attempt to connect to PostgreSQL for persistence.
+	// If the connection fails, the CLI continues in memory-only mode.
+	db, dbErr := connectDB()
+	if dbErr != nil {
+		log.Printf("Warning: Could not connect to database: %v", dbErr)
+		log.Printf("Running in memory-only mode (data will not be persisted).")
+	} else {
+		defer db.Close()
+		log.Println("Database connected — CLI state will be persisted to PostgreSQL.")
+	}
 
 	sm := stableussy.NewStableManager()
 	raceHistory := tournussy.NewRaceHistory()
@@ -173,6 +288,15 @@ func runCLI() {
 		pedigree:    pedigreussy.NewPedigreeEngine(sm.GetHorse),
 		trades:      pedigreussy.NewTradeManager(),
 		season:      0,
+	}
+
+	// Wire up persistence repos if DB is available.
+	if db != nil {
+		state.horseRepo = postgres.NewHorseRepo(db)
+		state.stableRepo = postgres.NewStableRepo(db)
+		state.raceResultRepo = postgres.NewRaceResultRepo(db)
+		state.marketRepo = postgres.NewMarketRepo(db)
+		state.achievementRepo = postgres.NewAchievementRepo(db)
 	}
 
 	fmt.Println("Welcome to StallionUSSY CLI. Type 'help' for commands.")
@@ -300,9 +424,13 @@ func cmdSeed(state *cliState) {
 	}
 	fmt.Println()
 	fmt.Println("Your stable is ready. The yogurt approves.")
-}
 
-// cmdListStables prints all stables.
+	// Persist the new stable and all seeded horses to the database.
+	state.persistStable(stable)
+	for _, h := range horses {
+		state.persistHorse(h)
+	}
+} // cmdListStables prints all stables.
 func cmdListStables(state *cliState) {
 	stables := state.sm.ListStables()
 	if len(stables) == 0 {
@@ -616,6 +744,9 @@ func cmdBreed(state *cliState, args []string) {
 	fmt.Printf("  Current Fitness: %.4f\n", foal.CurrentFitness)
 	fmt.Printf("  Genome:          %s\n", genussy.GenomeToString(foal.Genome))
 	fmt.Printf("  ELO:             %.0f\n", foal.ELO)
+
+	// Persist the new foal to the database.
+	state.persistHorse(foal)
 }
 
 // cmdPedigree displays an ASCII pedigree tree for a horse.
@@ -754,6 +885,9 @@ func cmdQuickRace(state *cliState) {
 		}
 		_ = state.sm.AddHorseToStable(stableID, h)
 		horses[i] = h
+
+		// Persist newly generated horse to DB.
+		state.persistHorse(h)
 	}
 
 	// Pick a random track.
@@ -914,6 +1048,9 @@ func cmdTrain(state *cliState, args []string) {
 		fmt.Println()
 		fmt.Println("  Fatigue is HIGH. Consider a rest day to avoid injury.")
 	}
+
+	// Persist trained horse state to DB.
+	state.persistHorse(h)
 }
 
 // cmdRest is a shortcut for training with RestDay.
@@ -940,6 +1077,9 @@ func cmdRest(state *cliState, args []string) {
 	fmt.Printf("  XP Gained:  %.1f\n", session.XPGained)
 	fmt.Printf("  Fitness:    %.4f → %.4f\n", session.FitnessBefore, session.FitnessAfter)
 	fmt.Printf("  Fatigue:    %.0f/100 (recovered!)\n", h.Fatigue)
+
+	// Persist rested horse state to DB.
+	state.persistHorse(h)
 }
 
 // parseWorkoutType converts a user string to a WorkoutType constant.
@@ -1097,6 +1237,14 @@ func cmdAccept(state *cliState, args []string) {
 	fmt.Printf("Trade accepted!\n")
 	fmt.Printf("  Horse:       %s\n", offer.HorseName)
 	fmt.Printf("  Price paid:  %d Cummies\n", offer.Price)
+
+	// Persist updated stables after trade.
+	if fromStable, err := state.sm.GetStable(offer.FromStable); err == nil {
+		state.persistStable(fromStable)
+	}
+	if toStable, err := state.sm.GetStable(offer.ToStable); err == nil {
+		state.persistStable(toStable)
+	}
 }
 
 // cmdReject rejects a pending trade offer.
@@ -1386,6 +1534,7 @@ func cmdAdvance(state *cliState) {
 			if h.Retired {
 				msg := "Age caught up"
 				fmt.Printf("    *** RETIRED: %s — %s ***\n", h.Name, msg)
+				state.persistHorse(h)
 				continue
 			}
 
@@ -1395,6 +1544,9 @@ func cmdAdvance(state *cliState) {
 				trainussy.RetireHorse(h, reason)
 				fmt.Printf("    *** RETIRED: %s — %s ***\n", h.Name, reason)
 			}
+
+			// Persist aged horse state to DB.
+			state.persistHorse(h)
 		}
 	}
 
@@ -1519,6 +1671,9 @@ func runAndDisplayRace(state *cliState, horses []*models.Horse, trackType models
 			h.Fatigue = 100
 		}
 		fmt.Printf("  %-30s  +%.0f fatigue → %.0f/100\n", h.Name, fatigue, h.Fatigue)
+
+		// Persist horse after fatigue update.
+		state.persistHorse(h)
 	}
 
 	// --- Achievement check ---
@@ -1614,8 +1769,15 @@ func updatePostRaceStats(state *cliState, race *models.Race, horses []*models.Ho
 	}
 
 	// Apply accumulated deltas.
+	// Trait: elo_boost (e.g. ELO Farmer) — multiply positive ELO gains by magnitude.
 	for _, ei := range entries {
-		ei.horse.ELO = eloBefore[ei.horse.ID] + eloDelta[ei.horse.ID]
+		delta := eloDelta[ei.horse.ID]
+		if delta > 0 {
+			if has, mag := hasTraitEffect(ei.horse, "elo_boost"); has {
+				delta *= mag
+			}
+		}
+		ei.horse.ELO = eloBefore[ei.horse.ID] + delta
 	}
 
 	// Distribute purse earnings.
@@ -1637,6 +1799,14 @@ func updatePostRaceStats(state *cliState, race *models.Race, horses []*models.Ho
 		if placeIdx >= 0 && placeIdx < len(purseSplit) {
 			earnings = purseSplit[placeIdx]
 		}
+
+		// Trait: earnings_boost (e.g. Cummies Magnet) — multiply earnings by magnitude.
+		if earnings > 0 {
+			if has, mag := hasTraitEffect(ei.horse, "earnings_boost"); has {
+				earnings = int64(float64(earnings) * mag)
+			}
+		}
+
 		ei.horse.TotalEarnings += earnings
 
 		// Update peak ELO.
@@ -1663,6 +1833,10 @@ func updatePostRaceStats(state *cliState, race *models.Race, horses []*models.Ho
 			CreatedAt:   time.Now(),
 		}
 		state.raceHistory.RecordResult(result)
+
+		// Persist horse state and race result to DB.
+		state.persistHorse(ei.horse)
+		state.persistRaceResult(result)
 	}
 }
 
@@ -1687,10 +1861,34 @@ func checkRaceAchievements(state *cliState, race *models.Race, horses []*models.
 			// Add to the stable's achievements.
 			stable.Achievements = append(stable.Achievements, a)
 			allUnlocked = append(allUnlocked, a)
+
+			// Persist new achievement to DB.
+			state.persistAchievement(stableID, &a)
 		}
 	}
 
 	return allUnlocked
+}
+
+// ===========================================================================
+// Trait helpers
+// ===========================================================================
+
+// hasTraitEffect checks whether the horse has at least one trait with the
+// given effect string. If found, returns (true, magnitude). If the horse has
+// multiple traits with the same effect, returns the highest magnitude.
+func hasTraitEffect(horse *models.Horse, effect string) (bool, float64) {
+	found := false
+	bestMag := 0.0
+	for _, t := range horse.Traits {
+		if t.Effect == effect {
+			if !found || t.Magnitude > bestMag {
+				bestMag = t.Magnitude
+			}
+			found = true
+		}
+	}
+	return found, bestMag
 }
 
 // ===========================================================================
