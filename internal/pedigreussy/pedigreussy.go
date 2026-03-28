@@ -557,6 +557,15 @@ func (tm *TradeManager) ListAllPending(stableID string) []*TradeOffer {
 	return result
 }
 
+// ImportOffer adds an existing trade offer (e.g. loaded from DB) directly
+// into the in-memory registry. If an offer with the same ID already exists
+// it is replaced. Used during startup to hydrate state from the database.
+func (tm *TradeManager) ImportOffer(offer *TradeOffer) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	tm.trades[offer.ID] = offer
+}
+
 // GetOffer retrieves a trade offer by its ID regardless of status.
 // Returns an error if the offer is not found.
 func (tm *TradeManager) GetOffer(id string) (*TradeOffer, error) {

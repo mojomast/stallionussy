@@ -237,6 +237,19 @@ func Breed(sire, mare *models.Horse) *models.Horse {
 		}
 	}
 
+	// Retired champion bonus: if either parent is a retired champion (5+ wins
+	// at retirement), the foal inherits a 5% fitness ceiling boost — the
+	// legacy of greatness flows through the bloodline.
+	for _, parent := range []*models.Horse{sire, mare} {
+		if parent.RetiredChampion {
+			ceiling *= 1.05
+			if ceiling > 0.99 {
+				ceiling = 0.99
+			}
+			break // Only apply once even if both parents are champions.
+		}
+	}
+
 	generation := sire.Generation
 	if mare.Generation > generation {
 		generation = mare.Generation

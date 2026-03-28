@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS stables (
     cummies         BIGINT NOT NULL DEFAULT 0,
     total_earnings  BIGINT NOT NULL DEFAULT 0,
     total_races     BIGINT NOT NULL DEFAULT 0,
+    motto           TEXT NOT NULL DEFAULT '',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -140,6 +141,7 @@ CREATE TABLE IF NOT EXISTS tournaments (
 CREATE TABLE IF NOT EXISTS trade_offers (
     id              TEXT PRIMARY KEY,
     horse_id        TEXT NOT NULL DEFAULT '',
+    horse_name      TEXT DEFAULT '',
     from_stable_id  TEXT NOT NULL DEFAULT '',
     to_stable_id    TEXT NOT NULL DEFAULT '',
     price           BIGINT NOT NULL DEFAULT 0,
@@ -185,6 +187,23 @@ CREATE TABLE IF NOT EXISTS training_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_training_sessions_horse_id ON training_sessions (horse_id);
+
+-- ===========================================================================
+-- Market Transactions
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS market_transactions (
+    id            TEXT PRIMARY KEY,
+    listing_id    TEXT NOT NULL DEFAULT '',
+    buyer_id      TEXT NOT NULL DEFAULT '',
+    seller_id     TEXT NOT NULL DEFAULT '',
+    price         BIGINT NOT NULL DEFAULT 0,
+    burn_amount   BIGINT NOT NULL DEFAULT 0,
+    foal_id       TEXT NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_transactions_buyer_id  ON market_transactions (buyer_id);
+CREATE INDEX IF NOT EXISTS idx_market_transactions_seller_id ON market_transactions (seller_id);
 `
 
 // RunMigrations executes the schema DDL against the provided database

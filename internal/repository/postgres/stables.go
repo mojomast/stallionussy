@@ -25,8 +25,8 @@ func NewStableRepo(db *DB) *StableRepo {
 // CreateStable persists a new stable record.
 func (r *StableRepo) CreateStable(ctx context.Context, stable *models.Stable) error {
 	query := `
-		INSERT INTO stables (id, name, owner_id, cummies, created_at, total_earnings, total_races)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+		INSERT INTO stables (id, name, owner_id, cummies, created_at, total_earnings, total_races, motto)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 	_, err := r.db.db.ExecContext(ctx, query,
 		stable.ID,
 		stable.Name,
@@ -35,6 +35,7 @@ func (r *StableRepo) CreateStable(ctx context.Context, stable *models.Stable) er
 		stable.CreatedAt,
 		stable.TotalEarnings,
 		stable.TotalRaces,
+		stable.Motto,
 	)
 	if err != nil {
 		return fmt.Errorf("create stable: %w", err)
@@ -45,7 +46,7 @@ func (r *StableRepo) CreateStable(ctx context.Context, stable *models.Stable) er
 // GetStable retrieves a stable by ID (without populating the Horses slice).
 func (r *StableRepo) GetStable(ctx context.Context, id string) (*models.Stable, error) {
 	query := `
-		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races
+		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races, motto
 		FROM stables WHERE id = $1`
 	s := &models.Stable{}
 	err := r.db.db.QueryRowContext(ctx, query, id).Scan(
@@ -56,6 +57,7 @@ func (r *StableRepo) GetStable(ctx context.Context, id string) (*models.Stable, 
 		&s.CreatedAt,
 		&s.TotalEarnings,
 		&s.TotalRaces,
+		&s.Motto,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("stable not found: %s", id)
@@ -69,7 +71,7 @@ func (r *StableRepo) GetStable(ctx context.Context, id string) (*models.Stable, 
 // GetStableByOwner retrieves the stable belonging to a given owner.
 func (r *StableRepo) GetStableByOwner(ctx context.Context, ownerID string) (*models.Stable, error) {
 	query := `
-		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races
+		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races, motto
 		FROM stables WHERE owner_id = $1`
 	s := &models.Stable{}
 	err := r.db.db.QueryRowContext(ctx, query, ownerID).Scan(
@@ -80,6 +82,7 @@ func (r *StableRepo) GetStableByOwner(ctx context.Context, ownerID string) (*mod
 		&s.CreatedAt,
 		&s.TotalEarnings,
 		&s.TotalRaces,
+		&s.Motto,
 	)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("stable not found for owner: %s", ownerID)
@@ -93,7 +96,7 @@ func (r *StableRepo) GetStableByOwner(ctx context.Context, ownerID string) (*mod
 // ListStables returns all stables.
 func (r *StableRepo) ListStables(ctx context.Context) ([]*models.Stable, error) {
 	query := `
-		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races
+		SELECT id, name, owner_id, cummies, created_at, total_earnings, total_races, motto
 		FROM stables ORDER BY created_at`
 	rows, err := r.db.db.QueryContext(ctx, query)
 	if err != nil {
@@ -112,6 +115,7 @@ func (r *StableRepo) ListStables(ctx context.Context) ([]*models.Stable, error) 
 			&s.CreatedAt,
 			&s.TotalEarnings,
 			&s.TotalRaces,
+			&s.Motto,
 		); err != nil {
 			return nil, fmt.Errorf("list stables scan: %w", err)
 		}
@@ -127,7 +131,7 @@ func (r *StableRepo) ListStables(ctx context.Context) ([]*models.Stable, error) 
 func (r *StableRepo) UpdateStable(ctx context.Context, stable *models.Stable) error {
 	query := `
 		UPDATE stables
-		SET name = $2, owner_id = $3, cummies = $4, total_earnings = $5, total_races = $6
+		SET name = $2, owner_id = $3, cummies = $4, total_earnings = $5, total_races = $6, motto = $7
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		stable.ID,
@@ -136,6 +140,7 @@ func (r *StableRepo) UpdateStable(ctx context.Context, stable *models.Stable) er
 		stable.Cummies,
 		stable.TotalEarnings,
 		stable.TotalRaces,
+		stable.Motto,
 	)
 	if err != nil {
 		return fmt.Errorf("update stable: %w", err)

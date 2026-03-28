@@ -110,30 +110,32 @@ type Genome map[GeneType]Gene
 
 // Horse represents a single horse in the simulation.
 type Horse struct {
-	ID             string    `json:"id"`              // UUID
-	Name           string    `json:"name"`            // Generated or user-set name
-	Genome         Genome    `json:"genome"`          // Full 7-gene profile
-	SireID         string    `json:"sire_id"`         // Father's ID (empty for gen-0)
-	MareID         string    `json:"mare_id"`         // Mother's ID (empty for gen-0)
-	Generation     int       `json:"generation"`      // 0 for founders, increments each cross
-	Age            int       `json:"age"`             // Age in race-days
-	FitnessCeiling float64   `json:"fitness_ceiling"` // Hidden potential set at birth
-	CurrentFitness float64   `json:"current_fitness"` // Revealed through racing / training
-	Wins           int       `json:"wins"`
-	Losses         int       `json:"losses"`
-	Races          int       `json:"races"`
-	ELO            float64   `json:"elo"`          // Matchmaking rating, starts at 1200
-	OwnerID        string    `json:"owner_id"`     // Player who owns this horse
-	IsLegendary    bool      `json:"is_legendary"` // True for canonical legendary lots
-	LotNumber      int       `json:"lot_number"`   // 0 = normal, 1-12 = legendary lot index
-	CreatedAt      time.Time `json:"created_at"`
-	Lore           string    `json:"lore"`    // Flavor text / backstory
-	Traits         []Trait   `json:"traits"`  // Quirks and special abilities
-	Fatigue        float64   `json:"fatigue"` // 0-100, affects training and racing
-	Retired        bool      `json:"retired"`
-	TotalEarnings  int64     `json:"total_earnings"`
-	TrainingXP     float64   `json:"training_xp"`
-	PeakELO        float64   `json:"peak_elo"`
+	ID              string    `json:"id"`              // UUID
+	Name            string    `json:"name"`            // Generated or user-set name
+	Genome          Genome    `json:"genome"`          // Full 7-gene profile
+	SireID          string    `json:"sire_id"`         // Father's ID (empty for gen-0)
+	MareID          string    `json:"mare_id"`         // Mother's ID (empty for gen-0)
+	Generation      int       `json:"generation"`      // 0 for founders, increments each cross
+	Age             int       `json:"age"`             // Age in race-days
+	FitnessCeiling  float64   `json:"fitness_ceiling"` // Hidden potential set at birth
+	CurrentFitness  float64   `json:"current_fitness"` // Revealed through racing / training
+	Wins            int       `json:"wins"`
+	Losses          int       `json:"losses"`
+	Races           int       `json:"races"`
+	ELO             float64   `json:"elo"`          // Matchmaking rating, starts at 1200
+	OwnerID         string    `json:"owner_id"`     // Player who owns this horse
+	IsLegendary     bool      `json:"is_legendary"` // True for canonical legendary lots
+	LotNumber       int       `json:"lot_number"`   // 0 = normal, 1-12 = legendary lot index
+	CreatedAt       time.Time `json:"created_at"`
+	Lore            string    `json:"lore"`    // Flavor text / backstory
+	Traits          []Trait   `json:"traits"`  // Quirks and special abilities
+	Fatigue         float64   `json:"fatigue"` // 0-100, affects training and racing
+	Retired         bool      `json:"retired"`
+	RetiredChampion bool      `json:"retiredChampion,omitempty"`
+	TotalEarnings   int64     `json:"total_earnings"`
+	TrainingXP      float64   `json:"training_xp"`
+	PeakELO         float64   `json:"peak_elo"`
+	LastBredAt      time.Time `json:"lastBredAt,omitempty"` // Breeding cooldown tracker
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +304,7 @@ type TrainingSession struct {
 	XPGained      float64     `json:"xp_gained"`
 	FitnessBefore float64     `json:"fitness_before"`
 	FitnessAfter  float64     `json:"fitness_after"`
+	FatigueAfter  float64     `json:"fatigue_after"`
 	Injury        bool        `json:"injury"` // 2% chance per session
 	InjuryNote    string      `json:"injury_note"`
 	CreatedAt     time.Time   `json:"created_at"`
@@ -413,6 +416,173 @@ type User struct {
 	DisplayName  string    `json:"display_name"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ---------------------------------------------------------------------------
+// Trading
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Head-to-Head Challenges
+// ---------------------------------------------------------------------------
+
+// Challenge represents a head-to-head race challenge between two players.
+type Challenge struct {
+	ID                  string    `json:"id"`
+	ChallengerID        string    `json:"challengerID"` // user ID
+	ChallengerName      string    `json:"challengerName"`
+	ChallengerHorse     string    `json:"challengerHorse"` // horse ID
+	ChallengerHorseName string    `json:"challengerHorseName"`
+	DefenderID          string    `json:"defenderID"` // user ID
+	DefenderName        string    `json:"defenderName"`
+	DefenderHorse       string    `json:"defenderHorse"` // horse ID (set on accept)
+	DefenderHorseName   string    `json:"defenderHorseName"`
+	Wager               int64     `json:"wager"`  // cummies wagered (0 = no wager)
+	Status              string    `json:"status"` // pending, accepted, completed, expired, declined
+	CreatedAt           time.Time `json:"createdAt"`
+	ExpiresAt           time.Time `json:"expiresAt"`
+}
+
+const (
+	ChallengeStatusPending   = "pending"
+	ChallengeStatusAccepted  = "accepted"
+	ChallengeStatusCompleted = "completed"
+	ChallengeStatusExpired   = "expired"
+	ChallengeStatusDeclined  = "declined"
+)
+
+// ---------------------------------------------------------------------------
+// Betting
+// ---------------------------------------------------------------------------
+
+// Bet represents a wager on a race outcome.
+type Bet struct {
+	ID        string    `json:"id"`
+	RaceID    string    `json:"raceID"`
+	UserID    string    `json:"userID"`
+	Username  string    `json:"username"`
+	StableID  string    `json:"stableID"`
+	HorseID   string    `json:"horseID"`
+	HorseName string    `json:"horseName"`
+	Amount    int64     `json:"amount"`
+	Payout    int64     `json:"payout"` // filled after resolution
+	Won       bool      `json:"won"`    // filled after resolution
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// BettingPool tracks all bets for a single race.
+type BettingPool struct {
+	RaceID    string         `json:"raceID"`
+	Status    string         `json:"status"` // open, closed, resolved
+	Horses    []BettingHorse `json:"horses"`
+	TotalPool int64          `json:"totalPool"`
+	Bets      []Bet          `json:"bets"`
+	HouseCut  int64          `json:"houseCut"`
+	OpenedAt  time.Time      `json:"openedAt"`
+	ClosedAt  time.Time      `json:"closedAt"`
+}
+
+// BettingHorse represents a horse's odds and total bet amount in a betting pool.
+type BettingHorse struct {
+	HorseID   string  `json:"horseID"`
+	HorseName string  `json:"horseName"`
+	TotalBet  int64   `json:"totalBet"`
+	Odds      float64 `json:"odds"` // pari-mutuel odds
+	BetCount  int     `json:"betCount"`
+}
+
+// ---------------------------------------------------------------------------
+// Seasons & Leaderboards
+// ---------------------------------------------------------------------------
+
+// Season represents a competitive season with ELO resets and rewards.
+type Season struct {
+	ID        int              `json:"id"`
+	Name      string           `json:"name"`
+	StartedAt time.Time        `json:"startedAt"`
+	EndedAt   time.Time        `json:"endedAt,omitempty"`
+	Active    bool             `json:"active"`
+	Champions []SeasonChampion `json:"champions,omitempty"`
+}
+
+// SeasonChampion records a top finisher in a completed season.
+type SeasonChampion struct {
+	Place      int    `json:"place"`
+	StableID   string `json:"stableID"`
+	StableName string `json:"stableName"`
+	ELO        int    `json:"elo"`
+	Wins       int    `json:"wins"`
+	Earnings   int64  `json:"earnings"`
+	Reward     int64  `json:"reward"` // cummies reward
+}
+
+// LeaderboardEntry represents a single stable's ranking in the leaderboard.
+type LeaderboardEntry struct {
+	Rank       int     `json:"rank"`
+	StableID   string  `json:"stableID"`
+	StableName string  `json:"stableName"`
+	OwnerName  string  `json:"ownerName"`
+	ELO        int     `json:"elo"`
+	Wins       int     `json:"wins"`
+	Losses     int     `json:"losses"`
+	WinRate    float64 `json:"winRate"`
+	TotalRaces int     `json:"totalRaces"`
+	Earnings   int64   `json:"earnings"`
+	BestHorse  string  `json:"bestHorse"`
+	BestELO    int     `json:"bestElo"`
+	Streak     int     `json:"streak"`
+}
+
+// HorseLeaderboardEntry represents a single horse's ranking in the horse leaderboard.
+type HorseLeaderboardEntry struct {
+	Rank       int     `json:"rank"`
+	HorseID    string  `json:"horseID"`
+	HorseName  string  `json:"horseName"`
+	StableID   string  `json:"stableID"`
+	StableName string  `json:"stableName"`
+	ELO        int     `json:"elo"`
+	Wins       int     `json:"wins"`
+	Losses     int     `json:"losses"`
+	WinRate    float64 `json:"winRate"`
+	TotalRaces int     `json:"totalRaces"`
+	Earnings   int64   `json:"earnings"`
+	Streak     int     `json:"streak"`
+}
+
+// ---------------------------------------------------------------------------
+// Engagement System
+// ---------------------------------------------------------------------------
+
+// PlayerProgress tracks a player's engagement metrics (daily logins, streaks,
+// prestige, and daily action limits).
+type PlayerProgress struct {
+	UserID           string `json:"userID"`
+	LoginStreak      int    `json:"loginStreak"`
+	LastLoginDate    string `json:"lastLoginDate"` // YYYY-MM-DD format
+	TotalLogins      int    `json:"totalLogins"`
+	DailyTrainsLeft  int    `json:"dailyTrainsLeft"` // resets daily, default 5
+	DailyRacesLeft   int    `json:"dailyRacesLeft"`  // resets daily, default 10
+	LastDailyReset   string `json:"lastDailyReset"`  // YYYY-MM-DD
+	PrestigeLevel    int    `json:"prestigeLevel"`
+	PrestigeXP       int64  `json:"prestigeXP"`
+	LifetimeEarnings int64  `json:"lifetimeEarnings"`
+}
+
+// DailyReward describes the reward for a specific day in the login streak cycle.
+type DailyReward struct {
+	Day     int    `json:"day"`
+	Cummies int64  `json:"cummies"`
+	Bonus   string `json:"bonus"` // description of extra reward
+}
+
+// PrestigeTier defines what each prestige level gives.
+type PrestigeTier struct {
+	Level         int     `json:"level"`
+	Name          string  `json:"name"`
+	RequiredXP    int64   `json:"requiredXP"`
+	CummiesBonus  float64 `json:"cummiesBonus"`  // multiplier on race earnings
+	TrainingBonus float64 `json:"trainingBonus"` // multiplier on training effectiveness
+	MaxHorses     int     `json:"maxHorses"`     // max horses in stable
 }
 
 // ---------------------------------------------------------------------------

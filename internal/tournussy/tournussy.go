@@ -1169,6 +1169,74 @@ var AllAchievements = map[string]models.Achievement{
 		Icon:        "\U0001F4C8", // 📈
 		Rarity:      "epic",
 	},
+
+	// -----------------------------------------------------------------------
+	// Breeding Achievements (additional)
+	// -----------------------------------------------------------------------
+	"dynasty_builder": {
+		ID:          "dynasty_builder",
+		Name:        "Dynasty Builder",
+		Description: "Have 4 generations of horses in a single bloodline. The family tree is a redwood. STARDUSTUSSY sees this dynasty persisting into 2089 and beyond.",
+		Icon:        "\U0001F3F0", // 🏰
+		Rarity:      "epic",
+	},
+	"genetic_lottery": {
+		ID:          "genetic_lottery",
+		Name:        "Genetic Lottery",
+		Description: "Breed a foal with fitness ceiling > 0.90 from parents both below 0.70. The alleles aligned. Dr. Mittens calls it a miracle. Geoffrussy calls it a statistical anomaly.",
+		Icon:        "\U0001F3B0", // 🎰
+		Rarity:      "epic",
+	},
+	"champion_bloodline": {
+		ID:          "champion_bloodline",
+		Name:        "Champion Bloodline",
+		Description: "Breed a foal from a retired champion (5+ win retiree). The legacy continues. Hall of Fame blood flows through this foal's veins.",
+		Icon:        "\U0001F3C6", // 🏆
+		Rarity:      "rare",
+	},
+
+	// -----------------------------------------------------------------------
+	// Trading Achievements
+	// -----------------------------------------------------------------------
+	"first_trade": {
+		ID:          "first_trade",
+		Name:        "First Trade",
+		Description: "Complete your first horse trade. The market opens its arms. Pastor Router blesses the handshake. Packet delivered.",
+		Icon:        "\U0001F91D", // 🤝
+		Rarity:      "common",
+	},
+	"cummies_burned": {
+		ID:          "cummies_burned",
+		Name:        "Cummies Burned",
+		Description: "Spend 500,000 total cummies. The cummies are gone. All of them. Dr. Mittens is writing a concerned letter. The yogurt absorbs your financial distress.",
+		Icon:        "\U0001F4B8", // 💸
+		Rarity:      "epic",
+	},
+
+	// -----------------------------------------------------------------------
+	// Social / Engagement Achievements
+	// -----------------------------------------------------------------------
+	"first_challenge": {
+		ID:          "first_challenge",
+		Name:        "Challenger Approaching",
+		Description: "Issue or accept your first head-to-head challenge. The gauntlet is thrown. Jason Derulo felt the tremor from across dimensions.",
+		Icon:        "\u2694\uFE0F", // ⚔️
+		Rarity:      "common",
+	},
+	"betting_winner": {
+		ID:          "betting_winner",
+		Name:        "Lucky Bettor",
+		Description: "Win a bet on a race. The odds were in your favor. The cummies flow. STARDUSTUSSY's 2089 ledger confirms: you're on the right timeline.",
+		Icon:        "\U0001F911", // 🤑
+		Rarity:      "common",
+	},
+	"streak_7": {
+		ID:          "streak_7",
+		Name:        "Weekly Warrior",
+		Description: "Maintain a 7-day login streak. Seven days of dedication. Pastor Router McEthernet III notes your unwavering connection. Uptime: impressive.",
+		Icon:        "\U0001F4C5", // 📅
+		Rarity:      "rare",
+	},
 }
 
 // ---------------------------------------------------------------------------
@@ -1880,6 +1948,93 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 		// market transaction completion (e.g., in marketussy or the API handler).
 		// NOTE: Grant via direct call to unlockAchievement("market_mogul") when
 		// a player completes their 10th MarketTransaction.
+
+		// -------------------------------------------------------------------
+		// Additional Breeding Achievements
+		// -------------------------------------------------------------------
+
+		// dynasty_builder — Have 4 generations of horses in a single bloodline.
+		if !hasAchievement(existing, "dynasty_builder") {
+			maxGen := 0
+			for _, h := range stable.Horses {
+				if h.Generation > maxGen {
+					maxGen = h.Generation
+				}
+			}
+			if maxGen >= 4 {
+				unlocked = append(unlocked, unlockAchievement("dynasty_builder"))
+			}
+		}
+
+		// genetic_lottery — Breed a foal with fitness ceiling > 0.90 from
+		// parents both below 0.70.
+		// We approximate: check for any bred horse (gen > 0) with ceiling > 0.90
+		// whose parents (if found in stable) both have ceiling < 0.70.
+		if !hasAchievement(existing, "genetic_lottery") {
+			horseByID := make(map[string]*models.Horse, len(stable.Horses))
+			for i := range stable.Horses {
+				horseByID[stable.Horses[i].ID] = &stable.Horses[i]
+			}
+			for _, h := range stable.Horses {
+				if h.Generation > 0 && h.FitnessCeiling > 0.90 {
+					sireH := horseByID[h.SireID]
+					mareH := horseByID[h.MareID]
+					if sireH != nil && mareH != nil &&
+						sireH.FitnessCeiling < 0.70 && mareH.FitnessCeiling < 0.70 {
+						unlocked = append(unlocked, unlockAchievement("genetic_lottery"))
+						break
+					}
+				}
+			}
+		}
+
+		// champion_bloodline — Breed a foal from a retired champion.
+		if !hasAchievement(existing, "champion_bloodline") {
+			championIDs := make(map[string]bool)
+			for _, h := range stable.Horses {
+				if h.RetiredChampion {
+					championIDs[h.ID] = true
+				}
+			}
+			if len(championIDs) > 0 {
+				for _, h := range stable.Horses {
+					if h.Generation > 0 && (championIDs[h.SireID] || championIDs[h.MareID]) {
+						unlocked = append(unlocked, unlockAchievement("champion_bloodline"))
+						break
+					}
+				}
+			}
+		}
+
+		// cummies_burned — Spend 500,000 total cummies.
+		if !hasAchievement(existing, "cummies_burned") {
+			spent := stable.TotalEarnings - stable.Cummies
+			if spent >= 500_000 {
+				unlocked = append(unlocked, unlockAchievement("cummies_burned"))
+			}
+		}
+
+		// streak_7 — 7-day login streak.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the server code that tracks login
+		// streaks (engagement system).
+		// NOTE: Grant via direct call to unlockAchievement("streak_7") in
+		// the daily reward handler when streak >= 7.
+
+		// first_trade — Complete your first horse trade.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the trade acceptance handler.
+		// NOTE: Grant via direct call in handleAcceptTrade.
+
+		// first_challenge — Issue or accept your first challenge.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the challenge handlers.
+		// NOTE: Grant via direct call in handleCreateChallenge / handleAcceptChallenge.
+
+		// betting_winner — Win a bet on a race.
+		// This achievement cannot be detected from horse/stable state alone.
+		// It should be granted directly by the bet resolution code.
+		// NOTE: Grant via direct call in resolveBets.
 	}
 
 	return unlocked

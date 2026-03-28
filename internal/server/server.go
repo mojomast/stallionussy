@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mojomast/stallionussy/internal/authussy"
 	"github.com/mojomast/stallionussy/internal/commussy"
 	"github.com/mojomast/stallionussy/internal/genussy"
@@ -65,10 +66,34 @@ type Server struct {
 	tournamentRepo  repository.TournamentRepository
 	tradeRepo       repository.TradeRepository
 	achievementRepo repository.AchievementRepository
+	trainingRepo    repository.TrainingSessionRepository
+	marketTxRepo    repository.MarketTransactionRepository
 
 	// Auth (nil when running without DB).
 	auth        *authussy.AuthService
 	authHandler *authussy.AuthHandler
+
+	// Head-to-head challenges (in-memory store).
+	challenges  map[string]*models.Challenge
+	challengeMu sync.RWMutex
+
+	// Race betting pools (in-memory store).
+	bettingPools map[string]*models.BettingPool // raceID -> pool
+	bettingMu    sync.RWMutex
+
+	// Seasonal competition tracking (in-memory store).
+	currentSeason *models.Season
+	pastSeasons   []models.Season
+	seasonMu      sync.RWMutex
+
+	// Player engagement tracking (in-memory store).
+	progress   map[string]*models.PlayerProgress // userID -> progress
+	progressMu sync.RWMutex
+
+	// Horse rivalry tracking (in-memory store).
+	// rivalries[winnerID][loserID] = win count.
+	rivalries map[string]map[string]int
+	rivalryMu sync.RWMutex
 }
 
 // NewServer initializes all subsystems, seeds the legendary horses into a
@@ -84,16 +109,27 @@ func NewServer(db *postgres.DB) *Server {
 	rh := tournussy.NewRaceHistory()
 
 	s := &Server{
-		stables:     sm,
-		market:      marketussy.NewMarket(),
-		hub:         commussy.NewHub(),
-		trainer:     trainussy.NewTrainer(),
-		tournaments: tournussy.NewTournamentManager(rh),
-		raceHistory: rh,
-		pedigree:    pedigreussy.NewPedigreeEngine(sm.GetHorse),
-		trades:      pedigreussy.NewTradeManager(),
-		mux:         http.NewServeMux(),
-		raceCache:   make(map[string]*raceResult),
+		stables:      sm,
+		market:       marketussy.NewMarket(),
+		hub:          commussy.NewHub(),
+		trainer:      trainussy.NewTrainer(),
+		tournaments:  tournussy.NewTournamentManager(rh),
+		raceHistory:  rh,
+		pedigree:     pedigreussy.NewPedigreeEngine(sm.GetHorse),
+		trades:       pedigreussy.NewTradeManager(),
+		mux:          http.NewServeMux(),
+		raceCache:    make(map[string]*raceResult),
+		challenges:   make(map[string]*models.Challenge),
+		bettingPools: make(map[string]*models.BettingPool),
+		currentSeason: &models.Season{
+			ID:        1,
+			Name:      "Season 1: The Ussening",
+			StartedAt: time.Now(),
+			Active:    true,
+		},
+		pastSeasons: []models.Season{},
+		progress:    make(map[string]*models.PlayerProgress),
+		rivalries:   make(map[string]map[string]int),
 	}
 
 	// If a DB connection is provided, wire up persistence and auth.
@@ -107,6 +143,8 @@ func NewServer(db *postgres.DB) *Server {
 		s.tournamentRepo = postgres.NewTournamentRepo(db)
 		s.tradeRepo = postgres.NewTradeRepo(db)
 		s.achievementRepo = postgres.NewAchievementRepo(db)
+		s.trainingRepo = postgres.NewTrainingSessionRepo(db)
+		s.marketTxRepo = postgres.NewMarketTransactionRepo(db)
 
 		// Create auth service.
 		jwtSecret := os.Getenv("JWT_SECRET")
@@ -133,6 +171,9 @@ func NewServer(db *postgres.DB) *Server {
 	// Start the WebSocket hub event loop.
 	go s.hub.Run()
 
+	// Start the challenge expiry cleanup goroutine.
+	go s.challengeExpiryLoop()
+
 	// Set up the chat command callback so the hub can forward commands
 	// (e.g. /send, /trade) to the server for processing.
 	s.hub.OnChatCommand = func(senderUserID, senderUsername, command string, args map[string]interface{}) {
@@ -141,6 +182,14 @@ func NewServer(db *postgres.DB) *Server {
 			s.handleChatSend(senderUserID, senderUsername, args)
 		case "trade":
 			s.handleChatTrade(senderUserID, senderUsername, args)
+		case "challenge":
+			s.handleChatChallenge(senderUserID, senderUsername, args)
+		case "accept":
+			s.handleChatAccept(senderUserID, senderUsername, args)
+		case "decline":
+			s.handleChatDecline(senderUserID, senderUsername, args)
+		case "bet":
+			s.handleChatBet(senderUserID, senderUsername, args)
 		}
 	}
 
@@ -189,6 +238,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/stables", s.handleListStables)
 	s.mux.HandleFunc("POST /api/stables", s.handleCreateStable)
 	s.mux.HandleFunc("GET /api/stables/{id}", s.handleGetStable)
+	s.mux.HandleFunc("PUT /api/stables/{id}", s.handleUpdateStable)
 	s.mux.HandleFunc("GET /api/stables/{id}/horses", s.handleListStableHorses)
 	s.mux.HandleFunc("GET /api/stables/{id}/achievements", s.handleGetStableAchievements)
 
@@ -198,6 +248,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/horses/{id}/history", s.handleGetHorseHistory)
 	s.mux.HandleFunc("GET /api/horses/{id}/stats", s.handleGetHorseStats)
 	s.mux.HandleFunc("GET /api/horses/{id}/achievements", s.handleCheckHorseAchievements)
+	s.mux.HandleFunc("GET /api/horses/{id}/rivals", s.handleGetHorseRivals)
+	s.mux.HandleFunc("POST /api/horses/{id}/retire", s.handleRetireHorse)
 
 	// --- Training ---
 	s.mux.HandleFunc("POST /api/horses/{id}/train", s.handleTrainHorse)
@@ -240,8 +292,34 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/trades/{id}/reject", s.handleRejectTrade)
 	s.mux.HandleFunc("DELETE /api/trades/{id}", s.handleCancelTrade)
 
+	// --- Challenges (Head-to-Head) ---
+	s.mux.HandleFunc("POST /api/challenges", s.handleCreateChallenge)
+	s.mux.HandleFunc("POST /api/challenges/{id}/accept", s.handleAcceptChallenge)
+	s.mux.HandleFunc("POST /api/challenges/{id}/decline", s.handleDeclineChallenge)
+	s.mux.HandleFunc("GET /api/challenges", s.handleListChallenges)
+
+	// --- Betting ---
+	s.mux.HandleFunc("POST /api/betting/pools", s.handleOpenBettingPool)
+	s.mux.HandleFunc("GET /api/betting/pools/{raceID}", s.handleGetBettingPool)
+	s.mux.HandleFunc("POST /api/betting/pools/{raceID}/bet", s.handlePlaceBet)
+	s.mux.HandleFunc("GET /api/betting/active", s.handleListActivePools)
+
 	// --- Season / Aging ---
 	s.mux.HandleFunc("POST /api/advance-season", s.handleAdvanceSeason)
+
+	// --- Leaderboard ---
+	s.mux.HandleFunc("GET /api/leaderboard", s.handleGetLeaderboard)
+	s.mux.HandleFunc("GET /api/leaderboard/horses", s.handleGetHorseLeaderboard)
+
+	// --- Seasons ---
+	s.mux.HandleFunc("GET /api/seasons", s.handleListSeasons)
+	s.mux.HandleFunc("GET /api/seasons/current", s.handleGetCurrentSeason)
+	s.mux.HandleFunc("POST /api/seasons/end", s.handleEndSeason)
+
+	// --- Engagement (daily rewards, prestige, progress) ---
+	s.mux.HandleFunc("GET /api/progress", s.handleGetProgress)
+	s.mux.HandleFunc("POST /api/daily-reward", s.handleClaimDailyReward)
+	s.mux.HandleFunc("GET /api/prestige", s.handleGetPrestige)
 
 	// --- Weather ---
 	s.mux.HandleFunc("GET /api/weather", s.handleGetWeather)
@@ -397,6 +475,14 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership check: only the horse's owner can train it.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if !s.userOwnsHorse(claims.UserID, id) {
+			http.Error(w, "you do not own this horse", http.StatusForbidden)
+			return
+		}
+	}
+
 	if horse.Retired {
 		writeError(w, http.StatusBadRequest, "horse is retired and cannot train")
 		return
@@ -426,11 +512,49 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 
 	session := s.trainer.Train(horse, req.WorkoutType)
 
+	// Apply prestige training bonus: multiply the fitness gain by the owner's TrainingBonus.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		ownerTier := s.getPrestigeTierForUser(claims.UserID)
+		if ownerTier.TrainingBonus > 1.0 {
+			fitnessGain := session.FitnessAfter - session.FitnessBefore
+			extraGain := fitnessGain * (ownerTier.TrainingBonus - 1.0)
+			horse.CurrentFitness += extraGain
+			if horse.CurrentFitness > horse.FitnessCeiling {
+				horse.CurrentFitness = horse.FitnessCeiling
+			}
+			session.FitnessAfter = horse.CurrentFitness
+		}
+	}
+
 	// Sync horse state back to stable.
 	s.syncHorseToStable(horse)
 
-	// Write-through: persist trained horse to DB.
+	// Write-through: persist trained horse and training session to DB.
 	s.persistHorse(r.Context(), horse)
+	s.persistTrainingSession(r.Context(), session)
+
+	// Grant 10 prestige XP for training.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		s.addPrestigeXP(claims.UserID, claims.Username, 10)
+	}
+
+	// Broadcast training event to all connected clients.
+	trainEvent := map[string]interface{}{
+		"type":      "training_update",
+		"action":    "trained",
+		"horseName": horse.Name,
+		"workout":   string(req.WorkoutType),
+	}
+	// Look up the stable name for this horse.
+	for _, st := range s.stables.ListStables() {
+		for _, h := range st.Horses {
+			if h.ID == horse.ID {
+				trainEvent["stableName"] = st.Name
+				break
+			}
+		}
+	}
+	s.hub.BroadcastJSON(trainEvent)
 
 	writeJSON(w, http.StatusCreated, session)
 }
@@ -456,6 +580,14 @@ func (s *Server) handleRestHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership check: only the horse's owner can rest it.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if !s.userOwnsHorse(claims.UserID, id) {
+			http.Error(w, "you do not own this horse", http.StatusForbidden)
+			return
+		}
+	}
+
 	if horse.Retired {
 		writeError(w, http.StatusBadRequest, "horse is retired")
 		return
@@ -465,8 +597,26 @@ func (s *Server) handleRestHorse(w http.ResponseWriter, r *http.Request) {
 	session := s.trainer.Train(horse, models.WorkoutRecovery)
 	s.syncHorseToStable(horse)
 
-	// Write-through: persist rested horse to DB.
+	// Write-through: persist rested horse and training session to DB.
 	s.persistHorse(r.Context(), horse)
+	s.persistTrainingSession(r.Context(), session)
+
+	// Broadcast rest event to all connected clients.
+	restEvent := map[string]interface{}{
+		"type":      "training_update",
+		"action":    "rested",
+		"horseName": horse.Name,
+	}
+	// Look up the stable name for this horse.
+	for _, st := range s.stables.ListStables() {
+		for _, h := range st.Horses {
+			if h.ID == horse.ID {
+				restEvent["stableName"] = st.Name
+				break
+			}
+		}
+	}
+	s.hub.BroadcastJSON(restEvent)
 
 	writeJSON(w, http.StatusCreated, session)
 }
@@ -583,6 +733,22 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership check: user must own either the sire or mare, and the target stable.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		ownsSire := s.userOwnsHorse(claims.UserID, req.SireID)
+		ownsMare := s.userOwnsHorse(claims.UserID, req.MareID)
+		if !ownsSire && !ownsMare {
+			http.Error(w, "you must own at least one of the breeding horses", http.StatusForbidden)
+			return
+		}
+		// Verify target stable belongs to user.
+		userStable := s.getStableForUser(claims.UserID)
+		if userStable == nil || userStable.ID != req.StableID {
+			http.Error(w, "target stable does not belong to you", http.StatusForbidden)
+			return
+		}
+	}
+
 	// Look up both parents.
 	sire, err := s.stables.GetHorse(req.SireID)
 	if err != nil {
@@ -595,19 +761,56 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Breeding cooldown: each horse can only breed once every N hours.
+	cooldown := time.Duration(breedingCooldownHours) * time.Hour
+	if !sire.LastBredAt.IsZero() && time.Since(sire.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(sire.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("sire %q is on breeding cooldown (%.0f minutes remaining)", sire.Name, remaining.Minutes()))
+		return
+	}
+	if !mare.LastBredAt.IsZero() && time.Since(mare.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(mare.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("mare %q is on breeding cooldown (%.0f minutes remaining)", mare.Name, remaining.Minutes()))
+		return
+	}
+
+	// Prestige max horses check: can't exceed the stable's horse limit.
+	targetStable, err := s.stables.GetStable(req.StableID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "target stable not found: "+err.Error())
+		return
+	}
+	ownerTier := s.getPrestigeTierForUser(targetStable.OwnerID)
+	if len(targetStable.Horses) >= ownerTier.MaxHorses {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max capacity (%d horses) for prestige level %q — level up to unlock more slots!", ownerTier.MaxHorses, ownerTier.Name))
+		return
+	}
+
 	// Breed!
 	foal := genussy.Breed(sire, mare)
-
-	// Calculate inbreeding coefficient for the foal.
-	// We need to temporarily register the foal to compute its inbreeding,
-	// but we can also compute it from its parents' lineages.
-	inbreeding := 0.0
 
 	// Apply bloodline bonus via pedigreussy.
 	bloodlineBonus := pedigreussy.CalcBloodlineBonus(foal, sire.ID, mare.ID, s.stables.GetHorse)
 
 	// Apply bloodline bonus to fitness ceiling.
 	foal.FitnessCeiling *= bloodlineBonus
+
+	// Assign traits based on parentage.
+	s.trainer.AssignTraitsAtBirth(foal, sire, mare)
+
+	// Add the foal to the target stable BEFORE computing inbreeding,
+	// so the pedigree engine can look up the foal by ID.
+	if err := s.stables.AddHorseToStable(req.StableID, foal); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to add foal to stable: "+err.Error())
+		return
+	}
+
+	// Calculate inbreeding coefficient for the FOAL (not the sire).
+	// The foal must be in the stable manager so the pedigree engine can find it.
+	inbreeding := 0.0
+	if coeff, cErr := s.pedigree.CalcInbreedingCoefficient(foal.ID); cErr == nil {
+		inbreeding = coeff
+	}
 
 	// Apply inbreeding penalty to foal's fitness ceiling.
 	inbreedingPenalty := pedigreussy.InbreedingPenalty(inbreeding)
@@ -621,20 +824,41 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 	// Recompute current fitness (starts untrained at 50% of ceiling).
 	foal.CurrentFitness = foal.FitnessCeiling * 0.5
 
-	// Assign traits based on parentage.
-	s.trainer.AssignTraitsAtBirth(foal, sire, mare)
-
-	// Add the foal to the target stable.
-	if err := s.stables.AddHorseToStable(req.StableID, foal); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to add foal to stable: "+err.Error())
-		return
-	}
-
 	// Write-through: persist the new foal to DB.
 	s.persistHorse(r.Context(), foal)
 
+	// Set breeding cooldown on both parents.
+	sire.LastBredAt = time.Now()
+	mare.LastBredAt = time.Now()
+	s.syncHorseToStable(sire)
+	s.syncHorseToStable(mare)
+	s.persistHorse(r.Context(), sire)
+	s.persistHorse(r.Context(), mare)
+
+	// Grant 50 prestige XP for breeding.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		s.addPrestigeXP(claims.UserID, claims.Username, 50)
+	}
+
 	log.Printf("server: bred foal %q (%s) from sire %q and mare %q into stable %s (bloodline: %.4f)",
 		foal.Name, foal.ID, sire.Name, mare.Name, req.StableID, bloodlineBonus)
+
+	// Broadcast breeding event to all connected clients.
+	breedingEvent := map[string]interface{}{
+		"type": "breeding_event",
+		"foal": map[string]interface{}{
+			"id":       foal.ID,
+			"name":     foal.Name,
+			"sireName": sire.Name,
+			"mareName": mare.Name,
+		},
+		"stableID": req.StableID,
+		"lore":     foal.Lore,
+	}
+	if breedStable, err := s.stables.GetStable(req.StableID); err == nil {
+		breedingEvent["stableName"] = breedStable.Name
+	}
+	s.hub.BroadcastJSON(breedingEvent)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"foal":                  foal,
@@ -661,6 +885,23 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 	if len(req.HorseIDs) < 2 {
 		writeError(w, http.StatusBadRequest, "at least 2 horses are required to race")
 		return
+	}
+
+	// Ownership check: the requesting player must own at least one horse
+	// in the race. Other slots can be filled with AI / system horses or
+	// horses from other stables (to allow vs-AI and multiplayer races).
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		ownsAtLeastOne := false
+		for _, hid := range req.HorseIDs {
+			if s.userOwnsHorse(claims.UserID, hid) {
+				ownsAtLeastOne = true
+				break
+			}
+		}
+		if !ownsAtLeastOne {
+			http.Error(w, "you must enter at least one of your own horses in the race", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Validate track type.
@@ -758,6 +999,10 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 
 	// 2. Create and simulate the race with weather.
 	race := racussy.NewRace(horses, trackType, purse)
+
+	// Close any open betting pool for this race before simulation starts.
+	s.closeBettingPool(race.ID)
+
 	race = racussy.SimulateRaceWithWeather(race, horses, weather)
 
 	// 3. Generate the indexed narrative with weather context.
@@ -853,12 +1098,43 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 			}
 		}
 
+		// Win streak bonus: horses on a winning streak earn more.
+		if earnings > 0 {
+			stats := s.raceHistory.GetHorseStats(horse.ID)
+			// Streak is calculated BEFORE this race is recorded, so a win
+			// here means the streak is stats.CurrentStreak (prior streak) + 1.
+			streak := stats.CurrentStreak
+			if entry.FinishPlace == 1 && streak > 0 {
+				streak++ // this win extends the streak
+			}
+			if streak >= 2 {
+				streakMult := winStreakMultiplier(streak)
+				earnings = int64(float64(earnings) * streakMult)
+			}
+		}
+
+		// Prestige bonus: multiply earnings by the owner's prestige CummiesBonus.
+		if earnings > 0 {
+			ownerTier := s.getPrestigeTierForUser(horse.OwnerID)
+			if ownerTier.CummiesBonus > 1.0 {
+				earnings = int64(float64(earnings) * ownerTier.CummiesBonus)
+			}
+		}
+
 		horse.TotalEarnings += earnings
 
 		// Add earnings to the horse's stable.
 		if earnings > 0 {
 			s.addEarningsToStable(horse, earnings)
 		}
+
+		// Grant prestige XP for racing: 100 XP for wins, 25 XP for participation.
+		// Since runRace doesn't have request context, look up the owner from horse.
+		raceXP := int64(25) // participation XP
+		if entry.FinishPlace == 1 {
+			raceXP = 100 // win XP
+		}
+		s.addPrestigeXPForHorse(horse, raceXP)
 
 		// Apply post-race fatigue.
 		fatigue := racussy.CalcPostRaceFatigue(horse, race, entry.FinishPlace, weather)
@@ -885,10 +1161,9 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		}
 		s.raceHistory.RecordResult(result)
 
-		// Write-through: persist race result and horse state to DB.
+		// Write-through: persist race result to DB.
 		ctx := context.Background()
 		s.persistRaceResult(ctx, result)
-		s.persistHorse(ctx, horse)
 
 		// Sync horse state back to stable.
 		s.syncHorseToStable(horse)
@@ -903,6 +1178,55 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		if horse.Races == 10 {
 			s.trainer.AssignTraitOnMilestone(horse, "10_races")
 		}
+
+		// Write-through: persist horse state to DB AFTER milestone traits are assigned,
+		// so traits like "first_win" and "10_races" are persisted immediately.
+		s.persistHorse(ctx, horse)
+	}
+
+	// Resolve any betting pool for this race. The winner is the first entry
+	// in the sorted slice (FinishPlace == 1).
+	if len(sorted) > 0 {
+		s.resolveBets(race.ID, sorted[0].HorseID)
+	}
+
+	// Update rivalry records: the winner's count is incremented against each loser.
+	if len(sorted) > 1 {
+		winnerID := sorted[0].HorseID
+		s.rivalryMu.Lock()
+		if s.rivalries[winnerID] == nil {
+			s.rivalries[winnerID] = make(map[string]int)
+		}
+		for _, entry := range sorted[1:] {
+			s.rivalries[winnerID][entry.HorseID]++
+		}
+		s.rivalryMu.Unlock()
+	}
+
+	// Rivalry commentary: if two horses have raced 3+ times (combined head-to-head),
+	// add a rivalry narrative line to the race commentary.
+	if len(sorted) > 1 {
+		winnerID := sorted[0].HorseID
+		winnerName := ""
+		if h := horseMap[winnerID]; h != nil {
+			winnerName = h.Name
+		}
+		s.rivalryMu.RLock()
+		for _, entry := range sorted[1:] {
+			loserID := entry.HorseID
+			loserName := ""
+			if h := horseMap[loserID]; h != nil {
+				loserName = h.Name
+			}
+			// Count total head-to-head encounters (both directions).
+			h2h := s.rivalries[winnerID][loserID] + s.rivalries[loserID][winnerID]
+			if h2h >= 3 && winnerName != "" && loserName != "" {
+				rivalryLine := fmt.Sprintf("🔥 RIVALRY ALERT: %s and %s meet for the %dth time! %s takes this round.",
+					winnerName, loserName, h2h, winnerName)
+				narrative = append(narrative, rivalryLine)
+			}
+		}
+		s.rivalryMu.RUnlock()
 	}
 
 	// Broadcast tick-by-tick replay to WebSocket clients.
@@ -948,6 +1272,32 @@ func (s *Server) syncHorseToStable(horse *models.Horse) {
 	_ = s.stables.UpdateHorseStats(horse.ID, 0, 0, 0, horse.ELO)
 }
 
+// getStableForUser finds the stable owned by a given user ID.
+// Returns nil if no stable is found for the user.
+func (s *Server) getStableForUser(userID string) *models.Stable {
+	for _, stable := range s.stables.ListStables() {
+		if stable.OwnerID == userID {
+			return stable
+		}
+	}
+	return nil
+}
+
+// userOwnsHorse checks whether a user owns a specific horse by checking
+// if the horse exists in the user's stable.
+func (s *Server) userOwnsHorse(userID, horseID string) bool {
+	stable := s.getStableForUser(userID)
+	if stable == nil {
+		return false
+	}
+	for _, h := range stable.Horses {
+		if h.ID == horseID {
+			return true
+		}
+	}
+	return false
+}
+
 // checkAndApplyAchievements checks for new achievements for a horse and
 // adds them to the stable's achievement list.
 func (s *Server) checkAndApplyAchievements(horse *models.Horse) {
@@ -964,6 +1314,16 @@ func (s *Server) checkAndApplyAchievements(horse *models.Horse) {
 
 						// Write-through: persist achievement to DB.
 						s.persistAchievement(context.Background(), stable.ID, &a)
+
+						// Broadcast achievement unlock to all connected clients.
+						s.hub.BroadcastJSON(map[string]interface{}{
+							"type":        "achievement_unlocked",
+							"stableName":  stable.Name,
+							"stableID":    stable.ID,
+							"achievement": a.ID,
+							"name":        a.Name,
+							"description": a.Description,
+						})
 					}
 				}
 				return
@@ -980,6 +1340,41 @@ func hasAchievement(achievements []models.Achievement, id string) bool {
 		}
 	}
 	return false
+}
+
+// grantAchievementToStable grants an event-based achievement to a stable if
+// the stable doesn't already have it. Used for achievements that can't be
+// detected from horse/stable state alone (trades, challenges, bets, streaks).
+func (s *Server) grantAchievementToStable(stable *models.Stable, achievementID string) {
+	if stable == nil {
+		return
+	}
+	if hasAchievement(stable.Achievements, achievementID) {
+		return
+	}
+	def, ok := tournussy.AllAchievements[achievementID]
+	if !ok {
+		return
+	}
+	a := def
+	a.UnlockedAt = time.Now()
+	stable.Achievements = append(stable.Achievements, a)
+
+	log.Printf("server: achievement unlocked for stable %s: %s (%s)",
+		stable.Name, a.Name, a.Description)
+
+	// Write-through: persist achievement to DB.
+	s.persistAchievement(context.Background(), stable.ID, &a)
+
+	// Broadcast achievement unlock to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":        "achievement_unlocked",
+		"stableName":  stable.Name,
+		"stableID":    stable.ID,
+		"achievement": a.ID,
+		"name":        a.Name,
+		"description": a.Description,
+	})
 }
 
 // maxRaceCacheSize limits the number of races we keep in memory for replay.
@@ -1226,6 +1621,16 @@ func (s *Server) handleCheckHorseAchievements(w http.ResponseWriter, r *http.Req
 
 			// Write-through: persist achievement to DB.
 			s.persistAchievement(r.Context(), stable.ID, &a)
+
+			// Broadcast achievement unlock to all connected clients.
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type":        "achievement_unlocked",
+				"stableName":  stable.Name,
+				"stableID":    stable.ID,
+				"achievement": a.ID,
+				"name":        a.Name,
+				"description": a.Description,
+			})
 		}
 	}
 
@@ -1262,6 +1667,14 @@ func (s *Server) handleCreateListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership check: only the horse's owner can list it.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if !s.userOwnsHorse(claims.UserID, req.HorseID) {
+			http.Error(w, "you do not own this horse", http.StatusForbidden)
+			return
+		}
+	}
+
 	horse, err := s.stables.GetHorse(req.HorseID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "horse not found: "+err.Error())
@@ -1276,6 +1689,18 @@ func (s *Server) handleCreateListing(w http.ResponseWriter, r *http.Request) {
 
 	// Write-through: persist listing to DB.
 	s.persistListing(r.Context(), listing)
+
+	// Broadcast new market listing to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "market_update",
+		"action": "listed",
+		"listing": map[string]interface{}{
+			"id":        listing.ID,
+			"horseName": listing.HorseName,
+			"ownerID":   listing.OwnerID,
+			"price":     listing.Price,
+		},
+	})
 
 	log.Printf("server: listed horse %q (%s) on stud market for %d cummies", horse.Name, horse.ID, req.Price)
 	writeJSON(w, http.StatusCreated, listing)
@@ -1422,8 +1847,48 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 
 	tx.FoalID = foal.ID
 
+	// Write-through: persist the market transaction to DB.
+	s.persistMarketTransaction(r.Context(), tx)
+
 	log.Printf("server: stud purchase — %s bought breeding from %s, foal %q (%s) for %d cummies (burned %d)",
 		buyerStable.OwnerID, listing.OwnerID, foal.Name, foal.ID, listing.Price, tx.BurnAmount)
+
+	// Broadcast market purchase to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "market_update",
+		"action": "purchased",
+		"listing": map[string]interface{}{
+			"id":        listing.ID,
+			"horseName": listing.HorseName,
+			"ownerID":   listing.OwnerID,
+			"price":     listing.Price,
+		},
+		"buyerStable": buyerStable.Name,
+		"foalName":    foal.Name,
+	})
+
+	// Broadcast balance updates for buyer and seller stables.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":       "balance_update",
+		"stableID":   buyerStable.ID,
+		"newBalance": buyerStable.Cummies,
+	})
+	if sellerStable, err := s.stables.GetStable(sellerStableID); err == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":       "balance_update",
+			"stableID":   sellerStable.ID,
+			"newBalance": sellerStable.Cummies,
+		})
+	}
+
+	// Grant 30 prestige XP to the seller for the market sale.
+	if listing.OwnerID != "" && listing.OwnerID != "system" {
+		sellerName := listing.OwnerID
+		if ss, err := s.stables.GetStable(sellerStableID); err == nil {
+			sellerName = ss.Name
+		}
+		s.addPrestigeXP(listing.OwnerID, sellerName, 30)
+	}
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"transaction": tx,
@@ -1493,6 +1958,14 @@ func (s *Server) handleDelistListing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("server: delisted stud listing %s for horse %s", listingID, listing.HorseID)
+
+	// Broadcast delist event to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "market_update",
+		"action":    "delisted",
+		"listingID": listingID,
+	})
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "delisted", "listingID": listingID})
 }
 
@@ -1535,6 +2008,21 @@ func (s *Server) handleCreateTournament(w http.ResponseWriter, r *http.Request) 
 	// Write-through: persist tournament to DB.
 	s.persistTournament(r.Context(), tournament)
 
+	// Broadcast tournament creation via WebSocket.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "tournament_update",
+		"action": "created",
+		"tournament": map[string]interface{}{
+			"id":        tournament.ID,
+			"name":      tournament.Name,
+			"entryFee":  tournament.EntryFee,
+			"prizePool": tournament.PrizePool,
+			"trackType": tournament.TrackType,
+			"rounds":    tournament.Rounds,
+			"status":    tournament.Status,
+		},
+	})
+
 	writeJSON(w, http.StatusCreated, tournament)
 }
 
@@ -1570,6 +2058,13 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Look up the tournament to check entry fee.
+	tournament, err := s.tournaments.GetTournament(tournamentID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
 	horse, err := s.stables.GetHorse(req.HorseID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "horse not found: "+err.Error())
@@ -1581,20 +2076,84 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Collect entry fee if the tournament has one.
+	if tournament.EntryFee > 0 {
+		// Find the registering user's stable. Prefer JWT-authenticated user,
+		// fall back to the stableID in the request.
+		var payingStable *models.Stable
+		if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+			payingStable = s.getStableForUser(claims.UserID)
+		}
+		if payingStable == nil {
+			// Fall back to the stableID provided in the request.
+			payingStable, _ = s.stables.GetStable(req.StableID)
+		}
+		if payingStable == nil {
+			writeError(w, http.StatusBadRequest, "stable not found for entry fee payment")
+			return
+		}
+
+		// Check sufficient funds.
+		if payingStable.Cummies < tournament.EntryFee {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d entry fee", payingStable.Cummies, tournament.EntryFee))
+			return
+		}
+
+		// Deduct entry fee from stable.
+		payingStable.Cummies -= tournament.EntryFee
+
+		// Accumulate into tournament prize pool.
+		tournament.PrizePool += tournament.EntryFee
+
+		// Persist the stable after deduction.
+		s.persistStable(r.Context(), payingStable)
+
+		log.Printf("server: collected %d cummies entry fee from stable %s (%s) for tournament %s",
+			tournament.EntryFee, payingStable.Name, payingStable.ID, tournament.Name)
+	}
+
 	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, map[string]string{
+	// Write-through: persist updated tournament (with new registration + prize pool) to DB.
+	if updatedTournament, err := s.tournaments.GetTournament(tournamentID); err == nil {
+		s.persistTournament(r.Context(), updatedTournament)
+	}
+
+	// Broadcast horse registration via WebSocket.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "tournament_update",
+		"action": "horse_registered",
+		"tournament": map[string]interface{}{
+			"id":        tournament.ID,
+			"name":      tournament.Name,
+			"entryFee":  tournament.EntryFee,
+			"prizePool": tournament.PrizePool,
+			"status":    tournament.Status,
+		},
+		"horse": map[string]interface{}{
+			"id":       horse.ID,
+			"name":     horse.Name,
+			"stableID": req.StableID,
+		},
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"status":       "registered",
 		"tournamentID": tournamentID,
 		"horseID":      req.HorseID,
+		"entryFeePaid": tournament.EntryFee,
+		"prizePool":    tournament.PrizePool,
 	})
 }
 
 func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	tournamentID := r.PathValue("id")
+
+	// Auth note: any authenticated user can trigger tournament races for now.
+	// Organizer-only check will be added in a future update.
 
 	// Get tournament to find registered horses.
 	tournament, err := s.tournaments.GetTournament(tournamentID)
@@ -1632,8 +2191,17 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-open a betting pool for this tournament race so spectators
+	// who have been waiting can place bets. In a future async implementation,
+	// this would have a timed betting window. For now, the pool is opened
+	// and immediately closed before simulation.
+	s.openBettingPool(race.ID, horses)
+
 	// Generate weather.
 	weather := tournussy.RandomWeatherForTrack(tournament.TrackType)
+
+	// Close betting pool before simulation starts.
+	s.closeBettingPool(race.ID)
 
 	// Simulate the race with weather.
 	race = racussy.SimulateRaceWithWeather(race, horses, weather)
@@ -1652,6 +2220,14 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 
 	// Apply all post-race processing (ELO, fatigue, history, achievements).
 	s.applyPostRaceEffects(race, horses, weather)
+
+	// Resolve betting pool for this tournament race.
+	for _, entry := range race.Entries {
+		if entry.FinishPlace == 1 {
+			s.resolveBets(race.ID, entry.HorseID)
+			break
+		}
+	}
 
 	// Write-through: persist tournament state after round.
 	updatedTournament, _ := s.tournaments.GetTournament(tournamentID)
@@ -1672,6 +2248,28 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 
 	// Get updated standings.
 	standings := s.tournaments.GetStandings(tournamentID)
+
+	// Broadcast round completion via WebSocket.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "tournament_update",
+		"action": "round_complete",
+		"tournament": map[string]interface{}{
+			"id":           tournament.ID,
+			"name":         tournament.Name,
+			"currentRound": updatedTournament.CurrentRound,
+			"totalRounds":  updatedTournament.Rounds,
+			"status":       updatedTournament.Status,
+			"prizePool":    updatedTournament.PrizePool,
+		},
+		"raceID":    race.ID,
+		"weather":   weather,
+		"standings": standings,
+	})
+
+	// If tournament is now finished, distribute the prize pool.
+	if updatedTournament != nil && updatedTournament.Status == "Finished" {
+		s.distributeTournamentPrizes(r.Context(), updatedTournament, standings)
+	}
 
 	log.Printf("server: tournament %s round completed, race %s, weather: %s",
 		tournamentID, race.ID, weather)
@@ -1765,11 +2363,38 @@ func (s *Server) applyPostRaceEffects(race *models.Race, horses []*models.Horse,
 			}
 		}
 
+		// Win streak bonus: horses on a winning streak earn more.
+		if earnings > 0 {
+			stats := s.raceHistory.GetHorseStats(horse.ID)
+			streak := stats.CurrentStreak
+			if entry.FinishPlace == 1 && streak > 0 {
+				streak++
+			}
+			if streak >= 2 {
+				earnings = int64(float64(earnings) * winStreakMultiplier(streak))
+			}
+		}
+
+		// Prestige bonus: multiply earnings by the owner's prestige CummiesBonus.
+		if earnings > 0 {
+			ownerTier := s.getPrestigeTierForUser(horse.OwnerID)
+			if ownerTier.CummiesBonus > 1.0 {
+				earnings = int64(float64(earnings) * ownerTier.CummiesBonus)
+			}
+		}
+
 		horse.TotalEarnings += earnings
 
 		if earnings > 0 {
 			s.addEarningsToStable(horse, earnings)
 		}
+
+		// Grant prestige XP: 100 XP for wins, 25 XP for participation.
+		raceXP := int64(25)
+		if entry.FinishPlace == 1 {
+			raceXP = 100
+		}
+		s.addPrestigeXPForHorse(horse, raceXP)
 
 		fatigue := racussy.CalcPostRaceFatigue(horse, race, entry.FinishPlace, weather)
 		horse.Fatigue += fatigue
@@ -1801,6 +2426,128 @@ func (s *Server) applyPostRaceEffects(race *models.Race, horses []*models.Horse,
 
 		s.syncHorseToStable(horse)
 		s.checkAndApplyAchievements(horse)
+	}
+}
+
+// distributeTournamentPrizes distributes the tournament prize pool to the top 3
+// finishers and burns 5%. Called when a tournament transitions to "Finished".
+//
+// Prize distribution: 1st=60%, 2nd=25%, 3rd=10%, burned=5%.
+func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *models.Tournament, standings []models.TournamentEntry) {
+	if tournament.PrizePool <= 0 || len(standings) == 0 {
+		return
+	}
+
+	prizePool := tournament.PrizePool
+	firstPrize := int64(float64(prizePool) * 0.60)
+	secondPrize := int64(float64(prizePool) * 0.25)
+	thirdPrize := int64(float64(prizePool) * 0.10)
+	burnAmount := prizePool - firstPrize - secondPrize - thirdPrize // ~5%, absorbs rounding
+
+	type prizeInfo struct {
+		place    int
+		stableID string
+		name     string
+		amount   int64
+	}
+	var prizes []prizeInfo
+
+	// Helper: find a stable by ID.
+	findStable := func(stableID string) *models.Stable {
+		st, err := s.stables.GetStable(stableID)
+		if err != nil {
+			return nil
+		}
+		return st
+	}
+
+	// Award prizes to top 3 (or fewer if less than 3 entries).
+	prizeAmounts := []int64{firstPrize, secondPrize, thirdPrize}
+	for i := 0; i < len(standings) && i < 3; i++ {
+		entry := standings[i]
+		stable := findStable(entry.StableID)
+		if stable == nil {
+			log.Printf("server: tournament prize — stable %s not found for horse %s, skipping prize",
+				entry.StableID, entry.HorseName)
+			continue
+		}
+
+		prize := prizeAmounts[i]
+		stable.Cummies += prize
+		stable.TotalEarnings += prize
+		s.persistStable(ctx, stable)
+
+		prizes = append(prizes, prizeInfo{
+			place:    i + 1,
+			stableID: stable.ID,
+			name:     stable.Name,
+			amount:   prize,
+		})
+
+		// Grant prestige XP for tournament placement: 500 XP for 1st, 250 for 2nd, 100 for 3rd.
+		tournXP := int64(0)
+		switch i {
+		case 0:
+			tournXP = 500
+		case 1:
+			tournXP = 250
+		case 2:
+			tournXP = 100
+		}
+		if tournXP > 0 {
+			s.addPrestigeXP(stable.OwnerID, stable.Name, tournXP)
+		}
+
+		log.Printf("server: tournament %s — %s place: %s (%s) receives %d cummies",
+			tournament.Name, ordinal(i+1), stable.Name, stable.ID, prize)
+	}
+
+	log.Printf("server: tournament %s — %d cummies burned (5%% tax)", tournament.Name, burnAmount)
+
+	// Build WS broadcast payload.
+	wsPrizes := make([]map[string]interface{}, len(prizes))
+	for i, p := range prizes {
+		wsPrizes[i] = map[string]interface{}{
+			"place":      p.place,
+			"stableID":   p.stableID,
+			"stableName": p.name,
+			"amount":     p.amount,
+		}
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":           "tournament_prize",
+		"tournamentID":   tournament.ID,
+		"tournamentName": tournament.Name,
+		"prizePool":      prizePool,
+		"prizes":         wsPrizes,
+		"burned":         burnAmount,
+	})
+
+	// Also broadcast the tournament_finished event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "tournament_update",
+		"action": "finished",
+		"tournament": map[string]interface{}{
+			"id":        tournament.ID,
+			"name":      tournament.Name,
+			"prizePool": prizePool,
+			"status":    tournament.Status,
+		},
+	})
+}
+
+// ordinal returns the English ordinal suffix for an integer (1st, 2nd, 3rd, etc.).
+func ordinal(n int) string {
+	switch n {
+	case 1:
+		return "1st"
+	case 2:
+		return "2nd"
+	case 3:
+		return "3rd"
+	default:
+		return fmt.Sprintf("%dth", n)
 	}
 }
 
@@ -1871,6 +2618,19 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Broadcast trade creation to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "trade_update",
+		"action": "created",
+		"trade": map[string]interface{}{
+			"id":           offer.ID,
+			"fromStableID": offer.FromStableID,
+			"toStableID":   offer.ToStableID,
+			"horseName":    offer.HorseName,
+			"cummies":      offer.Price,
+		},
+	})
+
 	writeJSON(w, http.StatusCreated, offer)
 }
 
@@ -1940,11 +2700,66 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Broadcast trade acceptance to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "trade_update",
+		"action": "accepted",
+		"trade": map[string]interface{}{
+			"id":           offer.ID,
+			"fromStableID": offer.FromStableID,
+			"toStableID":   offer.ToStableID,
+			"horseName":    offer.HorseName,
+			"cummies":      offer.Price,
+		},
+	})
+
+	// Broadcast balance updates for both stables involved in the trade.
+	if offer.Price > 0 {
+		if updatedTo, err := s.stables.GetStable(offer.ToStableID); err == nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type":       "balance_update",
+				"stableID":   updatedTo.ID,
+				"newBalance": updatedTo.Cummies,
+			})
+		}
+		if updatedFrom, err := s.stables.GetStable(offer.FromStableID); err == nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type":       "balance_update",
+				"stableID":   updatedFrom.ID,
+				"newBalance": updatedFrom.Cummies,
+			})
+		}
+	}
+
+	// Grant first_trade achievement to both stables involved.
+	if fromStable, err := s.stables.GetStable(offer.FromStableID); err == nil {
+		s.grantAchievementToStable(fromStable, "first_trade")
+	}
+	if toStable, err := s.stables.GetStable(offer.ToStableID); err == nil {
+		s.grantAchievementToStable(toStable, "first_trade")
+	}
+
 	writeJSON(w, http.StatusOK, offer)
 }
 
 func (s *Server) handleRejectTrade(w http.ResponseWriter, r *http.Request) {
 	tradeID := r.PathValue("id")
+
+	// Look up the trade first to verify ownership.
+	offer, err := s.trades.GetOffer(tradeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Ownership check: only the recipient (ToStableID) can reject a trade.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		userStable := s.getStableForUser(claims.UserID)
+		if userStable == nil || userStable.ID != offer.ToStableID {
+			http.Error(w, "only the trade recipient can reject this trade", http.StatusForbidden)
+			return
+		}
+	}
 
 	if err := s.trades.RejectOffer(tradeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1961,11 +2776,40 @@ func (s *Server) handleRejectTrade(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Broadcast trade rejection to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "trade_update",
+		"action": "rejected",
+		"trade": map[string]interface{}{
+			"id":           offer.ID,
+			"fromStableID": offer.FromStableID,
+			"toStableID":   offer.ToStableID,
+			"horseName":    offer.HorseName,
+			"cummies":      offer.Price,
+		},
+	})
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "rejected", "tradeID": tradeID})
 }
 
 func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 	tradeID := r.PathValue("id")
+
+	// Look up the trade first to verify ownership.
+	offer, err := s.trades.GetOffer(tradeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Ownership check: only the sender (FromStableID) can cancel a trade.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		userStable := s.getStableForUser(claims.UserID)
+		if userStable == nil || userStable.ID != offer.FromStableID {
+			http.Error(w, "only the trade sender can cancel this trade", http.StatusForbidden)
+			return
+		}
+	}
 
 	if err := s.trades.CancelOffer(tradeID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -1982,6 +2826,19 @@ func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Broadcast trade cancellation to all connected clients.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "trade_update",
+		"action": "cancelled",
+		"trade": map[string]interface{}{
+			"id":           offer.ID,
+			"fromStableID": offer.FromStableID,
+			"toStableID":   offer.ToStableID,
+			"horseName":    offer.HorseName,
+			"cummies":      offer.Price,
+		},
+	})
+
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "tradeID": tradeID})
 }
 
@@ -1990,6 +2847,14 @@ func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 
 func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
+	// Admin check: only the admin user "mojo" can advance the season.
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if claims.Username != "mojo" {
+			http.Error(w, "admin only", http.StatusForbidden)
+			return
+		}
+	}
+
 	// Parse optional season from request body. Default to 0 (any season).
 	var req struct {
 		Season int `json:"season"`
@@ -2087,6 +2952,356 @@ func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 }
 
 // ===========================================================================
+// Leaderboard & Season handlers
+// ===========================================================================
+
+// seasonNames is a pool of fun names for competitive seasons. The season
+// number is used as an index (mod length) so names cycle deterministically.
+var seasonNames = []string{
+	"The Ussening",
+	"Cummy Thunder",
+	"Hooves of Fury",
+	"Mane Event",
+	"The Great Gallop",
+	"Stallion Showdown",
+	"Legendary Stampede",
+	"Breeding Frenzy",
+	"Track Terror",
+	"Foal Play",
+	"Neigh Sayers",
+	"The Stud Games",
+	"Bridle Royale",
+	"Gallop Gala",
+	"Triple Crown Chaos",
+	"Pedigree Pandemonium",
+	"Trot of War",
+	"Saddled Up",
+	"Furlong Frenzy",
+	"The Derby of Doom",
+}
+
+// generateSeasonName returns a fun season name like "Season 3: Hooves of Fury".
+func generateSeasonName(seasonNumber int) string {
+	name := seasonNames[(seasonNumber-1)%len(seasonNames)]
+	return fmt.Sprintf("Season %d: %s", seasonNumber, name)
+}
+
+// handleGetLeaderboard returns a ranked list of stables sorted by the
+// requested metric. Query params: sort (elo|wins|earnings|winrate|streak),
+// limit (default 20).
+func (s *Server) handleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
+	sortBy := r.URL.Query().Get("sort")
+	if sortBy == "" {
+		sortBy = "elo"
+	}
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	allStables := s.stables.ListStables()
+	entries := make([]models.LeaderboardEntry, 0, len(allStables))
+
+	for _, stable := range allStables {
+		var (
+			totalWins   int
+			totalLosses int
+			totalRaces  int
+			totalELO    float64
+			earnings    int64
+			bestHorse   string
+			bestELO     float64
+			bestStreak  int
+		)
+
+		for _, h := range stable.Horses {
+			totalWins += h.Wins
+			totalLosses += h.Losses
+			totalRaces += h.Races
+			totalELO += h.ELO
+			earnings += h.TotalEarnings
+
+			if h.ELO > bestELO {
+				bestELO = h.ELO
+				bestHorse = h.Name
+			}
+
+			stats := s.raceHistory.GetHorseStats(h.ID)
+			if stats.CurrentStreak > bestStreak {
+				bestStreak = stats.CurrentStreak
+			}
+		}
+
+		avgELO := 0.0
+		if len(stable.Horses) > 0 {
+			avgELO = totalELO / float64(len(stable.Horses))
+		}
+
+		winRate := 0.0
+		if totalRaces > 0 {
+			winRate = float64(totalWins) / float64(totalRaces)
+		}
+
+		entries = append(entries, models.LeaderboardEntry{
+			StableID:   stable.ID,
+			StableName: stable.Name,
+			OwnerName:  stable.OwnerID,
+			ELO:        int(avgELO),
+			Wins:       totalWins,
+			Losses:     totalLosses,
+			WinRate:    winRate,
+			TotalRaces: totalRaces,
+			Earnings:   earnings,
+			BestHorse:  bestHorse,
+			BestELO:    int(bestELO),
+			Streak:     bestStreak,
+		})
+	}
+
+	switch sortBy {
+	case "wins":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Wins > entries[j].Wins })
+	case "earnings":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Earnings > entries[j].Earnings })
+	case "winrate":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].WinRate > entries[j].WinRate })
+	case "streak":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Streak > entries[j].Streak })
+	default:
+		sort.Slice(entries, func(i, j int) bool { return entries[i].ELO > entries[j].ELO })
+	}
+
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// handleGetHorseLeaderboard returns a ranked list of individual horses.
+// Query params: sort (elo|wins|earnings), limit (default 20).
+func (s *Server) handleGetHorseLeaderboard(w http.ResponseWriter, r *http.Request) {
+	sortBy := r.URL.Query().Get("sort")
+	if sortBy == "" {
+		sortBy = "elo"
+	}
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	allStables := s.stables.ListStables()
+	entries := make([]models.HorseLeaderboardEntry, 0)
+
+	for _, stable := range allStables {
+		for _, h := range stable.Horses {
+			stats := s.raceHistory.GetHorseStats(h.ID)
+
+			winRate := 0.0
+			if h.Races > 0 {
+				winRate = float64(h.Wins) / float64(h.Races)
+			}
+
+			entries = append(entries, models.HorseLeaderboardEntry{
+				HorseID:    h.ID,
+				HorseName:  h.Name,
+				StableID:   stable.ID,
+				StableName: stable.Name,
+				ELO:        int(h.ELO),
+				Wins:       h.Wins,
+				Losses:     h.Losses,
+				WinRate:    winRate,
+				TotalRaces: h.Races,
+				Earnings:   h.TotalEarnings,
+				Streak:     stats.CurrentStreak,
+			})
+		}
+	}
+
+	switch sortBy {
+	case "wins":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Wins > entries[j].Wins })
+	case "earnings":
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Earnings > entries[j].Earnings })
+	default:
+		sort.Slice(entries, func(i, j int) bool { return entries[i].ELO > entries[j].ELO })
+	}
+
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	for i := range entries {
+		entries[i].Rank = i + 1
+	}
+
+	writeJSON(w, http.StatusOK, entries)
+}
+
+// handleListSeasons returns all past seasons plus the current one.
+func (s *Server) handleListSeasons(w http.ResponseWriter, r *http.Request) {
+	s.seasonMu.RLock()
+	defer s.seasonMu.RUnlock()
+
+	all := make([]models.Season, 0, len(s.pastSeasons)+1)
+	all = append(all, s.pastSeasons...)
+	if s.currentSeason != nil {
+		all = append(all, *s.currentSeason)
+	}
+
+	writeJSON(w, http.StatusOK, all)
+}
+
+// handleGetCurrentSeason returns the current active season.
+func (s *Server) handleGetCurrentSeason(w http.ResponseWriter, r *http.Request) {
+	s.seasonMu.RLock()
+	defer s.seasonMu.RUnlock()
+
+	if s.currentSeason == nil {
+		writeError(w, http.StatusNotFound, "no active season")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.currentSeason)
+}
+
+// handleEndSeason ends the current competitive season. Admin only (username == "mojo").
+// It archives the season with top 10 champions, distributes cummies rewards,
+// soft-resets ELO (50% toward 1200 baseline), and starts a new season.
+func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok || claims.Username != "mojo" {
+		writeError(w, http.StatusForbidden, "admin only")
+		return
+	}
+
+	s.seasonMu.Lock()
+	defer s.seasonMu.Unlock()
+
+	if s.currentSeason == nil || !s.currentSeason.Active {
+		writeError(w, http.StatusBadRequest, "no active season to end")
+		return
+	}
+
+	allStables := s.stables.ListStables()
+
+	type stableRank struct {
+		stable   *models.Stable
+		avgELO   float64
+		wins     int
+		earnings int64
+	}
+	ranks := make([]stableRank, 0, len(allStables))
+
+	for _, stable := range allStables {
+		var totalELO float64
+		var wins int
+		var earnings int64
+		for _, h := range stable.Horses {
+			totalELO += h.ELO
+			wins += h.Wins
+			earnings += h.TotalEarnings
+		}
+		avgELO := 0.0
+		if len(stable.Horses) > 0 {
+			avgELO = totalELO / float64(len(stable.Horses))
+		}
+		ranks = append(ranks, stableRank{
+			stable:   stable,
+			avgELO:   avgELO,
+			wins:     wins,
+			earnings: earnings,
+		})
+	}
+
+	sort.Slice(ranks, func(i, j int) bool { return ranks[i].avgELO > ranks[j].avgELO })
+
+	rewardTiers := map[int]int64{
+		1: 10000,
+		2: 5000,
+		3: 2500,
+	}
+
+	topN := 10
+	if len(ranks) < topN {
+		topN = len(ranks)
+	}
+
+	champions := make([]models.SeasonChampion, 0, topN)
+	for i := 0; i < topN; i++ {
+		place := i + 1
+		reward, exists := rewardTiers[place]
+		if !exists {
+			reward = 1000
+		}
+
+		ranks[i].stable.Cummies += reward
+
+		champions = append(champions, models.SeasonChampion{
+			Place:      place,
+			StableID:   ranks[i].stable.ID,
+			StableName: ranks[i].stable.Name,
+			ELO:        int(ranks[i].avgELO),
+			Wins:       ranks[i].wins,
+			Earnings:   ranks[i].earnings,
+			Reward:     reward,
+		})
+	}
+
+	s.currentSeason.Active = false
+	s.currentSeason.EndedAt = time.Now()
+	s.currentSeason.Champions = champions
+
+	endedSeason := *s.currentSeason
+	s.pastSeasons = append(s.pastSeasons, endedSeason)
+
+	const baseline = 1200.0
+	for _, stable := range allStables {
+		for i := range stable.Horses {
+			oldELO := stable.Horses[i].ELO
+			stable.Horses[i].ELO = oldELO + (baseline-oldELO)*0.5
+		}
+		s.persistStable(r.Context(), stable)
+	}
+
+	newSeasonNum := endedSeason.ID + 1
+	s.currentSeason = &models.Season{
+		ID:        newSeasonNum,
+		Name:      generateSeasonName(newSeasonNum),
+		StartedAt: time.Now(),
+		Active:    true,
+	}
+
+	if s.hub != nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "season_ended",
+			"data": map[string]interface{}{
+				"endedSeason": endedSeason,
+				"newSeason":   s.currentSeason,
+				"champions":   champions,
+			},
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":     "Season ended successfully",
+		"endedSeason": endedSeason,
+		"newSeason":   s.currentSeason,
+		"champions":   champions,
+	})
+}
+
+// ===========================================================================
 // Weather handler
 // ===========================================================================
 
@@ -2148,6 +3363,585 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	commussy.ServeWs(s.hub, w, r, userID, username, isGuest)
+}
+
+// ===========================================================================
+// Challenge (Head-to-Head) API handlers
+// ===========================================================================
+
+// handleCreateChallenge processes POST /api/challenges.
+// Body: {defenderName, horseID, wager}
+func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required to create a challenge")
+		return
+	}
+
+	var req struct {
+		DefenderName string `json:"defenderName"`
+		HorseID      string `json:"horseID"`
+		Wager        int64  `json:"wager"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.DefenderName == "" || req.HorseID == "" {
+		writeError(w, http.StatusBadRequest, "defenderName and horseID are required")
+		return
+	}
+
+	// Strip @ prefix if present.
+	defenderName := strings.TrimPrefix(req.DefenderName, "@")
+
+	// Can't challenge yourself.
+	if strings.EqualFold(defenderName, claims.Username) {
+		writeError(w, http.StatusBadRequest, "you can't challenge yourself, weirdo")
+		return
+	}
+
+	challenge, errMsg := s.createChallenge(claims.UserID, claims.Username, defenderName, req.HorseID, req.Wager)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	// Grant first_challenge achievement for issuing a challenge.
+	if stable := s.getStableForUser(claims.UserID); stable != nil {
+		s.grantAchievementToStable(stable, "first_challenge")
+	}
+
+	writeJSON(w, http.StatusCreated, challenge)
+}
+
+// handleAcceptChallenge processes POST /api/challenges/{id}/accept.
+// Body: {horseID}
+func (s *Server) handleAcceptChallenge(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required to accept a challenge")
+		return
+	}
+
+	challengeID := r.PathValue("id")
+	if challengeID == "" {
+		writeError(w, http.StatusBadRequest, "challenge ID is required")
+		return
+	}
+
+	var req struct {
+		HorseID string `json:"horseID"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.HorseID == "" {
+		writeError(w, http.StatusBadRequest, "horseID is required")
+		return
+	}
+
+	result, errMsg := s.acceptChallenge(challengeID, claims.UserID, req.HorseID)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	// Grant first_challenge achievement for accepting a challenge.
+	if stable := s.getStableForUser(claims.UserID); stable != nil {
+		s.grantAchievementToStable(stable, "first_challenge")
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleDeclineChallenge processes POST /api/challenges/{id}/decline.
+func (s *Server) handleDeclineChallenge(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required to decline a challenge")
+		return
+	}
+
+	challengeID := r.PathValue("id")
+	if challengeID == "" {
+		writeError(w, http.StatusBadRequest, "challenge ID is required")
+		return
+	}
+
+	errMsg := s.declineChallenge(challengeID, claims.UserID)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "declined"})
+}
+
+// handleListChallenges processes GET /api/challenges.
+// Optional query param: ?user=<userID> to filter by participant.
+func (s *Server) handleListChallenges(w http.ResponseWriter, r *http.Request) {
+	userFilter := r.URL.Query().Get("user")
+
+	s.challengeMu.RLock()
+	defer s.challengeMu.RUnlock()
+
+	var result []*models.Challenge
+	for _, c := range s.challenges {
+		if c.Status != models.ChallengeStatusPending {
+			continue
+		}
+		if userFilter != "" && c.ChallengerID != userFilter && c.DefenderID != userFilter {
+			continue
+		}
+		result = append(result, c)
+	}
+
+	// Sort by creation time, newest first.
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// ---------------------------------------------------------------------------
+// Challenge core logic (shared by API and chat handlers)
+// ---------------------------------------------------------------------------
+
+// createChallenge creates a new head-to-head challenge. Returns the challenge
+// on success, or an error message string on failure.
+func (s *Server) createChallenge(challengerID, challengerName, defenderName, horseID string, wager int64) (*models.Challenge, string) {
+	// Verify challenger owns the horse.
+	if !s.userOwnsHorse(challengerID, horseID) {
+		return nil, "you don't own that horse"
+	}
+
+	// Look up the horse.
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil {
+		return nil, "horse not found: " + horseID
+	}
+	if horse.Retired {
+		return nil, fmt.Sprintf("horse %s is retired and cannot race", horse.Name)
+	}
+
+	// Find the defender by username. We look through stables and match by
+	// checking if the user repo has a matching username, or fall back to
+	// matching stable owner names.
+	defenderID, defenderUsername := s.findUserByUsername(defenderName)
+	if defenderID == "" {
+		return nil, fmt.Sprintf("player %q not found", defenderName)
+	}
+
+	// Can't challenge yourself (belt-and-suspenders check with IDs).
+	if defenderID == challengerID {
+		return nil, "you can't challenge yourself"
+	}
+
+	// Verify challenger has enough cummies for the wager.
+	if wager > 0 {
+		challengerStable := s.getStableForUser(challengerID)
+		if challengerStable == nil {
+			return nil, "you don't have a stable"
+		}
+		if challengerStable.Cummies < wager {
+			return nil, fmt.Sprintf("insufficient cummies: you have ₵%d but wagered ₵%d", challengerStable.Cummies, wager)
+		}
+	}
+
+	// Check for existing pending challenge between these two.
+	s.challengeMu.RLock()
+	for _, c := range s.challenges {
+		if c.Status == models.ChallengeStatusPending &&
+			c.ChallengerID == challengerID && c.DefenderID == defenderID {
+			s.challengeMu.RUnlock()
+			return nil, fmt.Sprintf("you already have a pending challenge against %s", defenderUsername)
+		}
+	}
+	s.challengeMu.RUnlock()
+
+	now := time.Now()
+	challenge := &models.Challenge{
+		ID:                  uuid.New().String(),
+		ChallengerID:        challengerID,
+		ChallengerName:      challengerName,
+		ChallengerHorse:     horseID,
+		ChallengerHorseName: horse.Name,
+		DefenderID:          defenderID,
+		DefenderName:        defenderUsername,
+		Wager:               wager,
+		Status:              models.ChallengeStatusPending,
+		CreatedAt:           now,
+		ExpiresAt:           now.Add(5 * time.Minute),
+	}
+
+	s.challengeMu.Lock()
+	s.challenges[challenge.ID] = challenge
+	s.challengeMu.Unlock()
+
+	// Broadcast the challenge to all connected clients.
+	wagerText := ""
+	if wager > 0 {
+		wagerText = fmt.Sprintf(" for ₵%d", wager)
+	}
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "challenge",
+		"action":    "created",
+		"challenge": challenge,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ %s challenges %s to a 1v1 race! (%s vs ???)%s — /accept or /decline within 5 minutes!",
+			challengerName, defenderUsername, horse.Name, wagerText),
+		"ts": now.Unix(),
+	})
+
+	log.Printf("server: challenge created: %s (%s) vs %s, horse=%s, wager=%d",
+		challengerName, challenge.ID, defenderUsername, horse.Name, wager)
+
+	return challenge, ""
+}
+
+// acceptChallenge accepts a pending challenge, runs the 1v1 race, and
+// distributes winnings. Returns the race result on success.
+func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID string) (interface{}, string) {
+	s.challengeMu.Lock()
+	challenge, exists := s.challenges[challengeID]
+	if !exists {
+		s.challengeMu.Unlock()
+		return nil, "challenge not found"
+	}
+
+	if challenge.Status != models.ChallengeStatusPending {
+		s.challengeMu.Unlock()
+		return nil, fmt.Sprintf("challenge is no longer pending (status: %s)", challenge.Status)
+	}
+
+	if time.Now().After(challenge.ExpiresAt) {
+		challenge.Status = models.ChallengeStatusExpired
+		s.challengeMu.Unlock()
+		return nil, "challenge has expired"
+	}
+
+	if challenge.DefenderID != defenderUserID {
+		s.challengeMu.Unlock()
+		return nil, "you are not the defender in this challenge"
+	}
+
+	// Mark as accepted so no one else can grab it.
+	challenge.Status = models.ChallengeStatusAccepted
+	s.challengeMu.Unlock()
+
+	// Verify defender owns the horse.
+	if !s.userOwnsHorse(defenderUserID, defenderHorseID) {
+		s.challengeMu.Lock()
+		challenge.Status = models.ChallengeStatusPending // Revert.
+		s.challengeMu.Unlock()
+		return nil, "you don't own that horse"
+	}
+
+	defenderHorse, err := s.stables.GetHorse(defenderHorseID)
+	if err != nil {
+		s.challengeMu.Lock()
+		challenge.Status = models.ChallengeStatusPending
+		s.challengeMu.Unlock()
+		return nil, "horse not found: " + defenderHorseID
+	}
+	if defenderHorse.Retired {
+		s.challengeMu.Lock()
+		challenge.Status = models.ChallengeStatusPending
+		s.challengeMu.Unlock()
+		return nil, fmt.Sprintf("horse %s is retired and cannot race", defenderHorse.Name)
+	}
+
+	// Set the defender's horse on the challenge.
+	challenge.DefenderHorse = defenderHorseID
+	challenge.DefenderHorseName = defenderHorse.Name
+
+	// Handle wager escrow: deduct wager from both players.
+	challengerStable := s.getStableForUser(challenge.ChallengerID)
+	defenderStable := s.getStableForUser(defenderUserID)
+
+	if challenge.Wager > 0 {
+		if challengerStable == nil || defenderStable == nil {
+			s.challengeMu.Lock()
+			challenge.Status = models.ChallengeStatusPending
+			s.challengeMu.Unlock()
+			return nil, "both players must have stables to wager"
+		}
+		if challengerStable.Cummies < challenge.Wager {
+			s.challengeMu.Lock()
+			challenge.Status = models.ChallengeStatusPending
+			s.challengeMu.Unlock()
+			return nil, fmt.Sprintf("challenger %s no longer has enough cummies (needs ₵%d)", challenge.ChallengerName, challenge.Wager)
+		}
+		if defenderStable.Cummies < challenge.Wager {
+			s.challengeMu.Lock()
+			challenge.Status = models.ChallengeStatusPending
+			s.challengeMu.Unlock()
+			return nil, fmt.Sprintf("you don't have enough cummies (need ₵%d, have ₵%d)", challenge.Wager, defenderStable.Cummies)
+		}
+
+		// Escrow: deduct wager from both.
+		challengerStable.Cummies -= challenge.Wager
+		defenderStable.Cummies -= challenge.Wager
+	}
+
+	// Resolve challenger horse.
+	challengerHorse, err := s.stables.GetHorse(challenge.ChallengerHorse)
+	if err != nil {
+		// Refund wagers if escrowed.
+		if challenge.Wager > 0 {
+			challengerStable.Cummies += challenge.Wager
+			defenderStable.Cummies += challenge.Wager
+		}
+		s.challengeMu.Lock()
+		challenge.Status = models.ChallengeStatusPending
+		s.challengeMu.Unlock()
+		return nil, "challenger's horse no longer exists"
+	}
+
+	// Broadcast the acceptance.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "challenge",
+		"action":    "accepted",
+		"challenge": challenge,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("⚔️ %s accepts the challenge! %s vs %s — RACE IS ON!",
+			challenge.DefenderName, challenge.ChallengerHorseName, defenderHorse.Name),
+		"ts": time.Now().Unix(),
+	})
+
+	// Run the 1v1 race! Pick a random track for variety.
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+	trackType := tracks[rand.IntN(len(tracks))]
+
+	// Base purse for challenges (non-wager reward).
+	basePurse := int64(500)
+	horses := []*models.Horse{challengerHorse, defenderHorse}
+	result := s.runRace(horses, trackType, basePurse)
+
+	// Determine winner and distribute wager winnings.
+	var winnerID, winnerName, loserName string
+	for _, entry := range result.Race.Entries {
+		if entry.FinishPlace == 1 {
+			if entry.HorseID == challengerHorse.ID {
+				winnerID = challenge.ChallengerID
+				winnerName = challenge.ChallengerName
+				loserName = challenge.DefenderName
+			} else {
+				winnerID = challenge.DefenderID
+				winnerName = challenge.DefenderName
+				loserName = challenge.ChallengerName
+			}
+			break
+		}
+	}
+
+	// Distribute wager to winner (minus 5% burn).
+	wagerEarnings := int64(0)
+	wagerBurn := int64(0)
+	if challenge.Wager > 0 && winnerID != "" {
+		totalPot := challenge.Wager * 2      // Both players wagered
+		wagerBurn = totalPot * 5 / 100       // 5% burn
+		wagerEarnings = totalPot - wagerBurn // Winner gets the rest
+
+		winnerStable := s.getStableForUser(winnerID)
+		if winnerStable != nil {
+			winnerStable.Cummies += wagerEarnings
+			winnerStable.TotalEarnings += wagerEarnings
+			s.persistStable(context.Background(), winnerStable)
+		}
+
+		// Persist loser's stable too (wager was already deducted).
+		loserStable := s.getStableForUser(challenge.DefenderID)
+		if winnerID == challenge.DefenderID {
+			loserStable = s.getStableForUser(challenge.ChallengerID)
+		}
+		if loserStable != nil {
+			s.persistStable(context.Background(), loserStable)
+		}
+
+		log.Printf("server: challenge wager settled: %s won ₵%d (burn: ₵%d)",
+			winnerName, wagerEarnings, wagerBurn)
+	}
+
+	// Mark challenge as completed.
+	s.challengeMu.Lock()
+	challenge.Status = models.ChallengeStatusCompleted
+	s.challengeMu.Unlock()
+
+	// Broadcast the challenge result.
+	wagerText := ""
+	if challenge.Wager > 0 {
+		wagerText = fmt.Sprintf(" — won ₵%d (₵%d burned)", wagerEarnings, wagerBurn)
+	}
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "challenge",
+		"action":    "completed",
+		"challenge": challenge,
+		"winnerID":  winnerID,
+		"result":    result,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🏆 %s wins the challenge against %s!%s",
+			winnerName, loserName, wagerText),
+		"ts": time.Now().Unix(),
+	})
+
+	return map[string]interface{}{
+		"challenge": challenge,
+		"race":      result,
+		"winnerID":  winnerID,
+	}, ""
+}
+
+// declineChallenge declines a pending challenge. Returns an error message on failure.
+func (s *Server) declineChallenge(challengeID, userID string) string {
+	s.challengeMu.Lock()
+	defer s.challengeMu.Unlock()
+
+	challenge, exists := s.challenges[challengeID]
+	if !exists {
+		return "challenge not found"
+	}
+
+	if challenge.Status != models.ChallengeStatusPending {
+		return fmt.Sprintf("challenge is no longer pending (status: %s)", challenge.Status)
+	}
+
+	if challenge.DefenderID != userID {
+		return "you are not the defender in this challenge"
+	}
+
+	challenge.Status = models.ChallengeStatusDeclined
+
+	// No wager escrow to refund on decline (wager is only escrowed on accept).
+
+	// Broadcast the decline.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "challenge",
+		"action":    "declined",
+		"challenge": challenge,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("❌ %s declined the challenge from %s.",
+			challenge.DefenderName, challenge.ChallengerName),
+		"ts": time.Now().Unix(),
+	})
+
+	return ""
+}
+
+// findUserByUsername looks up a user by their display name or username.
+// Returns (userID, username) or ("", "") if not found.
+func (s *Server) findUserByUsername(name string) (string, string) {
+	// First, try the user repository (DB mode) for exact match.
+	if s.userRepo != nil {
+		user, err := s.userRepo.GetUserByUsername(context.Background(), name)
+		if err == nil && user != nil {
+			return user.ID, user.Username
+		}
+	}
+
+	// Fallback: iterate stables and match by stable name pattern or ownerID.
+	// Stable names are typically "{username}'s Stable".
+	for _, stable := range s.stables.ListStables() {
+		// Match the stable name pattern.
+		if strings.EqualFold(stable.Name, name+"'s Stable") ||
+			strings.EqualFold(stable.OwnerID, name) {
+			return stable.OwnerID, name
+		}
+	}
+
+	return "", ""
+}
+
+// findHorseByNameInStable does a case-insensitive search for a horse by name
+// within a user's stable. Returns the horse or nil if not found.
+func (s *Server) findHorseByNameInStable(userID, horseName string) *models.Horse {
+	stable := s.getStableForUser(userID)
+	if stable == nil {
+		return nil
+	}
+
+	// Exact case-insensitive match first.
+	for i := range stable.Horses {
+		if strings.EqualFold(stable.Horses[i].Name, horseName) {
+			h := &stable.Horses[i]
+			return h
+		}
+	}
+
+	// Fuzzy match: check if any horse name contains the search term.
+	lowerName := strings.ToLower(horseName)
+	for i := range stable.Horses {
+		if strings.Contains(strings.ToLower(stable.Horses[i].Name), lowerName) {
+			h := &stable.Horses[i]
+			return h
+		}
+	}
+
+	return nil
+}
+
+// findPendingChallengeForDefender finds the most recent pending challenge
+// where the given user is the defender.
+func (s *Server) findPendingChallengeForDefender(userID string) *models.Challenge {
+	s.challengeMu.RLock()
+	defer s.challengeMu.RUnlock()
+
+	var latest *models.Challenge
+	for _, c := range s.challenges {
+		if c.Status == models.ChallengeStatusPending && c.DefenderID == userID {
+			if latest == nil || c.CreatedAt.After(latest.CreatedAt) {
+				latest = c
+			}
+		}
+	}
+	return latest
+}
+
+// challengeExpiryLoop periodically checks for expired challenges and marks
+// them as expired. Runs as a background goroutine.
+func (s *Server) challengeExpiryLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+		s.challengeMu.Lock()
+		for _, c := range s.challenges {
+			if c.Status == models.ChallengeStatusPending && now.After(c.ExpiresAt) {
+				c.Status = models.ChallengeStatusExpired
+				log.Printf("server: challenge %s expired (%s vs %s)",
+					c.ID, c.ChallengerName, c.DefenderName)
+
+				// Broadcast the expiry.
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type":      "challenge",
+					"action":    "expired",
+					"challenge": c,
+				})
+				s.hub.BroadcastJSON(map[string]interface{}{
+					"type": "chat_system",
+					"text": fmt.Sprintf("⏰ Challenge from %s to %s has expired.",
+						c.ChallengerName, c.DefenderName),
+					"ts": now.Unix(),
+				})
+			}
+		}
+		s.challengeMu.Unlock()
+	}
 }
 
 // ===========================================================================
@@ -2239,6 +4033,163 @@ func (s *Server) handleChatTrade(senderUserID, senderUsername string, args map[s
 		"text": fmt.Sprintf("*** TRADE: %s offers %s to %s — use /accept or /reject", senderUsername, horseName, target),
 		"ts":   time.Now().Unix(),
 	})
+}
+
+// handleChatChallenge processes a /challenge command from chat.
+// Expected args: target (string, @username), horse (string, horse name), wager (float64, optional).
+// Usage: /challenge @username horsename [wager]
+func (s *Server) handleChatChallenge(senderUserID, senderUsername string, args map[string]interface{}) {
+	target, _ := args["target"].(string)
+	horseName, _ := args["horse"].(string)
+
+	if target == "" || horseName == "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** Usage: /challenge @username horsename [wager]",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Strip @ prefix.
+	if strings.HasPrefix(target, "@") {
+		target = target[1:]
+	}
+
+	// Can't challenge yourself.
+	if strings.EqualFold(target, senderUsername) {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** You can't challenge yourself, weirdo.",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Find the horse by name in the sender's stable.
+	horse := s.findHorseByNameInStable(senderUserID, horseName)
+	if horse == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Horse %q not found in your stable.", horseName),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Parse optional wager.
+	wager := int64(0)
+	if w, ok := args["wager"].(float64); ok && w > 0 {
+		wager = int64(w)
+	}
+
+	challenge, errMsg := s.createChallenge(senderUserID, senderUsername, target, horse.ID, wager)
+	if errMsg != "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Challenge failed: %s", errMsg),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	_ = challenge // Broadcast already happens inside createChallenge.
+}
+
+// handleChatAccept processes an /accept command from chat.
+// Expected args: horse (string, horse name, optional — uses first non-retired horse if omitted).
+// Usage: /accept [horsename]
+func (s *Server) handleChatAccept(senderUserID, senderUsername string, args map[string]interface{}) {
+	// Find the most recent pending challenge where the user is the defender.
+	challenge := s.findPendingChallengeForDefender(senderUserID)
+	if challenge == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** No pending challenge found for you.",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Find the defender's horse by name, or pick the first non-retired horse.
+	horseName, _ := args["horse"].(string)
+	var horse *models.Horse
+	if horseName != "" {
+		horse = s.findHorseByNameInStable(senderUserID, horseName)
+		if horse == nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("*** Horse %q not found in your stable.", horseName),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+	} else {
+		// Auto-pick the first non-retired horse in the stable.
+		stable := s.getStableForUser(senderUserID)
+		if stable != nil {
+			for i := range stable.Horses {
+				if !stable.Horses[i].Retired {
+					horse = &stable.Horses[i]
+					break
+				}
+			}
+		}
+		if horse == nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": "*** You have no eligible horses. Specify one with /accept horsename",
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+	}
+
+	if horse.Retired {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** %s is retired and cannot race.", horse.Name),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	_, errMsg := s.acceptChallenge(challenge.ID, senderUserID, horse.ID)
+	if errMsg != "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Accept failed: %s", errMsg),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+	// Results are broadcast inside acceptChallenge.
+}
+
+// handleChatDecline processes a /decline command from chat.
+// Usage: /decline
+func (s *Server) handleChatDecline(senderUserID, senderUsername string, args map[string]interface{}) {
+	// Find the most recent pending challenge where the user is the defender.
+	challenge := s.findPendingChallengeForDefender(senderUserID)
+	if challenge == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** No pending challenge found for you.",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	errMsg := s.declineChallenge(challenge.ID, senderUserID)
+	if errMsg != "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Decline failed: %s", errMsg),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+	// Decline broadcast happens inside declineChallenge.
 }
 
 // ===========================================================================
@@ -2341,6 +4292,291 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 }
 
 // ===========================================================================
+// Engagement System — daily rewards, prestige, win streak bonuses
+// ===========================================================================
+
+// dailyRewards defines the 7-day login streak reward cycle.
+var dailyRewards = []models.DailyReward{
+	{Day: 1, Cummies: 100, Bonus: "Welcome back, breeder"},
+	{Day: 2, Cummies: 150, Bonus: "Streak building..."},
+	{Day: 3, Cummies: 200, Bonus: "Triple threat!"},
+	{Day: 4, Cummies: 250, Bonus: "Dedicated stable hand"},
+	{Day: 5, Cummies: 500, Bonus: "5-day streak! Bonus cummies!"},
+	{Day: 6, Cummies: 300, Bonus: "Almost there..."},
+	{Day: 7, Cummies: 1000, Bonus: "WEEKLY JACKPOT! Dr. Mittens approves"},
+}
+
+// prestigeTiers defines progression levels and their bonuses.
+var prestigeTiers = []models.PrestigeTier{
+	{Level: 0, Name: "Stable Hand", RequiredXP: 0, CummiesBonus: 1.0, TrainingBonus: 1.0, MaxHorses: 5},
+	{Level: 1, Name: "Paddock Manager", RequiredXP: 1000, CummiesBonus: 1.05, TrainingBonus: 1.05, MaxHorses: 7},
+	{Level: 2, Name: "Ranch Owner", RequiredXP: 5000, CummiesBonus: 1.1, TrainingBonus: 1.1, MaxHorses: 10},
+	{Level: 3, Name: "Stud Baron", RequiredXP: 15000, CummiesBonus: 1.15, TrainingBonus: 1.15, MaxHorses: 15},
+	{Level: 4, Name: "Racing Magnate", RequiredXP: 50000, CummiesBonus: 1.2, TrainingBonus: 1.2, MaxHorses: 20},
+	{Level: 5, Name: "Ussy Lord", RequiredXP: 150000, CummiesBonus: 1.3, TrainingBonus: 1.3, MaxHorses: 30},
+	{Level: 6, Name: "The Geoffrussy", RequiredXP: 500000, CummiesBonus: 1.5, TrainingBonus: 1.5, MaxHorses: 50},
+}
+
+// breedingCooldownHours is the minimum time between breeds for a single horse.
+const breedingCooldownHours = 4
+
+// getOrCreateProgress returns the player's progress, creating a fresh one if needed.
+// Caller must hold progressMu or call within a locked section.
+func (s *Server) getOrCreateProgress(userID string) *models.PlayerProgress {
+	p, ok := s.progress[userID]
+	if !ok {
+		p = &models.PlayerProgress{
+			UserID:          userID,
+			DailyTrainsLeft: 5,
+			DailyRacesLeft:  10,
+			LastDailyReset:  time.Now().UTC().Format("2006-01-02"),
+		}
+		s.progress[userID] = p
+	}
+	return p
+}
+
+// resetDailyLimitsIfNeeded resets daily trains/races if the date has changed.
+func resetDailyLimitsIfNeeded(p *models.PlayerProgress) {
+	today := time.Now().UTC().Format("2006-01-02")
+	if p.LastDailyReset != today {
+		p.DailyTrainsLeft = 5
+		p.DailyRacesLeft = 10
+		p.LastDailyReset = today
+	}
+}
+
+// getPrestigeTier returns the current prestige tier for the given XP.
+func getPrestigeTier(xp int64) models.PrestigeTier {
+	tier := prestigeTiers[0]
+	for _, t := range prestigeTiers {
+		if xp >= t.RequiredXP {
+			tier = t
+		}
+	}
+	return tier
+}
+
+// getNextPrestigeTier returns the next tier after the current one, or nil if maxed.
+func getNextPrestigeTier(currentLevel int) *models.PrestigeTier {
+	for _, t := range prestigeTiers {
+		if t.Level == currentLevel+1 {
+			return &t
+		}
+	}
+	return nil
+}
+
+// addPrestigeXP grants XP to a player and checks for level-ups.
+func (s *Server) addPrestigeXP(userID string, username string, xp int64) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+
+	p := s.getOrCreateProgress(userID)
+	oldTier := getPrestigeTier(p.PrestigeXP)
+	p.PrestigeXP += xp
+	newTier := getPrestigeTier(p.PrestigeXP)
+	p.PrestigeLevel = newTier.Level
+
+	// Broadcast level-up if the tier changed.
+	if newTier.Level > oldTier.Level {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":     "prestige_levelup",
+			"username": username,
+			"newLevel": newTier.Level,
+			"tierName": newTier.Name,
+		})
+		log.Printf("server: prestige level-up! %s reached %s (level %d, XP %d)",
+			username, newTier.Name, newTier.Level, p.PrestigeXP)
+	}
+}
+
+// getPrestigeTierForUser returns the prestige tier for a user (read-locked).
+func (s *Server) getPrestigeTierForUser(userID string) models.PrestigeTier {
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	p, ok := s.progress[userID]
+	if !ok {
+		return prestigeTiers[0]
+	}
+	return getPrestigeTier(p.PrestigeXP)
+}
+
+// addPrestigeXPForHorse is a convenience that looks up the horse's owner
+// and grants them prestige XP. Safe to call from contexts without a request.
+func (s *Server) addPrestigeXPForHorse(horse *models.Horse, xp int64) {
+	if horse.OwnerID == "" || horse.OwnerID == "system" {
+		return
+	}
+	// Resolve owner username for the broadcast message.
+	username := horse.OwnerID // fallback to ID
+	for _, st := range s.stables.ListStables() {
+		if st.OwnerID == horse.OwnerID {
+			username = st.Name
+			break
+		}
+	}
+	s.addPrestigeXP(horse.OwnerID, username, xp)
+}
+
+// winStreakMultiplier returns the earnings multiplier based on a horse's
+// current win streak.
+func winStreakMultiplier(streak int) float64 {
+	switch {
+	case streak >= 10:
+		return 2.0
+	case streak >= 7:
+		return 1.75
+	case streak >= 5:
+		return 1.5
+	case streak >= 3:
+		return 1.2
+	case streak >= 2:
+		return 1.1
+	default:
+		return 1.0
+	}
+}
+
+// handleGetProgress returns the calling user's engagement progress.
+func (s *Server) handleGetProgress(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(claims.UserID)
+	resetDailyLimitsIfNeeded(p)
+	s.progressMu.Unlock()
+
+	// Return a copy under read lock.
+	s.progressMu.RLock()
+	defer s.progressMu.RUnlock()
+	writeJSON(w, http.StatusOK, p)
+}
+
+// handleClaimDailyReward processes a daily login reward claim.
+func (s *Server) handleClaimDailyReward(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	today := time.Now().UTC().Format("2006-01-02")
+	yesterday := time.Now().UTC().AddDate(0, 0, -1).Format("2006-01-02")
+
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(claims.UserID)
+	resetDailyLimitsIfNeeded(p)
+
+	// Check if already claimed today.
+	if p.LastLoginDate == today {
+		s.progressMu.Unlock()
+		writeError(w, http.StatusBadRequest, "daily reward already claimed today")
+		return
+	}
+
+	// Update streak: continues if they logged in yesterday, otherwise resets.
+	if p.LastLoginDate == yesterday {
+		p.LoginStreak++
+	} else {
+		p.LoginStreak = 1
+	}
+	p.LastLoginDate = today
+	p.TotalLogins++
+
+	// Determine reward based on streak position in the 7-day cycle.
+	cycleDay := ((p.LoginStreak - 1) % 7) + 1 // 1-7
+	cycleNumber := (p.LoginStreak - 1) / 7    // 0, 1, 2, ...
+
+	reward := dailyRewards[cycleDay-1]
+
+	// After day 7, cycle back with 1.5x multiplier per full cycle completed.
+	multiplier := 1.0
+	for i := 0; i < cycleNumber; i++ {
+		multiplier *= 1.5
+	}
+	actualCummies := int64(float64(reward.Cummies) * multiplier)
+
+	s.progressMu.Unlock()
+
+	// Find the player's stable and add cummies.
+	stable := s.getStableForUser(claims.UserID)
+	if stable == nil {
+		writeError(w, http.StatusBadRequest, "no stable found for user")
+		return
+	}
+	stable.Cummies += actualCummies
+	s.persistStable(r.Context(), stable)
+
+	// Grant streak_7 achievement when login streak reaches 7+.
+	if p.LoginStreak >= 7 {
+		s.grantAchievementToStable(stable, "streak_7")
+	}
+
+	// Broadcast the daily reward event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":     "daily_reward",
+		"username": claims.Username,
+		"streak":   p.LoginStreak,
+		"cummies":  actualCummies,
+		"bonus":    reward.Bonus,
+	})
+
+	log.Printf("server: daily reward claimed by %s — streak %d, reward %d cummies (%s)",
+		claims.Username, p.LoginStreak, actualCummies, reward.Bonus)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"streak":   p.LoginStreak,
+		"day":      cycleDay,
+		"cummies":  actualCummies,
+		"bonus":    reward.Bonus,
+		"progress": p,
+	})
+}
+
+// handleGetPrestige returns the user's current prestige level and XP info.
+func (s *Server) handleGetPrestige(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	s.progressMu.RLock()
+	p, exists := s.progress[claims.UserID]
+	if !exists {
+		s.progressMu.RUnlock()
+		// Create a default progress entry.
+		s.progressMu.Lock()
+		p = s.getOrCreateProgress(claims.UserID)
+		s.progressMu.Unlock()
+		s.progressMu.RLock()
+	}
+
+	currentTier := getPrestigeTier(p.PrestigeXP)
+	nextTier := getNextPrestigeTier(currentTier.Level)
+	xp := p.PrestigeXP
+	s.progressMu.RUnlock()
+
+	resp := map[string]interface{}{
+		"currentTier": currentTier,
+		"xp":          xp,
+		"allTiers":    prestigeTiers,
+	}
+	if nextTier != nil {
+		resp["nextTier"] = nextTier
+		resp["xpToNext"] = nextTier.RequiredXP - xp
+	} else {
+		resp["maxed"] = true
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ===========================================================================
 // Auth route registration
 // ===========================================================================
 
@@ -2422,6 +4658,26 @@ func (s *Server) persistAchievement(ctx context.Context, stableID string, achiev
 	}
 	if err := s.achievementRepo.AddAchievement(ctx, stableID, achievement); err != nil {
 		log.Printf("server: persistAchievement stable=%s achievement=%s: %v", stableID, achievement.ID, err)
+	}
+}
+
+// persistTrainingSession writes a training session to the database. No-op when DB is nil.
+func (s *Server) persistTrainingSession(ctx context.Context, session *models.TrainingSession) {
+	if s.trainingRepo == nil {
+		return
+	}
+	if err := s.trainingRepo.SaveSession(ctx, session); err != nil {
+		log.Printf("server: persistTrainingSession horse=%s: %v", session.HorseID, err)
+	}
+}
+
+// persistMarketTransaction writes a market transaction to the database. No-op when DB is nil.
+func (s *Server) persistMarketTransaction(ctx context.Context, tx *models.MarketTransaction) {
+	if s.marketTxRepo == nil {
+		return
+	}
+	if err := s.marketTxRepo.SaveTransaction(ctx, tx); err != nil {
+		log.Printf("server: persistMarketTransaction %s: %v", tx.ID, err)
 	}
 }
 
@@ -2521,5 +4777,816 @@ func (s *Server) loadFromDB() {
 		}
 	}
 
+	// 5. Load trade offers into the in-memory TradeManager.
+	if s.tradeRepo != nil {
+		dbTrades, err := s.tradeRepo.ListAllTrades(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load trade offers: %v", err)
+		} else {
+			for _, t := range dbTrades {
+				s.trades.ImportOffer(t)
+			}
+			if len(dbTrades) > 0 {
+				log.Printf("server: loadFromDB: loaded %d trade offers", len(dbTrades))
+			}
+		}
+	}
+
 	log.Printf("server: loadFromDB: completed — %d stables loaded from database", len(dbStables))
+}
+
+// ===========================================================================
+// Pari-Mutuel Betting System
+// ===========================================================================
+//
+// Spectators and players can bet cummies on race outcomes. The system uses
+// pari-mutuel odds: all bets go into a pool, and the payout is proportional
+// to how much was bet on the winning horse vs. the total pool. A 10% house
+// cut is applied to the pool before distribution.
+//
+// Flow:
+//   1. A betting pool is opened before a race (auto or manual).
+//   2. Players place bets while the pool is "open".
+//   3. The pool is "closed" when the race starts (no more bets).
+//   4. After the race, resolveBets pays out winners from the pool.
+
+const bettingHouseCutPct = 0.10 // 10% house cut on betting pools.
+
+// ---------------------------------------------------------------------------
+// Core betting logic (not HTTP-specific)
+// ---------------------------------------------------------------------------
+
+// openBettingPool creates a new betting pool for a race. The horses slice
+// defines which horses can be bet on. Returns the created pool.
+func (s *Server) openBettingPool(raceID string, horses []*models.Horse) *models.BettingPool {
+	s.bettingMu.Lock()
+	defer s.bettingMu.Unlock()
+
+	bettingHorses := make([]models.BettingHorse, len(horses))
+	for i, h := range horses {
+		bettingHorses[i] = models.BettingHorse{
+			HorseID:   h.ID,
+			HorseName: h.Name,
+		}
+	}
+
+	pool := &models.BettingPool{
+		RaceID:   raceID,
+		Status:   "open",
+		Horses:   bettingHorses,
+		OpenedAt: time.Now(),
+	}
+	s.bettingPools[raceID] = pool
+
+	// Broadcast pool opened event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":   "betting_pool_opened",
+		"raceID": raceID,
+		"horses": bettingHorses,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🎰 Betting pool opened! %d horses in the race. Use /bet horsename amount to place your bets!",
+			len(horses)),
+		"ts": time.Now().Unix(),
+	})
+
+	log.Printf("server: betting pool opened for race %s with %d horses", raceID, len(horses))
+	return pool
+}
+
+// closeBettingPool marks a pool as "closed" so no more bets are accepted.
+func (s *Server) closeBettingPool(raceID string) {
+	s.bettingMu.Lock()
+	defer s.bettingMu.Unlock()
+
+	pool, ok := s.bettingPools[raceID]
+	if !ok || pool.Status != "open" {
+		return
+	}
+	pool.Status = "closed"
+	pool.ClosedAt = time.Now()
+
+	// Recalculate final odds before closing.
+	s.calcOddsLocked(pool)
+
+	// Broadcast pool closed event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "betting_pool_closed",
+		"raceID":    raceID,
+		"totalPool": pool.TotalPool,
+		"horses":    pool.Horses,
+	})
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🔒 Betting closed! ₵%d total in the pool. Let the race begin!",
+			pool.TotalPool),
+		"ts": time.Now().Unix(),
+	})
+
+	log.Printf("server: betting pool closed for race %s (total: ₵%d, bets: %d)",
+		raceID, pool.TotalPool, len(pool.Bets))
+}
+
+// placeBet places a bet on a horse in an open pool. Deducts cummies from the
+// bettor's stable. Returns the updated pool or an error message.
+func (s *Server) placeBet(raceID, userID, username, horseID string, amount int64) (*models.BettingPool, string) {
+	if amount <= 0 {
+		return nil, "bet amount must be positive"
+	}
+	if amount < 10 {
+		return nil, "minimum bet is ₵10"
+	}
+	if amount > 100000 {
+		return nil, "maximum bet is ₵100,000"
+	}
+
+	s.bettingMu.Lock()
+	defer s.bettingMu.Unlock()
+
+	pool, ok := s.bettingPools[raceID]
+	if !ok {
+		return nil, "no betting pool found for this race"
+	}
+	if pool.Status != "open" {
+		return nil, "betting is closed for this race"
+	}
+
+	// Verify horse is in the pool.
+	horseIdx := -1
+	var horseName string
+	for i, bh := range pool.Horses {
+		if bh.HorseID == horseID {
+			horseIdx = i
+			horseName = bh.HorseName
+			break
+		}
+	}
+	if horseIdx < 0 {
+		return nil, "horse is not in this race"
+	}
+
+	// Check if user already bet on this race (allow multiple bets, but cap at 3).
+	userBetCount := 0
+	for _, b := range pool.Bets {
+		if b.UserID == userID {
+			userBetCount++
+		}
+	}
+	if userBetCount >= 3 {
+		return nil, "maximum 3 bets per race"
+	}
+
+	// Deduct cummies from the bettor's stable.
+	stable := s.getStableForUser(userID)
+	if stable == nil {
+		return nil, "you don't have a stable"
+	}
+	if stable.Cummies < amount {
+		return nil, fmt.Sprintf("not enough cummies (have ₵%d, need ₵%d)", stable.Cummies, amount)
+	}
+	stable.Cummies -= amount
+	s.persistStable(context.Background(), stable)
+
+	// Record the bet.
+	bet := models.Bet{
+		ID:        fmt.Sprintf("bet_%s_%d", raceID, len(pool.Bets)+1),
+		RaceID:    raceID,
+		UserID:    userID,
+		Username:  username,
+		StableID:  stable.ID,
+		HorseID:   horseID,
+		HorseName: horseName,
+		Amount:    amount,
+		CreatedAt: time.Now(),
+	}
+	pool.Bets = append(pool.Bets, bet)
+	pool.TotalPool += amount
+	pool.Horses[horseIdx].TotalBet += amount
+	pool.Horses[horseIdx].BetCount++
+
+	// Recalculate odds.
+	s.calcOddsLocked(pool)
+
+	// Broadcast bet update.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":      "betting_update",
+		"raceID":    raceID,
+		"username":  username,
+		"horseName": horseName,
+		"amount":    amount,
+		"totalPool": pool.TotalPool,
+		"horses":    pool.Horses,
+	})
+
+	log.Printf("server: bet placed — %s bet ₵%d on %s (race %s, pool total: ₵%d)",
+		username, amount, horseName, raceID, pool.TotalPool)
+
+	return pool, ""
+}
+
+// resolveBets resolves a betting pool after a race completes. Pays out winners
+// using pari-mutuel rules with a house cut. Returns the number of winners.
+func (s *Server) resolveBets(raceID, winnerHorseID string) int {
+	s.bettingMu.Lock()
+	defer s.bettingMu.Unlock()
+
+	pool, ok := s.bettingPools[raceID]
+	if !ok {
+		return 0
+	}
+	if pool.Status == "resolved" {
+		return 0 // Already resolved.
+	}
+
+	pool.Status = "resolved"
+
+	if len(pool.Bets) == 0 {
+		// No bets placed — nothing to resolve.
+		delete(s.bettingPools, raceID)
+		return 0
+	}
+
+	// Calculate house cut and distributable pool.
+	houseCut := int64(float64(pool.TotalPool) * bettingHouseCutPct)
+	pool.HouseCut = houseCut
+	distributable := pool.TotalPool - houseCut
+
+	// Find total amount bet on the winning horse.
+	winnerTotalBet := int64(0)
+	for _, bh := range pool.Horses {
+		if bh.HorseID == winnerHorseID {
+			winnerTotalBet = bh.TotalBet
+			break
+		}
+	}
+
+	// Pay out winning bets proportionally from the distributable pool.
+	winnerCount := 0
+	var payoutMessages []string
+
+	for i := range pool.Bets {
+		bet := &pool.Bets[i]
+		if bet.HorseID == winnerHorseID {
+			bet.Won = true
+			if winnerTotalBet > 0 {
+				// Pari-mutuel: payout = (your bet / total bet on winner) * distributable pool.
+				bet.Payout = (bet.Amount * distributable) / winnerTotalBet
+			}
+			winnerCount++
+
+			// Credit winnings to the bettor's stable.
+			betStable := s.getStableForUser(bet.UserID)
+			if betStable != nil {
+				betStable.Cummies += bet.Payout
+				s.persistStable(context.Background(), betStable)
+
+				// Grant betting_winner achievement for winning a bet.
+				s.grantAchievementToStable(betStable, "betting_winner")
+			}
+
+			profit := bet.Payout - bet.Amount
+			payoutMessages = append(payoutMessages,
+				fmt.Sprintf("  🤑 %s won ₵%d (bet ₵%d, profit ₵%d)", bet.Username, bet.Payout, bet.Amount, profit))
+		}
+	}
+
+	// Find winning horse name for broadcast.
+	winnerHorseName := ""
+	for _, bh := range pool.Horses {
+		if bh.HorseID == winnerHorseID {
+			winnerHorseName = bh.HorseName
+			break
+		}
+	}
+
+	// Broadcast resolution.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":            "betting_resolved",
+		"raceID":          raceID,
+		"winnerHorseID":   winnerHorseID,
+		"winnerHorseName": winnerHorseName,
+		"totalPool":       pool.TotalPool,
+		"houseCut":        houseCut,
+		"distributable":   distributable,
+		"winnerCount":     winnerCount,
+		"bets":            pool.Bets,
+	})
+
+	// Announce results in chat.
+	if winnerCount > 0 {
+		resultText := fmt.Sprintf("🎰 Betting results for %s!\n  Pool: ₵%d (house cut: ₵%d)\n%s",
+			winnerHorseName, pool.TotalPool, houseCut, strings.Join(payoutMessages, "\n"))
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": resultText,
+			"ts":   time.Now().Unix(),
+		})
+	} else {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("🎰 No one bet on the winner %s! The house keeps ₵%d.",
+				winnerHorseName, pool.TotalPool),
+			"ts": time.Now().Unix(),
+		})
+	}
+
+	log.Printf("server: betting resolved for race %s — %d winners, pool: ₵%d, house cut: ₵%d",
+		raceID, winnerCount, pool.TotalPool, houseCut)
+
+	// Clean up old pools after a delay (keep for 5 minutes for queries).
+	go func() {
+		time.Sleep(5 * time.Minute)
+		s.bettingMu.Lock()
+		delete(s.bettingPools, raceID)
+		s.bettingMu.Unlock()
+	}()
+
+	return winnerCount
+}
+
+// calcOddsLocked recalculates pari-mutuel odds for all horses in a pool.
+// MUST be called while holding s.bettingMu.
+func (s *Server) calcOddsLocked(pool *models.BettingPool) {
+	if pool.TotalPool == 0 {
+		for i := range pool.Horses {
+			pool.Horses[i].Odds = 0
+		}
+		return
+	}
+	for i := range pool.Horses {
+		if pool.Horses[i].TotalBet > 0 {
+			// Odds = (total pool / amount on this horse) — represents the
+			// multiplier a bettor would receive (before house cut).
+			pool.Horses[i].Odds = float64(pool.TotalPool) / float64(pool.Horses[i].TotalBet)
+		} else {
+			pool.Horses[i].Odds = 0 // No bets yet — odds undefined.
+		}
+	}
+}
+
+// findActiveBettingPool returns the most recently opened betting pool that
+// is still "open". Returns nil if none found.
+func (s *Server) findActiveBettingPool() *models.BettingPool {
+	s.bettingMu.RLock()
+	defer s.bettingMu.RUnlock()
+
+	var latest *models.BettingPool
+	for _, pool := range s.bettingPools {
+		if pool.Status == "open" {
+			if latest == nil || pool.OpenedAt.After(latest.OpenedAt) {
+				latest = pool
+			}
+		}
+	}
+	return latest
+}
+
+// findHorseInPool does fuzzy name matching to find a horse in a betting pool.
+// Returns (horseID, horseName) or ("", "") if not found.
+func (s *Server) findHorseInPool(pool *models.BettingPool, name string) (string, string) {
+	lowerName := strings.ToLower(name)
+
+	// Exact case-insensitive match first.
+	for _, bh := range pool.Horses {
+		if strings.EqualFold(bh.HorseName, name) {
+			return bh.HorseID, bh.HorseName
+		}
+	}
+
+	// Fuzzy: substring match.
+	for _, bh := range pool.Horses {
+		if strings.Contains(strings.ToLower(bh.HorseName), lowerName) {
+			return bh.HorseID, bh.HorseName
+		}
+	}
+
+	return "", ""
+}
+
+// ---------------------------------------------------------------------------
+// HTTP handlers for betting API
+// ---------------------------------------------------------------------------
+
+// handleOpenBettingPool creates a betting pool for a given race.
+// POST /api/betting/pools  { raceID, horseIDs: [] }
+func (s *Server) handleOpenBettingPool(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RaceID   string   `json:"raceID"`
+		HorseIDs []string `json:"horseIDs"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.RaceID == "" || len(req.HorseIDs) < 2 {
+		writeError(w, http.StatusBadRequest, "raceID and at least 2 horseIDs required")
+		return
+	}
+
+	// Check if pool already exists.
+	s.bettingMu.RLock()
+	if _, exists := s.bettingPools[req.RaceID]; exists {
+		s.bettingMu.RUnlock()
+		writeError(w, http.StatusConflict, "betting pool already exists for this race")
+		return
+	}
+	s.bettingMu.RUnlock()
+
+	// Resolve horse IDs to horse objects.
+	var horses []*models.Horse
+	for _, hid := range req.HorseIDs {
+		h, err := s.stables.GetHorse(hid)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("horse not found: %s", hid))
+			return
+		}
+		horses = append(horses, h)
+	}
+
+	pool := s.openBettingPool(req.RaceID, horses)
+	writeJSON(w, http.StatusCreated, pool)
+}
+
+// handleGetBettingPool returns the betting pool for a specific race.
+// GET /api/betting/pools/{raceID}
+func (s *Server) handleGetBettingPool(w http.ResponseWriter, r *http.Request) {
+	raceID := r.PathValue("raceID")
+	if raceID == "" {
+		writeError(w, http.StatusBadRequest, "raceID required")
+		return
+	}
+
+	s.bettingMu.RLock()
+	pool, ok := s.bettingPools[raceID]
+	s.bettingMu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "no betting pool for this race")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pool)
+}
+
+// handlePlaceBet places a bet on a horse in an open pool.
+// POST /api/betting/pools/{raceID}/bet  { horseID, amount }
+func (s *Server) handlePlaceBet(w http.ResponseWriter, r *http.Request) {
+	raceID := r.PathValue("raceID")
+	if raceID == "" {
+		writeError(w, http.StatusBadRequest, "raceID required")
+		return
+	}
+
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	userID := claims.UserID
+	username := claims.Username
+
+	var req struct {
+		HorseID string `json:"horseID"`
+		Amount  int64  `json:"amount"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.HorseID == "" || req.Amount <= 0 {
+		writeError(w, http.StatusBadRequest, "horseID and positive amount required")
+		return
+	}
+
+	pool, errMsg := s.placeBet(raceID, userID, username, req.HorseID, req.Amount)
+	if errMsg != "" {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pool)
+}
+
+// handleListActivePools returns all betting pools that are currently open.
+// GET /api/betting/active
+func (s *Server) handleListActivePools(w http.ResponseWriter, r *http.Request) {
+	s.bettingMu.RLock()
+	defer s.bettingMu.RUnlock()
+
+	var active []*models.BettingPool
+	for _, pool := range s.bettingPools {
+		if pool.Status == "open" || pool.Status == "closed" {
+			active = append(active, pool)
+		}
+	}
+	if active == nil {
+		active = []*models.BettingPool{} // Return empty array, not null.
+	}
+
+	writeJSON(w, http.StatusOK, active)
+}
+
+// ---------------------------------------------------------------------------
+// Chat command handler: /bet horsename amount
+// ---------------------------------------------------------------------------
+
+func (s *Server) handleChatBet(senderUserID, senderUsername string, args map[string]interface{}) {
+	horseName, _ := args["horse"].(string)
+
+	// Parse amount from args (JSON numbers come as float64).
+	amount := int64(0)
+	if a, ok := args["amount"].(float64); ok && a > 0 {
+		amount = int64(a)
+	}
+
+	if horseName == "" || amount <= 0 {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** Usage: /bet horsename amount",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Find the active betting pool.
+	pool := s.findActiveBettingPool()
+	if pool == nil {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": "*** No active betting pool right now.",
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Fuzzy match horse name within the pool.
+	horseID, matchedName := s.findHorseInPool(pool, horseName)
+	if horseID == "" {
+		// List available horses for the user.
+		var names []string
+		for _, bh := range pool.Horses {
+			names = append(names, bh.HorseName)
+		}
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Horse %q not found in the pool. Available: %s",
+				horseName, strings.Join(names, ", ")),
+			"ts": time.Now().Unix(),
+		})
+		return
+	}
+
+	// Place the bet.
+	_, errMsg := s.placeBet(pool.RaceID, senderUserID, senderUsername, horseID, amount)
+	if errMsg != "" {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("*** Bet failed: %s", errMsg),
+			"ts":   time.Now().Unix(),
+		})
+		return
+	}
+
+	// Confirmation is already broadcast by placeBet via betting_update.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🎰 %s bet ₵%d on %s!", senderUsername, amount, matchedName),
+		"ts":   time.Now().Unix(),
+	})
+}
+
+// ===========================================================================
+// Rivalry Endpoint
+// ===========================================================================
+
+// rivalRecord represents a single rivalry entry returned by the rivals endpoint.
+type rivalRecord struct {
+	HorseID   string `json:"horseID"`
+	HorseName string `json:"horseName"`
+	WinsVs    int    `json:"winsVs"`   // Times this horse beat the rival
+	LossesVs  int    `json:"lossesVs"` // Times the rival beat this horse
+	Total     int    `json:"total"`    // Total head-to-head encounters
+}
+
+// handleGetHorseRivals returns the top 5 rivals for a given horse based on
+// head-to-head race records.
+// GET /api/horses/{id}/rivals
+func (s *Server) handleGetHorseRivals(w http.ResponseWriter, r *http.Request) {
+	horseID := r.PathValue("id")
+
+	// Verify the horse exists.
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || horse == nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	s.rivalryMu.RLock()
+	defer s.rivalryMu.RUnlock()
+
+	// Collect all opponents this horse has faced (in either direction).
+	opponentTotals := make(map[string]*rivalRecord)
+
+	// Wins by this horse against opponents.
+	if wins, ok := s.rivalries[horseID]; ok {
+		for oppID, count := range wins {
+			if opponentTotals[oppID] == nil {
+				opponentTotals[oppID] = &rivalRecord{HorseID: oppID}
+			}
+			opponentTotals[oppID].WinsVs = count
+		}
+	}
+
+	// Losses: other horses that beat this horse.
+	for otherID, victims := range s.rivalries {
+		if count, ok := victims[horseID]; ok && count > 0 {
+			if opponentTotals[otherID] == nil {
+				opponentTotals[otherID] = &rivalRecord{HorseID: otherID}
+			}
+			opponentTotals[otherID].LossesVs = count
+		}
+	}
+
+	// Calculate totals and resolve horse names.
+	var rivals []rivalRecord
+	for _, rec := range opponentTotals {
+		rec.Total = rec.WinsVs + rec.LossesVs
+		if opp, err := s.stables.GetHorse(rec.HorseID); err == nil && opp != nil {
+			rec.HorseName = opp.Name
+		} else {
+			rec.HorseName = "Unknown"
+		}
+		rivals = append(rivals, *rec)
+	}
+
+	// Sort by total encounters descending, then by wins descending.
+	sort.Slice(rivals, func(i, j int) bool {
+		if rivals[i].Total != rivals[j].Total {
+			return rivals[i].Total > rivals[j].Total
+		}
+		return rivals[i].WinsVs > rivals[j].WinsVs
+	})
+
+	// Return top 5.
+	if len(rivals) > 5 {
+		rivals = rivals[:5]
+	}
+
+	writeJSON(w, http.StatusOK, rivals)
+}
+
+// ===========================================================================
+// Update Stable Endpoint
+// ===========================================================================
+
+// handleUpdateStable allows a stable owner to update their stable's name and motto.
+// PUT /api/stables/{id}
+func (s *Server) handleUpdateStable(w http.ResponseWriter, r *http.Request) {
+	stableID := r.PathValue("id")
+
+	// Verify ownership.
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	stable, err := s.stables.GetStable(stableID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stable not found: "+err.Error())
+		return
+	}
+
+	if stable.OwnerID != claims.UserID {
+		writeError(w, http.StatusForbidden, "you can only update your own stable")
+		return
+	}
+
+	var req struct {
+		Name  *string `json:"name"`
+		Motto *string `json:"motto"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	// Apply updates (only if provided).
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "stable name cannot be empty")
+			return
+		}
+		if len(name) > 50 {
+			writeError(w, http.StatusBadRequest, "stable name must be 50 characters or fewer")
+			return
+		}
+		stable.Name = name
+	}
+	if req.Motto != nil {
+		motto := strings.TrimSpace(*req.Motto)
+		if len(motto) > 200 {
+			writeError(w, http.StatusBadRequest, "motto must be 200 characters or fewer")
+			return
+		}
+		stable.Motto = motto
+	}
+
+	// Write-through: persist updated stable to DB.
+	s.persistStable(r.Context(), stable)
+
+	log.Printf("server: stable %s (%s) updated by %s", stable.ID, stable.Name, claims.Username)
+
+	// Broadcast stable update event.
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":     "stable_updated",
+		"stableID": stable.ID,
+		"name":     stable.Name,
+		"motto":    stable.Motto,
+	})
+
+	writeJSON(w, http.StatusOK, stable)
+}
+
+// ===========================================================================
+// Retire Horse Endpoint
+// ===========================================================================
+
+// handleRetireHorse retires a horse owned by the authenticated user.
+// POST /api/horses/{id}/retire
+func (s *Server) handleRetireHorse(w http.ResponseWriter, r *http.Request) {
+	horseID := r.PathValue("id")
+
+	// Verify ownership.
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	if !s.userOwnsHorse(claims.UserID, horseID) {
+		writeError(w, http.StatusForbidden, "you can only retire your own horses")
+		return
+	}
+
+	horse, err := s.stables.GetHorse(horseID)
+	if err != nil || horse == nil {
+		writeError(w, http.StatusNotFound, "horse not found")
+		return
+	}
+
+	if horse.Retired {
+		writeError(w, http.StatusBadRequest, "horse is already retired")
+		return
+	}
+
+	// Parse optional reason from request body.
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = readJSON(r, &req) // Body is optional; ignore errors.
+
+	reason := req.Reason
+	if reason == "" {
+		reason = "Retired by owner"
+	}
+
+	// Retire the horse (may grant Hall of Fame status if 5+ wins).
+	trainussy.RetireHorse(horse, reason)
+
+	// Sync the updated horse back to the stable.
+	s.syncHorseToStable(horse)
+
+	// Write-through: persist horse state to DB.
+	s.persistHorse(r.Context(), horse)
+
+	log.Printf("server: horse %s (%s) retired by %s (champion: %v)",
+		horse.ID, horse.Name, claims.Username, horse.RetiredChampion)
+
+	// Broadcast retirement event.
+	retireEvent := map[string]interface{}{
+		"type":            "horse_retired",
+		"horseID":         horse.ID,
+		"horseName":       horse.Name,
+		"retiredChampion": horse.RetiredChampion,
+		"wins":            horse.Wins,
+	}
+	s.hub.BroadcastJSON(retireEvent)
+
+	// Announce in chat if it's a champion retirement.
+	if horse.RetiredChampion {
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type": "chat_system",
+			"text": fmt.Sprintf("🏆 %s has been inducted into the Hall of Fame with %d career wins! A legend retires.", horse.Name, horse.Wins),
+			"ts":   time.Now().Unix(),
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"horse":           horse,
+		"retiredChampion": horse.RetiredChampion,
+		"message":         fmt.Sprintf("%s has been retired. %s", horse.Name, reason),
+	})
 }

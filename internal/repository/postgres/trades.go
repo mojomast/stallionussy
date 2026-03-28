@@ -113,6 +113,29 @@ func (r *TradeRepo) ListTradesByStable(ctx context.Context, stableID string) ([]
 	return trades, nil
 }
 
+// ListAllTrades returns all trade offers in the database.
+func (r *TradeRepo) ListAllTrades(ctx context.Context) ([]*models.TradeOffer, error) {
+	query := `SELECT ` + tradeCols + ` FROM trade_offers ORDER BY created_at DESC`
+	rows, err := r.db.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("list all trades: %w", err)
+	}
+	defer rows.Close()
+
+	var trades []*models.TradeOffer
+	for rows.Next() {
+		t, err := scanTrade(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list all trades scan: %w", err)
+		}
+		trades = append(trades, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list all trades rows: %w", err)
+	}
+	return trades, nil
+}
+
 // UpdateTrade saves changes to an existing trade offer (e.g. status change).
 func (r *TradeRepo) UpdateTrade(ctx context.Context, trade *models.TradeOffer) error {
 	query := `

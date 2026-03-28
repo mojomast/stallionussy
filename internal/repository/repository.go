@@ -159,6 +159,9 @@ type TradeRepository interface {
 	// (either as sender or receiver).
 	ListTradesByStable(ctx context.Context, stableID string) ([]*models.TradeOffer, error)
 
+	// ListAllTrades returns all trade offers in the database.
+	ListAllTrades(ctx context.Context) ([]*models.TradeOffer, error)
+
 	// UpdateTrade saves changes to an existing trade offer (e.g. status change).
 	UpdateTrade(ctx context.Context, trade *models.TradeOffer) error
 }
@@ -177,4 +180,40 @@ type AchievementRepository interface {
 
 	// HasAchievement checks whether a stable has already unlocked an achievement.
 	HasAchievement(ctx context.Context, stableID, achievementID string) (bool, error)
+}
+
+// ---------------------------------------------------------------------------
+// TrainingSessionRepository — training session history
+// ---------------------------------------------------------------------------
+
+// TrainingSessionRepository handles persistence for training sessions.
+type TrainingSessionRepository interface {
+	// SaveSession persists a single training session.
+	SaveSession(ctx context.Context, session *models.TrainingSession) error
+
+	// GetSessionsByHorse returns all training sessions for a given horse,
+	// newest first.
+	GetSessionsByHorse(ctx context.Context, horseID string) ([]*models.TrainingSession, error)
+
+	// GetRecentSessions returns the most recent training sessions across
+	// all horses, newest first.
+	GetRecentSessions(ctx context.Context, limit int) ([]*models.TrainingSession, error)
+}
+
+// ---------------------------------------------------------------------------
+// MarketTransactionRepository — market transaction history
+// ---------------------------------------------------------------------------
+
+// MarketTransactionRepository handles persistence for stud market transactions.
+type MarketTransactionRepository interface {
+	// SaveTransaction persists a completed market transaction.
+	SaveTransaction(ctx context.Context, tx *models.MarketTransaction) error
+
+	// GetTransactionsByBuyer returns all transactions where the given user
+	// was the buyer, newest first.
+	GetTransactionsByBuyer(ctx context.Context, buyerID string) ([]*models.MarketTransaction, error)
+
+	// GetRecentTransactions returns the most recent market transactions,
+	// newest first.
+	GetRecentTransactions(ctx context.Context, limit int) ([]*models.MarketTransaction, error)
 }

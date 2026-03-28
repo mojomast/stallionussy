@@ -675,19 +675,6 @@ func cmdBreed(state *cliState, args []string) {
 	fmt.Printf("  Mare: %s (%s)\n", mare.Name, mare.ID)
 	fmt.Println()
 
-	// Calculate inbreeding coefficient
-	inbreedCoeff := 0.0
-	if foal.SireID != "" && foal.MareID != "" {
-		// Temporarily add foal to lookup so the engine can find it;
-		// we calculate inbreeding manually from the parents' trees instead.
-		coeff, cErr := state.pedigree.CalcInbreedingCoefficient(sire.ID)
-		if cErr == nil {
-			inbreedCoeff = coeff
-		}
-	}
-	penaltyLabel := inbreedingLabel(inbreedCoeff)
-	fmt.Printf("  Inbreeding: %.2f (%s)\n", inbreedCoeff, penaltyLabel)
-
 	// Calculate bloodline bonus
 	bloodlineBonus := pedigreussy.CalcBloodlineBonus(foal, sire.ID, mare.ID, state.sm.GetHorse)
 	fmt.Printf("  Bloodline Bonus: %.2f (%+.0f%% ceiling bonus)\n", bloodlineBonus, (bloodlineBonus-1.0)*100)
@@ -735,6 +722,24 @@ func cmdBreed(state *cliState, args []string) {
 		_ = state.sm.AddHorseToStable(newStable.ID, foal)
 		fmt.Printf("Created new stable '%s' for the foal.\n", newStable.Name)
 	}
+
+	// Calculate inbreeding coefficient on the FOAL (not the sire).
+	// The foal must be in the stable manager so the pedigree engine can find it.
+	inbreedCoeff := 0.0
+	if coeff, cErr := state.pedigree.CalcInbreedingCoefficient(foal.ID); cErr == nil {
+		inbreedCoeff = coeff
+	}
+
+	// Apply inbreeding penalty to foal's fitness ceiling.
+	inbreedingPenalty := pedigreussy.InbreedingPenalty(inbreedCoeff)
+	foal.FitnessCeiling *= inbreedingPenalty
+	if foal.FitnessCeiling > 1.0 {
+		foal.FitnessCeiling = 1.0
+	}
+	foal.CurrentFitness = foal.FitnessCeiling * 0.5
+
+	penaltyLabel := inbreedingLabel(inbreedCoeff)
+	fmt.Printf("  Inbreeding: %.2f (%s)\n", inbreedCoeff, penaltyLabel)
 
 	fmt.Println()
 	fmt.Printf("A new horse is born: %s\n", foal.Name)

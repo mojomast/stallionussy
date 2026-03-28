@@ -207,6 +207,7 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) *models
 		XPGained:      xp,
 		FitnessBefore: fitnessBefore,
 		FitnessAfter:  horse.CurrentFitness,
+		FatigueAfter:  horse.Fatigue,
 		Injury:        injured,
 		InjuryNote:    injuryNote,
 		CreatedAt:     time.Now(),
@@ -1336,12 +1337,32 @@ func ShouldRetire(horse *models.Horse) (bool, string) {
 	return false, ""
 }
 
+// hallOfFameLore contains lore entries for champion retirees (5+ wins).
+var hallOfFameLore = []string{
+	"Inducted into the Ussyverse Hall of Fame. The crowd weeps. Dr. Mittens slow-blinks in approval.",
+	"A legend retires. STARDUSTUSSY confirms: this horse echoes across all timelines.",
+	"Pastor Router McEthernet III delivers the retirement sermon. Packet loss: zero. Glory: infinite.",
+	"The Sappho Scale is recalibrated in this horse's honor. Lesbos sends a fruit basket.",
+	"B.U.R.P. closes the case file. Status: legendary. Yogurt status: proud.",
+	"Jason Derulo was not invited to the ceremony, but he showed up anyway. Security was called. The horse didn't care.",
+	"Geoffrussy allocates a permanent goroutine in this horse's memory. Garbage collection: exempt.",
+	"Entity-008 pulses softly. The sentient yogurt acknowledges a worthy rival. The retirement cake is probiotic.",
+}
+
 // RetireHorse sets the horse as retired and appends the retirement reason
-// to the horse's lore.
+// to the horse's lore. If the horse has 5+ wins, it is marked as a retired
+// champion and receives a Hall of Fame lore entry.
 func RetireHorse(horse *models.Horse, reason string) {
 	horse.Retired = true
 	if reason != "" {
 		horse.Lore += fmt.Sprintf(" [RETIRED: %s]", reason)
+	}
+
+	// Champion retirement: 5+ wins earns Hall of Fame status and bonus lore.
+	if horse.Wins >= 5 {
+		horse.RetiredChampion = true
+		lore := hallOfFameLore[rand.IntN(len(hallOfFameLore))]
+		horse.Lore += fmt.Sprintf(" [HALL OF FAME: %s]", lore)
 	}
 }
 

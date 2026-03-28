@@ -1497,6 +1497,67 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   gap: 16px;
 }
 
+/* ─── TOAST NOTIFICATIONS ────────────────────────────────────────────────── */
+.toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { background: #111; border: 1px solid #0f0; color: #0f0; padding: 10px 16px; font-family: monospace; font-size: 13px; max-width: 350px; animation: toastIn 0.3s ease-out; border-radius: 2px; pointer-events: auto; transition: opacity 0.3s; }
+.toast.trade { border-color: #ff0; color: #ff0; }
+.toast.market { border-color: #0ff; color: #0ff; }
+.toast.achievement { border-color: #f0f; color: #f0f; }
+.toast.breeding { border-color: #f80; color: #f80; }
+.toast.challenge { border-color: #f00; color: #f00; }
+.toast.betting { border-color: #0f0; color: #0f0; }
+.toast.season { border-color: #ff0; color: #ff0; }
+.toast.prestige { border-color: #f0f; color: #f0f; }
+@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ─── BETTING PANEL ──────────────────────────────────────────────────────── */
+.betting-panel { border: 1px solid var(--fg-dim); background: var(--bg-light); padding: 12px; margin: 12px 0; }
+.betting-panel h3 { color: var(--fg); margin-bottom: 8px; }
+.betting-horse-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.betting-horse-row .horse-name { flex: 1; }
+.betting-horse-row .horse-odds { color: var(--amber); min-width: 60px; }
+.betting-horse-row .bet-input { max-width: 80px; }
+
+/* ─── CHALLENGE UI ───────────────────────────────────────────────────────── */
+.challenge-card { border: 1px solid var(--border); padding: 10px; margin: 8px 0; background: var(--bg-light); font-size: 12px; }
+.challenge-card.pending { border-color: var(--amber); }
+.challenge-card.active { border-color: var(--red); }
+.challenge-card .challenge-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.challenge-card .challenge-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* ─── PRESTIGE / XP BAR ─────────────────────────────────────────────────── */
+.prestige-bar { display: flex; align-items: center; gap: 8px; font-size: 11px; margin: 4px 0; }
+.prestige-bar .xp-track { flex: 1; max-width: 200px; height: 8px; background: var(--bg); border: 1px solid var(--border); position: relative; }
+.prestige-bar .xp-fill { height: 100%; background: var(--purple); transition: width 0.3s; }
+.prestige-bar .tier-stars { color: var(--gold); letter-spacing: 2px; }
+
+/* ─── SEASON BADGE ───────────────────────────────────────────────────────── */
+.season-badge { font-size: 10px; color: var(--amber); padding: 2px 8px; border: 1px solid var(--amber-dim); display: inline-block; margin-left: 8px; }
+
+/* ─── DAILY REWARD ───────────────────────────────────────────────────────── */
+.daily-reward-btn { position: relative; overflow: hidden; }
+.daily-reward-btn.claimed { opacity: 0.4; cursor: not-allowed; }
+.daily-reward-btn .streak-badge { font-size: 9px; color: var(--amber); margin-left: 4px; }
+
+/* ─── LEADERBOARD TABS ───────────────────────────────────────────────────── */
+.tab-bar { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.tab-bar button { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--fg-dim); font-family: inherit; font-size: 11px; padding: 8px 16px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
+.tab-bar button:hover { color: var(--fg); }
+.tab-bar button.active { color: var(--fg); border-bottom-color: var(--fg); text-shadow: var(--glow-green); }
+
+/* ─── SORTABLE HEADERS ───────────────────────────────────────────────────── */
+.term-table thead th.sortable { cursor: pointer; user-select: none; }
+.term-table thead th.sortable:hover { color: var(--fg); text-shadow: var(--glow-green); }
+.term-table thead th.sortable.sort-active { color: var(--fg); }
+.term-table thead th.sortable.sort-active::after { content: ' ▼'; font-size: 9px; }
+.term-table thead th.sortable.sort-active.sort-asc::after { content: ' ▲'; }
+
+/* ─── BETTING MODAL ──────────────────────────────────────────────────────── */
+.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 9000; display: flex; align-items: center; justify-content: center; }
+.modal-box { background: var(--bg); border: 2px solid var(--fg-dim); padding: 20px; max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto; }
+.modal-box h2 { margin-bottom: 12px; }
+.modal-box .modal-close { float: right; cursor: pointer; color: var(--red); font-size: 14px; }
+
 /* ─── RESPONSIVE ─────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .stats-row { flex-direction: column; }
@@ -1507,6 +1568,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   .term-table { font-size: 11px; }
   .two-col { grid-template-columns: 1fr; }
   .fatigue-gauge .gauge-track { width: 80px; }
+  .toast-container { right: 8px; left: 8px; }
+  .toast { max-width: 100%; font-size: 11px; }
 }
 </style>
 </head>
@@ -1644,6 +1707,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <span><span class="status-dot"></span>SYSTEM: OPERATIONAL</span>
     <span class="text-dim" id="ws-status">WS: DISCONNECTED</span>
     <span class="text-dim" id="clock"></span>
+    <span class="text-dim" id="header-season-info" style="font-size:10px;color:var(--amber);"></span>
   </div>
 </div>
 
@@ -1659,8 +1723,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#tournament" data-page="tournament">[TOURNEY]</a>
   <a href="#trades" data-page="trades">[TRADE]</a>
   <a href="#leaderboard" data-page="leaderboard">[RANKS]</a>
+  <a href="#challenges" data-page="challenges">[CHALLENGE]</a>
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
   <div class="nav-right">
+    <span class="season-badge" id="nav-season-badge" style="display:none;"></span>
     <span class="user-info" id="user-display">guest@stallionussy:~$</span>
     <a href="#" class="logout-btn" id="nav-logout" onclick="event.preventDefault(); window.SU.logout();">[LOGOUT]</a>
   </div>
@@ -1697,6 +1763,18 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
       <div class="stat-label">Current Season</div>
       <div class="stat-val" id="stat-season">—</div>
     </div>
+  </div>
+
+  <!-- PRESTIGE & DAILY REWARD -->
+  <div class="flex-gap mb-8" style="align-items:center;">
+    <div id="dash-prestige" class="prestige-bar" style="display:none;">
+      <span class="tier-stars" id="prestige-stars"></span>
+      <span id="prestige-tier-name" class="text-purple"></span>
+      <div class="xp-track"><div class="xp-fill" id="prestige-xp-fill" style="width:0%"></div></div>
+      <span class="text-dim" id="prestige-xp-label"></span>
+    </div>
+    <button class="term-btn sm purple daily-reward-btn" id="btn-daily-reward" onclick="window.SU.claimDailyReward()">CLAIM DAILY</button>
+    <span class="text-dim" id="daily-reward-status" style="font-size:10px;"></span>
   </div>
 
   <div class="flex-gap">
@@ -2003,9 +2081,11 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ LEADERBOARD PAGE ════════════════════════════════════════════════════ -->
 <div class="page" id="page-leaderboard">
-  <div class="section-hdr">// RANKUSSY — ELO LEADERBOARD</div>
+  <div class="section-hdr">// RANKUSSY — STABLE &amp; HORSE LEADERBOARDS</div>
 
-  <div class="filter-bar">
+  <!-- Tab bar will be dynamically inserted here -->
+
+  <div class="filter-bar" style="display:none;">
     <span class="text-dim">FILTER:</span>
     <button class="active" data-filter="active" id="filter-active">Active Only</button>
     <button data-filter="all" id="filter-all">All</button>
@@ -2045,6 +2125,73 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
   <div style="margin-top:12px;">
     <button class="term-btn" onclick="location.hash='#race'">BACK TO RACES</button>
+  </div>
+</div>
+
+<!-- ═══ CHALLENGES PAGE ═════════════════════════════════════════════════════ -->
+<div class="page" id="page-challenges">
+  <div class="section-hdr">// HEAD-TO-HEAD CHALLENGES — ⚔️ Prove Your Bloodline</div>
+
+  <h3>CREATE CHALLENGE</h3>
+  <div class="form-row">
+    <label>YOUR HORSE:</label>
+    <select class="term-input" id="challenge-my-horse"><option value="">-- SELECT YOUR HORSE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>TARGET STABLE:</label>
+    <select class="term-input" id="challenge-target-stable"><option value="">-- SELECT OPPONENT --</option></select>
+  </div>
+  <div class="form-row">
+    <label>OPPONENT HORSE:</label>
+    <select class="term-input" id="challenge-target-horse"><option value="">-- SELECT HORSE --</option></select>
+  </div>
+  <div class="form-row">
+    <label>WAGER (₵):</label>
+    <input class="term-input" id="challenge-wager" type="number" value="100" min="0" style="max-width:120px;">
+  </div>
+  <div class="form-row">
+    <label></label>
+    <button class="term-btn danger" id="btn-create-challenge">⚔️ SEND CHALLENGE</button>
+  </div>
+  <div id="challenge-create-msg" class="mb-8 text-dim" style="font-size:11px;"></div>
+
+  <div class="two-col">
+    <div>
+      <h3>// INCOMING CHALLENGES</h3>
+      <div id="challenges-incoming">
+        <span class="text-dim">No incoming challenges.</span>
+      </div>
+    </div>
+    <div>
+      <h3>// YOUR CHALLENGES</h3>
+      <div id="challenges-outgoing">
+        <span class="text-dim">No outgoing challenges.</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>// CHALLENGE HISTORY</h3>
+  <div id="challenges-history">
+    <span class="text-dim">No completed challenges yet.</span>
+  </div>
+</div>
+
+<!-- ═══ BETTING PANEL (embedded in race view, shown via WS) ═════════════════ -->
+<div id="betting-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)window.SU.closeBettingModal()">
+  <div class="modal-box">
+    <span class="modal-close" onclick="window.SU.closeBettingModal()">[X]</span>
+    <h2 class="glow">🎰 BETTING POOL</h2>
+    <div class="section-hdr" id="betting-pool-info">Pool: Loading...</div>
+    <div id="betting-horses" class="mt-8"></div>
+    <div class="form-row mt-8">
+      <label>YOUR BET (₵):</label>
+      <input class="term-input" id="betting-amount" type="number" value="50" min="10" max="100000" style="max-width:120px;">
+    </div>
+    <div id="betting-msg" class="text-dim" style="font-size:11px;margin-top:4px;"></div>
+    <div id="betting-results" class="hidden mt-8">
+      <h3>// RESULTS</h3>
+      <div id="betting-results-content"></div>
+    </div>
   </div>
 </div>
 
@@ -2119,6 +2266,10 @@ let currentRace = null;
 let raceNarrativeLog = [];
 let raceViz = null;
 let leaderboardFilter = 'active';
+let leaderboardTab = 'stables';   // 'stables' or 'horses'
+let leaderboardSort = 'elo';      // current sort column for stable leaderboard
+let activeBettingPool = null;     // current open betting pool data
+let dailyRewardClaimed = false;   // whether daily reward has been claimed today
 
 // ─── DOM HELPERS ───────────────────────────────────────────────────────────
 const $ = (sel) => document.querySelector(sel);
@@ -2148,6 +2299,29 @@ function escHtml(s) {
 function truncate(str, len) {
   if (!str) return '';
   return str.length > len ? str.substring(0, len - 1) + '…' : str;
+}
+
+// ─── TOAST NOTIFICATIONS ──────────────────────────────────────────────────
+function showToast(message, type = 'default', duration = 5000) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  // Keep max 6 visible toasts
+  while (container.children.length > 6) {
+    container.removeChild(container.firstChild);
+  }
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
 }
 
 // ─── ASCII ART ─────────────────────────────────────────────────────────────
@@ -2479,6 +2653,7 @@ function navigate() {
     case 'tournament': loadTournaments(); break;
     case 'trades': loadTrades(); break;
     case 'leaderboard': loadLeaderboard(); break;
+    case 'challenges': loadChallenges(); break;
     case 'achievements': loadAchievements(); break;
     case 'replay': loadReplay(getPageParam()); break;
   }
@@ -2533,6 +2708,70 @@ function handleWsMessage(msg) {
     case 'race_end': onRaceEnd(msg); break;
     case 'narrative': onNarrative(msg); break;
     case 'narrative_tick': onNarrativeTick(msg); break;
+
+    // ─── MULTIPLAYER EVENT TOASTS ─────────────────────────────────────
+    case 'trade_update':
+      showToast(`Trade ${msg.action}: ${msg.trade?.horseName || ''} (${msg.trade?.fromStable || '?'} → ${msg.trade?.toStable || '?'})`, 'trade');
+      break;
+    case 'market_update':
+      showToast(`Market: ${msg.listing?.horseName || ''} ${msg.action || ''} ${msg.action === 'purchased' ? 'by ' + (msg.buyerStable || '') : ''}`, 'market');
+      break;
+    case 'achievement_unlocked':
+      showToast(`🏆 ${msg.stableName || ''} unlocked: ${msg.achievement || ''}!`, 'achievement');
+      break;
+    case 'breeding_event':
+      showToast(`New foal born: ${msg.foal?.name || '?'} (${msg.foal?.sireName || '?'} × ${msg.foal?.mareName || '?'}) at ${msg.stableName || '?'}`, 'breeding');
+      break;
+    case 'training_update':
+      showToast(`${msg.horseName || '?'} ${msg.action || 'trained'} at ${msg.stableName || '?'}`, 'default');
+      break;
+    case 'challenge':
+      if (msg.action === 'created') {
+        showToast(`⚔️ CHALLENGE: ${msg.challenge?.challengerName || '?'} challenges ${msg.challenge?.defenderName || '?'}! Wager: ${msg.challenge?.wager || 0}₵`, 'challenge');
+      } else if (msg.action === 'accepted') {
+        showToast(`⚔️ Challenge accepted! Race starting...`, 'challenge');
+      } else if (msg.action === 'declined') {
+        showToast(`⚔️ Challenge declined.`, 'challenge');
+      } else if (msg.action === 'completed') {
+        showToast(`⚔️ Challenge complete! Winner: ${msg.challenge?.winnerName || '?'}`, 'challenge');
+      }
+      // Refresh challenges page if visible
+      if (getPage() === 'challenges') loadChallenges();
+      break;
+    case 'betting_pool_opened':
+      showToast(`🎰 Betting open for race! Place your bets...`, 'betting');
+      onBettingPoolOpened(msg);
+      break;
+    case 'betting_update':
+      onBettingUpdate(msg);
+      break;
+    case 'betting_pool_closed':
+      showToast(`🎰 Betting closed! Race starting...`, 'betting');
+      break;
+    case 'betting_resolved':
+      showToast(`🎰 Bets resolved! Pool: ${msg.totalPool || 0}₵`, 'betting');
+      onBettingResolved(msg);
+      break;
+    case 'tournament_prize':
+      showToast(`🏆 Tournament prizes distributed!`, 'achievement');
+      break;
+    case 'tournament_update':
+      showToast(`Tournament: ${msg.tournament?.name || ''} — ${msg.action || ''}`, 'default');
+      break;
+    case 'daily_reward':
+      showToast(`${msg.username || '?'} claimed daily reward: ${msg.cummies || 0}₵ (streak: ${msg.streak || 0})`, 'prestige');
+      break;
+    case 'prestige_levelup':
+      showToast(`⬆️ ${msg.username || '?'} reached ${msg.tierName || 'new tier'}!`, 'prestige');
+      break;
+    case 'season_end':
+      showToast(`🏁 Season ended! New season: ${msg.newSeason?.name || '?'}`, 'season');
+      fetchSeasonInfo(); // refresh season display
+      break;
+    case 'balance_update':
+      // If this is our stable, update displayed balance on dashboard
+      break;
+
     // Chat message types
     case 'chat_msg':
     case 'chat_emote':
@@ -3759,10 +3998,13 @@ async function loadDashboard() {
     allHorses.forEach(h => totalRaces += (h.races || 0));
     $('#stat-races').textContent = Math.floor(totalRaces / Math.max(2, Math.min(allHorses.length, 6)));
 
-    // Current season estimate (based on max generation)
+    // Current season — try real API first, then fallback to generation estimate
     let maxGen = 0;
     allHorses.forEach(h => { if (h.generation > maxGen) maxGen = h.generation; });
     $('#stat-season').textContent = maxGen > 0 ? `Gen ${maxGen}` : 'Genesis';
+    // Real season info will override this via fetchSeasonInfo()
+    fetchSeasonInfo();
+    loadPrestige();
 
     // Top 5 performers
     const perfEl = $('#top-performers');
@@ -3979,7 +4221,7 @@ function renderStableList() {
 
   let html = `<div class="text-dim mb-8">total ${allStables.length}</div>
 <table class="term-table"><thead><tr>
-  <th>PERMS</th><th>STABLE NAME</th><th>HORSES</th><th>CUMMIES</th><th>EARNINGS</th><th>CREATED</th><th></th>
+  <th>PERMS</th><th>STABLE NAME</th><th>HORSES</th><th>CUMMIES</th><th>EARNINGS</th><th>CREATED</th><th></th><th></th>
 </tr></thead><tbody>`;
 
   allStables.forEach(s => {
@@ -3993,6 +4235,7 @@ function renderStableList() {
       <td class="text-dim">₵${(s.total_earnings || 0).toLocaleString()}</td>
       <td class="text-dim">${date}</td>
       <td><a onclick="event.stopPropagation(); window.SU.viewStable('${escHtml(s.id)}')">[cd]</a></td>
+      <td><a onclick="event.stopPropagation(); window.SU.challengeStable('${escHtml(s.id)}', '${escHtml(s.name)}')" style="color:var(--red);">[⚔️]</a></td>
     </tr>`;
   });
 
@@ -4584,20 +4827,49 @@ function renderRaceHorseList() {
     return;
   }
 
-  let html = '<div style="max-height:320px;overflow-y:auto;">';
-  active.forEach(h => {
+  // Find the current user's stable to separate own horses from opponents
+  const myUserID = currentUser ? currentUser.id : null;
+  const myStable = myUserID ? allStables.find(s => s.owner_id === myUserID) : null;
+  const myHorseIDs = new Set();
+  if (myStable && myStable.horses) {
+    myStable.horses.forEach(h => myHorseIDs.add(h.id));
+  }
+  // Fallback: match by owner_id on the horse objects
+  if (myUserID) {
+    active.forEach(h => { if (h.owner_id === myUserID) myHorseIDs.add(h.id); });
+  }
+
+  const myHorses = active.filter(h => myHorseIDs.has(h.id));
+  const otherHorses = active.filter(h => !myHorseIDs.has(h.id));
+
+  const renderHorse = (h, checked) => {
     const legendary = h.is_legendary ? ' ★' : '';
     const fatigueClass = (h.fatigue || 0) >= 70 ? 'text-red' : (h.fatigue || 0) >= 50 ? 'text-amber' : 'text-dim';
-    html += `<div style="padding:2px 0;">
+    return `<div style="padding:2px 0;">
       <label>
-        <input type="checkbox" class="term-checkbox race-horse-cb" value="${h.id}">
+        <input type="checkbox" class="term-checkbox race-horse-cb" value="${h.id}"${checked ? ' checked' : ''}>
         <span>${escHtml(h.name)}${legendary}</span>
         <span class="text-dim">[ELO:${Math.round(h.elo || 1200)}]</span>
         <span class="text-dim">Fit:${(h.current_fitness || 0).toFixed(2)}</span>
         <span class="${fatigueClass}">Fat:${(h.fatigue || 0).toFixed(0)}%</span>
       </label>
     </div>`;
-  });
+  };
+
+  let html = '<div style="max-height:400px;overflow-y:auto;">';
+
+  if (myHorses.length > 0) {
+    html += '<div style="color:var(--green);border-bottom:1px solid var(--green);padding:4px 0;margin-bottom:4px;font-weight:bold;">YOUR HORSES (select at least 1)</div>';
+    myHorses.forEach(h => { html += renderHorse(h, false); });
+  } else {
+    html += '<div style="color:var(--amber);padding:4px 0;">You have no horses yet. Breed some first, or use QUICK RACE.</div>';
+  }
+
+  if (otherHorses.length > 0) {
+    html += '<div style="color:var(--amber);border-bottom:1px solid var(--dim);padding:4px 0;margin:8px 0 4px 0;font-weight:bold;">OPPONENTS (optional — race against AI/other stables)</div>';
+    otherHorses.forEach(h => { html += renderHorse(h, false); });
+  }
+
   html += '</div>';
   listEl.innerHTML = html;
 }
@@ -5343,19 +5615,249 @@ async function cancelTrade(tradeId) {
   }
 }
 
-// ─── LEADERBOARD PAGE ──────────────────────────────────────────────────────
+// ─── LEADERBOARD PAGE (ENHANCED) ───────────────────────────────────────────
 async function loadLeaderboard() {
-  try {
-    const data = await api('/horses');
-    allHorses = Array.isArray(data) ? data : [];
-  } catch (e) {
-    allHorses = [];
+  const tableEl = $('#leaderboard-table');
+  const pageEl = document.getElementById('page-leaderboard');
+  if (!pageEl) return;
+
+  // Render tab bar if not already present
+  let tabBar = pageEl.querySelector('.tab-bar');
+  if (!tabBar) {
+    tabBar = document.createElement('div');
+    tabBar.className = 'tab-bar';
+    tabBar.innerHTML = `
+      <button class="${leaderboardTab === 'stables' ? 'active' : ''}" onclick="window.SU.switchLeaderboardTab('stables')">[STABLE RANKINGS]</button>
+      <button class="${leaderboardTab === 'horses' ? 'active' : ''}" onclick="window.SU.switchLeaderboardTab('horses')">[HORSE RANKINGS]</button>
+    `;
+    pageEl.insertBefore(tabBar, pageEl.querySelector('.filter-bar'));
   }
 
-  renderLeaderboard();
+  if (leaderboardTab === 'stables') {
+    await loadStableLeaderboard();
+  } else {
+    await loadHorseLeaderboard();
+  }
 }
 
-function renderLeaderboard() {
+function switchLeaderboardTab(tab) {
+  leaderboardTab = tab;
+  const pageEl = document.getElementById('page-leaderboard');
+  if (pageEl) {
+    const tabBar = pageEl.querySelector('.tab-bar');
+    if (tabBar) tabBar.remove(); // force re-render
+  }
+  loadLeaderboard();
+}
+
+async function loadStableLeaderboard() {
+  const tableEl = $('#leaderboard-table');
+  tableEl.innerHTML = '<span class="loading cursor-blink">Fetching stable rankings...</span>';
+
+  // Hide horse-only filter bar
+  const filterBar = document.querySelector('#page-leaderboard .filter-bar');
+  if (filterBar) filterBar.style.display = 'none';
+
+  try {
+    const data = await api(`/leaderboard?sort=${leaderboardSort}&limit=20`);
+    const entries = Array.isArray(data) ? data : (data?.entries || data?.stables || []);
+
+    if (entries.length === 0) {
+      // Fallback: build leaderboard from stables data
+      await loadStableLeaderboardFallback();
+      return;
+    }
+
+    renderStableLeaderboardData(entries);
+  } catch (e) {
+    // Fallback: build from stables + horses data
+    await loadStableLeaderboardFallback();
+  }
+}
+
+async function loadStableLeaderboardFallback() {
+  const tableEl = $('#leaderboard-table');
+  try {
+    const [stablesData, horsesData] = await Promise.all([
+      api('/stables'),
+      api('/horses'),
+    ]);
+    allStables = Array.isArray(stablesData) ? stablesData : [];
+    allHorses = Array.isArray(horsesData) ? horsesData : [];
+
+    // Build stable stats from horse data
+    const stableMap = {};
+    allStables.forEach(s => {
+      stableMap[s.id] = {
+        id: s.id, name: s.name, elo: 0, wins: 0, losses: 0,
+        earnings: s.total_earnings || 0, bestHorse: null, bestElo: 0,
+        streak: 0, horseCount: 0,
+      };
+    });
+
+    allHorses.forEach(h => {
+      const sid = h.stable_id;
+      if (!sid || !stableMap[sid]) return;
+      const s = stableMap[sid];
+      s.wins += (h.wins || 0);
+      s.losses += (h.losses || 0);
+      s.horseCount++;
+      const hElo = h.elo || 1200;
+      if (hElo > s.bestElo) {
+        s.bestElo = hElo;
+        s.bestHorse = h.name;
+      }
+      if (hElo > s.elo) s.elo = hElo;
+    });
+
+    let entries = Object.values(stableMap);
+    // Sort by selected column
+    entries = sortStableEntries(entries, leaderboardSort);
+
+    renderStableLeaderboardData(entries);
+  } catch (e2) {
+    tableEl.innerHTML = '<div class="text-dim">Failed to load leaderboard data.</div>';
+  }
+}
+
+function sortStableEntries(entries, sort) {
+  switch (sort) {
+    case 'elo': return entries.sort((a, b) => (b.elo || 0) - (a.elo || 0));
+    case 'wins': return entries.sort((a, b) => (b.wins || 0) - (a.wins || 0));
+    case 'winpct':
+      return entries.sort((a, b) => {
+        const totalA = (a.wins || 0) + (a.losses || 0);
+        const totalB = (b.wins || 0) + (b.losses || 0);
+        const pctA = totalA > 0 ? a.wins / totalA : 0;
+        const pctB = totalB > 0 ? b.wins / totalB : 0;
+        return pctB - pctA;
+      });
+    case 'earnings': return entries.sort((a, b) => (b.earnings || 0) - (a.earnings || 0));
+    case 'name': return entries.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    default: return entries.sort((a, b) => (b.elo || 0) - (a.elo || 0));
+  }
+}
+
+function renderStableLeaderboardData(entries) {
+  const tableEl = $('#leaderboard-table');
+  const sortH = (col) => `onclick="window.SU.sortLeaderboard('${col}')"`;
+  const activeClass = (col) => leaderboardSort === col ? ' sortable sort-active' : ' sortable';
+
+  let html = `<table class="term-table"><thead><tr>
+    <th>#</th>
+    <th class="${activeClass('name')}" ${sortH('name')}>STABLE</th>
+    <th class="${activeClass('elo')}" ${sortH('elo')}>ELO</th>
+    <th class="${activeClass('wins')}" ${sortH('wins')}>W/L</th>
+    <th class="${activeClass('winpct')}" ${sortH('winpct')}>WIN%</th>
+    <th class="${activeClass('earnings')}" ${sortH('earnings')}>EARNINGS</th>
+    <th>BEST HORSE</th>
+    <th>STREAK</th>
+  </tr></thead><tbody>`;
+
+  entries.forEach((s, i) => {
+    const rank = i + 1;
+    const total = (s.wins || 0) + (s.losses || 0);
+    const winPct = total > 0 ? ((s.wins / total) * 100).toFixed(1) : '0.0';
+    const streak = s.streak || s.win_streak || 0;
+    const streakStr = streak > 0 ? `<span class="ticker-up">+${streak}</span>` : streak < 0 ? `<span class="ticker-down">${streak}</span>` : '—';
+
+    const rankDisplay = rank <= 3
+      ? `<span class="${rank === 1 ? 'result-place gold' : rank === 2 ? 'result-place silver' : 'result-place bronze'}">${rank}</span>`
+      : rank;
+
+    html += `<tr>
+      <td>${rankDisplay}</td>
+      <td>${escHtml(s.name || s.stable_name || '?')}</td>
+      <td style="font-weight:bold">${Math.round(s.elo || s.max_elo || 1200)}</td>
+      <td>${s.wins || 0}/${s.losses || 0}</td>
+      <td class="text-amber">${winPct}%</td>
+      <td class="text-dim">₵${(s.earnings || s.total_earnings || 0).toLocaleString()}</td>
+      <td class="text-dim">${escHtml(s.bestHorse || s.best_horse || '—')}</td>
+      <td>${streakStr}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  if (entries.length === 0) {
+    html = '<div class="text-dim">No stable rankings data available.</div>';
+  }
+  tableEl.innerHTML = html;
+}
+
+function sortLeaderboard(col) {
+  leaderboardSort = col;
+  loadLeaderboard();
+}
+
+async function loadHorseLeaderboard() {
+  const tableEl = $('#leaderboard-table');
+  tableEl.innerHTML = '<span class="loading cursor-blink">Computing horse rankings...</span>';
+
+  // Show the filter bar for horse tab
+  const filterBar = document.querySelector('#page-leaderboard .filter-bar');
+  if (filterBar) filterBar.style.display = '';
+
+  try {
+    const data = await api('/leaderboard/horses');
+    const entries = Array.isArray(data) ? data : (data?.horses || []);
+    if (entries.length > 0) {
+      renderHorseLeaderboardData(entries);
+      return;
+    }
+  } catch(e) { /* fallback */ }
+
+  // Fallback: render from allHorses
+  try {
+    if (allHorses.length === 0) {
+      const data = await api('/horses');
+      allHorses = Array.isArray(data) ? data : [];
+    }
+    renderHorseLeaderboardFallback();
+  } catch(e) {
+    tableEl.innerHTML = '<div class="text-dim">Failed to load horse rankings.</div>';
+  }
+}
+
+function renderHorseLeaderboardData(entries) {
+  const tableEl = $('#leaderboard-table');
+  let html = `<table class="term-table"><thead><tr>
+    <th>#</th><th>HORSE</th><th>ELO</th><th>W/L/R</th><th>WIN%</th><th>STABLE</th><th>GEN</th><th>TRAITS</th>
+  </tr></thead><tbody>`;
+
+  entries.forEach((h, i) => {
+    const rank = i + 1;
+    const winPct = (h.races || h.total_races || 0) > 0
+      ? ((h.wins / (h.races || h.total_races)) * 100).toFixed(1) : '0.0';
+    let cls = '';
+    if (h.retired) cls = ' class="retired"';
+    else if (h.is_legendary) cls = ' class="legendary"';
+
+    const rankDisplay = rank <= 3
+      ? `<span class="${rank === 1 ? 'result-place gold' : rank === 2 ? 'result-place silver' : 'result-place bronze'}">${rank}</span>`
+      : rank;
+
+    html += `<tr${cls}>
+      <td>${rankDisplay}</td>
+      <td><a href="#horse/${h.id}">${h.is_legendary ? '★ ' : ''}${escHtml(h.name)}</a></td>
+      <td style="font-weight:bold">${Math.round(h.elo || 1200)}</td>
+      <td>${h.wins || 0}/${h.losses || 0}/${h.races || h.total_races || 0}</td>
+      <td class="text-amber">${winPct}%</td>
+      <td class="text-dim">${escHtml(h.stable_name || '—')}</td>
+      <td class="text-dim">G${h.generation || 0}</td>
+      <td class="text-dim">${(h.traits || []).length}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  tableEl.innerHTML = html;
+}
+
+function renderHorseLeaderboardFallback() {
+  // Use old behavior with allHorses
+  renderLeaderboardLegacy();
+}
+
+function renderLeaderboardLegacy() {
   const tableEl = $('#leaderboard-table');
 
   let filtered = [...allHorses];
@@ -5408,6 +5910,469 @@ function renderLeaderboard() {
 
   html += '</tbody></table>';
   tableEl.innerHTML = html;
+}
+
+// ─── CHALLENGE PAGE ────────────────────────────────────────────────────────
+async function loadChallenges() {
+  // Populate dropdowns
+  try {
+    if (allStables.length === 0) {
+      const data = await api('/stables');
+      allStables = Array.isArray(data) ? data : [];
+    }
+    if (allHorses.length === 0) {
+      const data = await api('/horses');
+      allHorses = Array.isArray(data) ? data : [];
+    }
+  } catch(e) {}
+
+  // Populate "your horse" dropdown
+  const myHorseEl = $('#challenge-my-horse');
+  if (myHorseEl) {
+    myHorseEl.innerHTML = '<option value="">-- SELECT YOUR HORSE --</option>';
+    // Show horses from user's stables
+    const myStableIds = allStables
+      .filter(s => s.owner_id === getOwnerID() || (!s.owner_id && allStables.length <= 3))
+      .map(s => s.id);
+    const myHorses = allHorses.filter(h => myStableIds.includes(h.stable_id) && !h.retired);
+    myHorses.forEach(h => {
+      myHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
+    });
+    // If no stables found for owner, show all active horses
+    if (myHorses.length === 0) {
+      allHorses.filter(h => !h.retired).forEach(h => {
+        myHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
+      });
+    }
+  }
+
+  // Populate target stable dropdown
+  const targetStableEl = $('#challenge-target-stable');
+  if (targetStableEl) {
+    targetStableEl.innerHTML = '<option value="">-- SELECT OPPONENT --</option>';
+    allStables.forEach(s => {
+      targetStableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+    });
+  }
+
+  // When target stable changes, populate target horse dropdown
+  if (targetStableEl && !targetStableEl._challengeListener) {
+    targetStableEl._challengeListener = true;
+    targetStableEl.addEventListener('change', async () => {
+      const stableId = targetStableEl.value;
+      const targetHorseEl = $('#challenge-target-horse');
+      targetHorseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+      if (!stableId) return;
+      try {
+        const horses = await api(`/stables/${stableId}/horses`);
+        const horseList = Array.isArray(horses) ? horses : [];
+        horseList.filter(h => !h.retired).forEach(h => {
+          targetHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
+        });
+      } catch(e) {}
+    });
+  }
+
+  // Load existing challenges
+  await loadChallengeList();
+}
+
+async function loadChallengeList() {
+  try {
+    const data = await api('/challenges');
+    const challenges = Array.isArray(data) ? data : (data?.challenges || []);
+    renderChallenges(challenges);
+  } catch(e) {
+    // Endpoint might not exist yet — show empty
+    $('#challenges-incoming').innerHTML = '<span class="text-dim">Could not load challenges.</span>';
+    $('#challenges-outgoing').innerHTML = '<span class="text-dim">Could not load challenges.</span>';
+  }
+}
+
+function renderChallenges(challenges) {
+  const inEl = $('#challenges-incoming');
+  const outEl = $('#challenges-outgoing');
+  const histEl = $('#challenges-history');
+
+  const ownerID = getOwnerID();
+
+  const pending = challenges.filter(c => c.status === 'pending' || c.status === 'created');
+  const completed = challenges.filter(c => c.status === 'completed' || c.status === 'declined');
+
+  // Incoming: challenges where I'm the defender
+  const incoming = pending.filter(c => c.defender_id === ownerID || c.defender_stable_id === ownerID);
+  // Outgoing: challenges I created
+  const outgoing = pending.filter(c => c.challenger_id === ownerID || c.challenger_stable_id === ownerID);
+
+  if (incoming.length === 0) {
+    inEl.innerHTML = '<span class="text-dim">No incoming challenges.</span>';
+  } else {
+    let html = '';
+    incoming.forEach(c => {
+      html += `<div class="challenge-card pending">
+        <div class="challenge-header">
+          <span>⚔️ <strong>${escHtml(c.challenger_name || c.challengerName || '?')}</strong> challenges you!</span>
+          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()}</span>
+        </div>
+        <div class="text-dim" style="font-size:11px;">
+          ${escHtml(c.challenger_horse_name || '')} vs ${escHtml(c.defender_horse_name || 'your horse')}
+        </div>
+        <div class="challenge-actions">
+          <button class="term-btn sm" onclick="window.SU.acceptChallenge('${c.id}')">ACCEPT</button>
+          <button class="term-btn sm danger" onclick="window.SU.declineChallenge('${c.id}')">DECLINE</button>
+        </div>
+      </div>`;
+    });
+    inEl.innerHTML = html;
+  }
+
+  if (outgoing.length === 0) {
+    outEl.innerHTML = '<span class="text-dim">No outgoing challenges.</span>';
+  } else {
+    let html = '';
+    outgoing.forEach(c => {
+      html += `<div class="challenge-card pending">
+        <div class="challenge-header">
+          <span>⚔️ You challenged <strong>${escHtml(c.defender_name || c.defenderName || '?')}</strong></span>
+          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()}</span>
+        </div>
+        <div class="text-dim" style="font-size:11px;">
+          ${escHtml(c.challenger_horse_name || '')} vs ${escHtml(c.defender_horse_name || '?')} — Waiting for response...
+        </div>
+      </div>`;
+    });
+    outEl.innerHTML = html;
+  }
+
+  // History
+  if (completed.length === 0) {
+    histEl.innerHTML = '<span class="text-dim">No completed challenges yet.</span>';
+  } else {
+    let html = `<table class="term-table"><thead><tr>
+      <th>CHALLENGER</th><th>DEFENDER</th><th>WAGER</th><th>RESULT</th><th>STATUS</th>
+    </tr></thead><tbody>`;
+    completed.forEach(c => {
+      const statusCls = c.status === 'completed' ? 'text-amber' : 'text-red';
+      html += `<tr>
+        <td>${escHtml(c.challenger_name || c.challengerName || '?')}</td>
+        <td>${escHtml(c.defender_name || c.defenderName || '?')}</td>
+        <td class="text-amber">₵${(c.wager || 0).toLocaleString()}</td>
+        <td>${escHtml(c.winner_name || c.winnerName || '—')}</td>
+        <td class="${statusCls}">${(c.status || '').toUpperCase()}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+    histEl.innerHTML = html;
+  }
+}
+
+async function createChallenge() {
+  const myHorse = $('#challenge-my-horse').value;
+  const targetStable = $('#challenge-target-stable').value;
+  const targetHorse = $('#challenge-target-horse').value;
+  const wager = parseInt($('#challenge-wager').value) || 0;
+  const msgEl = $('#challenge-create-msg');
+
+  if (!myHorse) { msgEl.textContent = 'ERROR: select your horse'; msgEl.style.color = 'var(--red)'; return; }
+  if (!targetHorse) { msgEl.textContent = 'ERROR: select opponent horse'; msgEl.style.color = 'var(--red)'; return; }
+
+  msgEl.textContent = 'Sending challenge...';
+  msgEl.style.color = 'var(--fg-dim)';
+
+  try {
+    await api('/challenges', {
+      method: 'POST',
+      body: {
+        challenger_horse_id: myHorse,
+        defender_horse_id: targetHorse,
+        defender_stable_id: targetStable,
+        wager: wager,
+      },
+    });
+    msgEl.textContent = 'Challenge sent!';
+    msgEl.style.color = 'var(--fg)';
+    await loadChallengeList();
+  } catch(e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function acceptChallenge(challengeId) {
+  try {
+    await api(`/challenges/${challengeId}/accept`, { method: 'POST' });
+    showToast('Challenge accepted! Race starting...', 'challenge');
+    await loadChallengeList();
+  } catch(e) {
+    showToast(`Failed to accept: ${e.message}`, 'challenge');
+  }
+}
+
+async function declineChallenge(challengeId) {
+  try {
+    await api(`/challenges/${challengeId}/decline`, { method: 'POST' });
+    showToast('Challenge declined.', 'challenge');
+    await loadChallengeList();
+  } catch(e) {
+    showToast(`Failed to decline: ${e.message}`, 'challenge');
+  }
+}
+
+// Quick-challenge from stable list: navigates to challenge page and pre-selects target
+function challengeStable(stableId, stableName) {
+  location.hash = '#challenges';
+  // Wait for page to load, then select the stable
+  setTimeout(() => {
+    const targetEl = $('#challenge-target-stable');
+    if (targetEl) {
+      targetEl.value = stableId;
+      // Trigger change event to load horses
+      targetEl.dispatchEvent(new Event('change'));
+    }
+  }, 300);
+}
+
+// ─── BETTING UI ────────────────────────────────────────────────────────────
+function onBettingPoolOpened(msg) {
+  const pool = msg.pool || msg;
+  activeBettingPool = pool;
+
+  // Show the betting modal
+  const modal = $('#betting-modal');
+  if (modal) modal.style.display = 'flex';
+
+  const infoEl = $('#betting-pool-info');
+  if (infoEl) {
+    infoEl.textContent = `Race: ${pool.raceID || pool.race_id || '?'} | Status: OPEN`;
+  }
+
+  renderBettingHorses(pool);
+}
+
+function renderBettingHorses(pool) {
+  const horsesEl = $('#betting-horses');
+  if (!horsesEl) return;
+
+  const horses = pool.horses || pool.entries || [];
+  if (horses.length === 0) {
+    horsesEl.innerHTML = '<span class="text-dim">No horses in pool.</span>';
+    return;
+  }
+
+  let html = '';
+  horses.forEach(h => {
+    const odds = h.odds ? `${h.odds.toFixed(1)}:1` : (h.totalBet ? `${h.totalBet}₵ wagered` : '—');
+    html += `<div class="betting-horse-row">
+      <input type="radio" name="bet-horse" value="${h.horseID || h.horse_id || h.id}" class="term-checkbox">
+      <span class="horse-name">${escHtml(h.horseName || h.horse_name || h.name || '?')}</span>
+      <span class="horse-odds">${odds}</span>
+      <button class="term-btn sm" onclick="window.SU.placeBet('${h.horseID || h.horse_id || h.id}')">BET</button>
+    </div>`;
+  });
+  horsesEl.innerHTML = html;
+
+  // Clear results
+  const resultsEl = $('#betting-results');
+  if (resultsEl) resultsEl.classList.add('hidden');
+  const msgEl = $('#betting-msg');
+  if (msgEl) msgEl.textContent = '';
+}
+
+function onBettingUpdate(msg) {
+  // Update odds in the betting panel
+  if (!activeBettingPool) return;
+  const pool = msg.pool || msg;
+  if (pool.horses || pool.entries) {
+    activeBettingPool.horses = pool.horses || pool.entries;
+    renderBettingHorses(activeBettingPool);
+  }
+}
+
+function onBettingResolved(msg) {
+  const resultsEl = $('#betting-results');
+  const contentEl = $('#betting-results-content');
+  if (!resultsEl || !contentEl) return;
+
+  resultsEl.classList.remove('hidden');
+
+  const winner = msg.winnerName || msg.winner_name || '?';
+  const totalPool = msg.totalPool || msg.total_pool || 0;
+  const payouts = msg.payouts || [];
+
+  let html = `<div class="mb-8"><span class="text-amber">Winner: ${escHtml(winner)}</span> | Pool: ₵${totalPool.toLocaleString()}</div>`;
+
+  if (payouts.length > 0) {
+    html += '<table class="term-table"><thead><tr><th>USER</th><th>BET</th><th>PAYOUT</th></tr></thead><tbody>';
+    payouts.forEach(p => {
+      const profit = (p.payout || 0) - (p.amount || 0);
+      const profitCls = profit > 0 ? 'ticker-up' : 'ticker-down';
+      html += `<tr>
+        <td>${escHtml(p.username || p.user || '?')}</td>
+        <td class="text-dim">₵${(p.amount || 0).toLocaleString()}</td>
+        <td class="${profitCls}">₵${(p.payout || 0).toLocaleString()} (${profit >= 0 ? '+' : ''}${profit.toLocaleString()})</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+
+  contentEl.innerHTML = html;
+  activeBettingPool = null;
+}
+
+async function placeBet(horseId) {
+  if (!activeBettingPool) {
+    showToast('No active betting pool!', 'betting');
+    return;
+  }
+
+  const amount = parseInt($('#betting-amount').value) || 50;
+  const raceID = activeBettingPool.raceID || activeBettingPool.race_id;
+  const msgEl = $('#betting-msg');
+
+  if (!raceID) {
+    if (msgEl) msgEl.textContent = 'Error: no race ID';
+    return;
+  }
+
+  try {
+    await api(`/betting/pools/${raceID}/bet`, {
+      method: 'POST',
+      body: { horse_id: horseId, amount: amount },
+    });
+    if (msgEl) {
+      msgEl.textContent = `Bet placed: ₵${amount} on horse!`;
+      msgEl.style.color = 'var(--fg)';
+    }
+    showToast(`Bet placed: ₵${amount}`, 'betting');
+  } catch(e) {
+    if (msgEl) {
+      msgEl.textContent = `Bet error: ${e.message}`;
+      msgEl.style.color = 'var(--red)';
+    }
+  }
+}
+
+function closeBettingModal() {
+  const modal = $('#betting-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ─── DAILY REWARD ──────────────────────────────────────────────────────────
+async function claimDailyReward() {
+  const btn = $('#btn-daily-reward');
+  const statusEl = $('#daily-reward-status');
+
+  if (dailyRewardClaimed) {
+    if (statusEl) statusEl.textContent = 'Already claimed today!';
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+
+  try {
+    const data = await api('/daily-reward', { method: 'POST' });
+    const cummies = data?.cummies || data?.reward || data?.amount || 0;
+    const streak = data?.streak || data?.day || 0;
+
+    dailyRewardClaimed = true;
+    if (btn) {
+      btn.classList.add('claimed');
+      btn.textContent = 'CLAIMED';
+    }
+    if (statusEl) {
+      statusEl.innerHTML = `<span class="text-amber">+₵${cummies.toLocaleString()}</span> <span class="streak-badge">(streak: ${streak})</span>`;
+    }
+    showToast(`Daily reward claimed: ₵${cummies} (streak: ${streak})`, 'prestige');
+  } catch(e) {
+    if (btn) btn.disabled = false;
+    if (statusEl) {
+      statusEl.textContent = e.message.includes('already') ? 'Already claimed today!' : `Error: ${e.message}`;
+      statusEl.style.color = 'var(--red)';
+      if (e.message.includes('already')) {
+        dailyRewardClaimed = true;
+        if (btn) { btn.classList.add('claimed'); btn.textContent = 'CLAIMED'; }
+      }
+    }
+  }
+}
+
+async function checkDailyRewardStatus() {
+  try {
+    const data = await api('/progress');
+    if (data?.daily_claimed || data?.dailyClaimed) {
+      dailyRewardClaimed = true;
+      const btn = $('#btn-daily-reward');
+      if (btn) { btn.classList.add('claimed'); btn.textContent = 'CLAIMED'; btn.disabled = true; }
+    }
+  } catch(e) { /* silent */ }
+}
+
+// ─── PRESTIGE DISPLAY ──────────────────────────────────────────────────────
+async function loadPrestige() {
+  try {
+    const data = await api('/prestige');
+    if (!data) return;
+
+    const container = $('#dash-prestige');
+    if (!container) return;
+    container.style.display = '';
+
+    const tier = data.tier_name || data.tierName || data.tier || 'Fresh Foal';
+    const level = data.level || 0;
+    const xp = data.xp || data.experience || 0;
+    const nextXp = data.next_tier_xp || data.nextTierXP || data.xp_to_next || 10000;
+
+    // Generate star display based on level (1-5 stars per tier)
+    const filledStars = Math.min(5, Math.max(1, level));
+    const emptyStars = 5 - filledStars;
+    const starsStr = '★'.repeat(filledStars) + '☆'.repeat(emptyStars);
+
+    const pct = nextXp > 0 ? Math.min(100, (xp / nextXp) * 100) : 0;
+
+    const starsEl = $('#prestige-stars');
+    const nameEl = $('#prestige-tier-name');
+    const fillEl = $('#prestige-xp-fill');
+    const labelEl = $('#prestige-xp-label');
+
+    if (starsEl) starsEl.textContent = `[${starsStr}]`;
+    if (nameEl) nameEl.textContent = tier;
+    if (fillEl) fillEl.style.width = `${pct}%`;
+    if (labelEl) labelEl.textContent = `(${xp.toLocaleString()} / ${nextXp.toLocaleString()} XP)`;
+  } catch(e) { /* prestige endpoint might not exist yet */ }
+}
+
+// ─── SEASON INFO ───────────────────────────────────────────────────────────
+async function fetchSeasonInfo() {
+  try {
+    const data = await api('/seasons/current');
+    if (!data) return;
+
+    const seasonName = data.name || data.season_name || `Season ${data.number || data.id || '?'}`;
+    const startDate = data.start_date ? new Date(data.start_date) : null;
+    const now = new Date();
+    const dayNum = startDate ? Math.floor((now - startDate) / (1000 * 60 * 60 * 24)) + 1 : '?';
+
+    // Update header badge
+    const headerEl = $('#header-season-info');
+    if (headerEl) {
+      headerEl.textContent = `${seasonName} | Day ${dayNum}`;
+    }
+
+    // Update nav badge
+    const navBadge = $('#nav-season-badge');
+    if (navBadge) {
+      navBadge.textContent = seasonName;
+      navBadge.style.display = '';
+    }
+
+    // Update dashboard stat
+    const statEl = $('#stat-season');
+    if (statEl) {
+      statEl.textContent = seasonName;
+    }
+  } catch(e) {
+    // seasons endpoint might not exist yet — silently ignore
+  }
 }
 
 // ─── ACHIEVEMENTS PAGE ─────────────────────────────────────────────────────
@@ -5792,13 +6757,17 @@ function bindEvents() {
   // Season advance
   $('#btn-advance-season').addEventListener('click', advanceSeason);
 
-  // Leaderboard filters
+  // Challenge
+  const challengeBtn = $('#btn-create-challenge');
+  if (challengeBtn) challengeBtn.addEventListener('click', createChallenge);
+
+  // Leaderboard filters (for horse rankings tab)
   $$('.filter-bar button').forEach(btn => {
     btn.addEventListener('click', () => {
       $$('.filter-bar button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       leaderboardFilter = btn.dataset.filter;
-      renderLeaderboard();
+      if (leaderboardTab === 'horses') renderLeaderboardLegacy();
     });
   });
 }
@@ -5820,6 +6789,15 @@ window.SU = {
   submitAuth,
   continueAsGuest,
   logout,
+  // Multiplayer features
+  challengeStable,
+  acceptChallenge,
+  declineChallenge,
+  placeBet,
+  closeBettingModal,
+  claimDailyReward,
+  switchLeaderboardTab,
+  sortLeaderboard,
 };
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────
@@ -5867,6 +6845,16 @@ function init() {
 
     // Refresh weather periodically
     setInterval(fetchWeather, 60000);
+
+    // Load multiplayer UI data (prestige, season, daily reward status)
+    setTimeout(() => {
+      loadPrestige();
+      fetchSeasonInfo();
+      checkDailyRewardStatus();
+    }, 1000);
+
+    // Periodically refresh season info
+    setInterval(fetchSeasonInfo, 120000);
   });
 }
 
