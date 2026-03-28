@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mojomast/stallionussy/internal/authussy"
@@ -50,6 +51,10 @@ type Server struct {
 	pedigree    *pedigreussy.PedigreeEngine
 	trades      *pedigreussy.TradeManager
 	mux         *http.ServeMux
+
+	// Race replay cache — stores recent full race results for sharing.
+	raceCacheMu sync.RWMutex
+	raceCache   map[string]*raceResult // raceID -> full result
 
 	// Persistence layer (nil when running without DB).
 	userRepo        repository.UserRepository
@@ -88,6 +93,7 @@ func NewServer(db *postgres.DB) *Server {
 		pedigree:    pedigreussy.NewPedigreeEngine(sm.GetHorse),
 		trades:      pedigreussy.NewTradeManager(),
 		mux:         http.NewServeMux(),
+		raceCache:   make(map[string]*raceResult),
 	}
 
 	// If a DB connection is provided, wire up persistence and auth.
@@ -209,6 +215,7 @@ func (s *Server) routes() {
 	// --- Racing ---
 	s.mux.HandleFunc("POST /api/races", s.handleCreateRace)
 	s.mux.HandleFunc("GET /api/races/quick", s.handleQuickRace)
+	s.mux.HandleFunc("GET /api/races/{id}", s.handleGetRaceReplay)
 
 	// --- Race History ---
 	s.mux.HandleFunc("GET /api/history", s.handleGetRaceHistory)
@@ -904,12 +911,17 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 	log.Printf("server: race %s finished on %s (%dm) with %d entries, weather: %s",
 		race.ID, race.TrackType, race.Distance, len(race.Entries), weather)
 
-	return raceResult{
+	result := raceResult{
 		Race:             race,
 		Narrative:        narrative,
 		NarrativeIndexed: narrativeIndexed,
 		Weather:          weather,
 	}
+
+	// Cache the full result for replay sharing.
+	s.cacheRaceResult(race.ID, &result)
+
+	return result
 }
 
 // addEarningsToStable finds the stable that owns a horse and adds earnings.
@@ -968,6 +980,46 @@ func hasAchievement(achievements []models.Achievement, id string) bool {
 		}
 	}
 	return false
+}
+
+// maxRaceCacheSize limits the number of races we keep in memory for replay.
+const maxRaceCacheSize = 200
+
+// cacheRaceResult stores a race result for later replay retrieval.
+// Older entries are evicted when the cache exceeds maxRaceCacheSize.
+func (s *Server) cacheRaceResult(raceID string, result *raceResult) {
+	s.raceCacheMu.Lock()
+	defer s.raceCacheMu.Unlock()
+
+	s.raceCache[raceID] = result
+
+	// Evict oldest if we exceed the cap. Since Go maps are unordered we just
+	// trim randomly — for a production system you'd want an LRU, but this is
+	// fine for StallionUSSY's scale.
+	if len(s.raceCache) > maxRaceCacheSize {
+		for id := range s.raceCache {
+			if id != raceID {
+				delete(s.raceCache, id)
+				break
+			}
+		}
+	}
+}
+
+// handleGetRaceReplay returns a cached race result for replay.
+func (s *Server) handleGetRaceReplay(w http.ResponseWriter, r *http.Request) {
+	raceID := r.PathValue("id")
+
+	s.raceCacheMu.RLock()
+	result, ok := s.raceCache[raceID]
+	s.raceCacheMu.RUnlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, "race not found or expired")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // broadcastRaceReplay sends tick-by-tick telemetry to WebSocket clients with
@@ -1609,6 +1661,14 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast replay.
 	go s.broadcastRaceReplay(race, narrativeIndexed)
+
+	// Cache for replay sharing.
+	s.cacheRaceResult(race.ID, &raceResult{
+		Race:             race,
+		Narrative:        narrative,
+		NarrativeIndexed: narrativeIndexed,
+		Weather:          weather,
+	})
 
 	// Get updated standings.
 	standings := s.tournaments.GetStandings(tournamentID)
