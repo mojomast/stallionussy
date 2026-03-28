@@ -1,0 +1,24 @@
+[Unit]
+Description=StallionUSSY - Premium Equine Genetics Exchange
+After=network.target
+
+[Service]
+Type=simple
+User=mojo
+Group=mojo
+WorkingDirectory=/home/mojo/projects/stallionussy
+ExecStart=/home/mojo/projects/stallionussy/stallionussy serve --port 4200
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stallionussy
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mojo/projects/stallionussy
+
+[Install]
+WantedBy=multi-user.target

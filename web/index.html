@@ -1641,6 +1641,22 @@ const ACHIEVEMENT_DEFS = [
 // ─── BOOT SEQUENCE ─────────────────────────────────────────────────────────
 function runBootSequence() {
   const bootEl = $('#boot-text');
+
+  // Big ASCII splash rendered instantly before the typewriter boot lines
+  const splash = `
+ _____ _        _ _ _              _   _ ____ ______   __
+/ ____| |      | | (_)            | | | / ___/ ___\\ \\ / /
+| (___ | |_ __ _| | |_  ___  _ __ | | | \\___ \\___ \\\\ V / 
+ \\___ \\| __/ _\` | | | |/ _ \\| '_ \\| | | |___) |__) || |  
+ ____) | || (_| | | | | (_) | | | | |_| |____/____/ | |  
+|_____/ \\__\\__,_|_|_|_|\\___/|_| |_|\\___/           |_|  
+
+    Premium Equine Genetics Exchange v2.0
+    "The yogurt is patient. The yogurt remembers."
+`;
+  bootEl.textContent = splash + '\n';
+  let current = splash + '\n';
+
   const lines = [
     'STALLIONUSSY BIOS v3.0.26',
     'Copyright (c) 2026 Dr. Mittens Laboratory',
