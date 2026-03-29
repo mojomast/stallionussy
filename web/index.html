@@ -1161,7 +1161,9 @@ select.term-input option {
   border: 1px solid var(--border);
   padding: 6px 10px;
   font-size: 10px;
-  white-space: nowrap;
+  line-height: 1.5;
+  white-space: normal;
+  width: min(320px, calc(100vw - 32px));
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.15s;
@@ -1170,6 +1172,43 @@ select.term-input option {
 .has-tooltip:hover .tooltip-text {
   visibility: visible;
   opacity: 1;
+}
+
+.lore-chip {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--purple);
+  color: var(--purple);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.lore-entry {
+  border: 1px solid var(--border);
+  background: var(--bg-light);
+  padding: 12px;
+  margin: 10px 0;
+}
+
+.lore-entry h3 {
+  margin-top: 0;
+}
+
+.lore-entry .lore-summary {
+  color: var(--amber);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.lore-entry .lore-body {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+}
+
+.lore-entry .lore-body strong {
+  color: var(--fg);
 }
 
 /* ─── LOADING ────────────────────────────────────────────────────────────── */
@@ -1979,6 +2018,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#leaderboard" data-page="leaderboard">[RANKS]</a>
   <a href="#challenges" data-page="challenges">[CHALLENGE]</a>
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
+  <a href="#lore" data-page="lore">[LORE]</a>
   <a href="#alliances" data-page="alliances">[ALLIANCE]</a>
   <a href="#fights" data-page="fights">[FIGHTS]</a>
   <a href="#glue" data-page="glue">[GLUE]</a>
@@ -2152,7 +2192,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ RACE PAGE ═══════════════════════════════════════════════════════════ -->
 <div class="page" id="page-race">
-  <div class="section-hdr">// RACE TRACK — EQUINE VELOCITY ANALYSIS</div>
+  <div class="section-hdr">// RACE TRACK — EQUINE VELOCITY ANALYSIS <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: gives immediate action without manual setup. Why it matters: it is the fastest way to test pacing, spectate, and place bets. Flavor: even guest spectators are allowed into the cheap seats.</span></span></div>
 
   <div id="race-weather-display" class="mb-8"></div>
 
@@ -2164,7 +2204,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
       </div>
     </div>
     <div style="min-width:250px;">
-      <h3>TRACK SELECT</h3>
+      <h3>TRACK SELECT <span class="has-tooltip"><span class="lore-chip">TRACK LORE</span><span class="tooltip-text">What it does: hosts the most volatile track behavior in the game. Why it matters: normal expectations are unreliable here. Flavor: the lights flicker, the rail hums, and something watches every finish.</span></span></h3>
       <div class="form-row">
         <select class="term-input" id="race-track">
           <option value="Sprintussy">Sprintussy (800m) — Raw Speed</option>
@@ -2177,7 +2217,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
       </div>
       <div id="track-desc" class="text-dim" style="font-size:10px;margin:4px 0 8px 0;"></div>
       <div class="form-row">
-        <label>PURSE:</label>
+        <label>PURSE <span class="has-tooltip"><span class="lore-chip">CUMMIES</span><span class="tooltip-text">What it does: funds races, bets, breeding, and market activity. Why it matters: almost every strategic decision spends or earns it. Flavor: the Ussyverse long ago accepted that cummies are a legitimate and taxable currency.</span></span></label>
         <input class="term-input" id="race-purse" type="number" value="100" min="0" style="max-width:100px;">
       </div>
       <div class="form-row" style="gap:8px;">
@@ -2211,11 +2251,11 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ MARKET PAGE ═════════════════════════════════════════════════════════ -->
 <div class="page" id="page-market">
-  <div class="section-hdr">// STUDMARKETUSSY — BREED, BURN, PROFIT</div>
+  <div class="section-hdr">// STUDMARKETUSSY — BREED, BURN, PROFIT <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: explains taxes, monitoring, suspicious-trade warnings, and platform enforcement. Why it matters: Geoffrussy is why the economy mostly remains intact. Flavor: some call Geoffrussy a regulator, some an AI, some a divine pipeline. Nobody argues with the tax burn.</span></span></div>
 
   <div class="stats-row">
     <div class="stat-block">
-      <div class="stat-label">🔥 Total Cummies Burned</div>
+      <div class="stat-label">🔥 Total Cummies Burned <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: funds races, bets, breeding, and market activity. Why it matters: almost every strategic decision spends or earns it. Flavor: the Ussyverse long ago accepted that cummies are a legitimate and taxable currency.</span></span></div>
       <div class="stat-val amber fire-text" id="market-burned">—</div>
     </div>
     <div class="stat-block">
@@ -2418,13 +2458,24 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ ACHIEVEMENTS PAGE ═══════════════════════════════════════════════════ -->
 <div class="page" id="page-achievements">
-  <div class="section-hdr">// ACHIEVEMENT GALLERY — Certified by the Sappho Scale Achievement Board</div>
+  <div class="section-hdr">// ACHIEVEMENT GALLERY — Certified by the Sappho Scale Achievement Board <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: summarizes perceived breeding quality on a 0-12 scale. Why it matters: higher scores signal more desirable bloodlines. Flavor: the Sappho Scale Achievement Board turned horse evaluation into religion, bureaucracy, and branding all at once.</span></span></div>
   <div class="text-dim" style="font-size:10px;margin-bottom:12px;">
     "Excellence is not an act, it's a carefully monitored genetic mutation." — Dr. Mittens
   </div>
 
   <div id="achievements-grid" class="ach-grid">
     <span class="loading cursor-blink">Loading achievements...</span>
+  </div>
+</div>
+
+<!-- ═══ LORE PAGE ═══════════════════════════════════════════════════════════ -->
+<div class="page" id="page-lore">
+  <div class="section-hdr">// USSYVERSE CODEX — Field Notes, Institutions, Tracks, and Anomalies</div>
+  <div class="text-dim" style="font-size:10px;margin-bottom:12px;">
+    Practical help first, lore second. This codex explains what the systems mean and why this universe keeps functioning anyway.
+  </div>
+  <div id="lore-codex">
+    <span class="loading cursor-blink">Loading codex...</span>
   </div>
 </div>
 
@@ -2501,7 +2552,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ CHALLENGES PAGE ═════════════════════════════════════════════════════ -->
 <div class="page" id="page-challenges">
-  <div class="section-hdr">// HEAD-TO-HEAD CHALLENGES — ⚔️ Prove Your Bloodline</div>
+  <div class="section-hdr">// HEAD-TO-HEAD CHALLENGES — ⚔️ Prove Your Bloodline <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: lets one player call out another for a direct result. Why it matters: it is the cleanest social competition loop outside tournaments. Flavor: in the Ussyverse, bloodline pride is always one click away from a duel.</span></span></div>
 
   <h3>CREATE CHALLENGE</h3>
   <div class="form-row">
@@ -2517,7 +2568,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <select class="term-input" id="challenge-target-horse"><option value="">-- SELECT HORSE --</option></select>
   </div>
   <div class="form-row">
-    <label>WAGER (₵):</label>
+    <label>WAGER (₵) <span class="has-tooltip"><span class="lore-chip">BETTING</span><span class="tooltip-text">What it does: allows spectators and competitors to wager on a field before the start. Why it matters: it adds a second economy loop around racing. Flavor: Geoffrussy takes the house cut, the crowd takes the risk.</span></span></label>
     <input class="term-input" id="challenge-wager" type="number" value="100" min="0" style="max-width:120px;">
   </div>
   <div class="form-row">
@@ -2551,7 +2602,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 <div id="betting-modal" class="modal-overlay" style="display:none;" onclick="if(event.target===this)window.SU.closeBettingModal()">
   <div class="modal-box">
     <span class="modal-close" onclick="window.SU.closeBettingModal()">[X]</span>
-    <h2 class="glow">🎰 BETTING POOL</h2>
+    <h2 class="glow">🎰 BETTING POOL <span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">What it does: allows spectators and competitors to wager on a field before the start. Why it matters: it adds a second economy loop around racing. Flavor: Geoffrussy takes the house cut, the crowd takes the risk.</span></span></h2>
     <div class="section-hdr" id="betting-pool-info">Pool: Loading...</div>
     <div id="betting-horses" class="mt-8"></div>
     <div class="form-row mt-8">
@@ -2583,7 +2634,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <div id="tutorial-spotlight" class="tutorial-spotlight hidden"></div>
 <div id="tutorial-panel" class="tutorial-panel hidden"></div>
-<button id="tutorial-help-btn" class="term-btn sm tutorial-help" onclick="window.SU.replayTutorial()">HELP / TUTORIAL</button>
+<div class="tutorial-help" style="display:flex;gap:8px;">
+  <button id="tutorial-help-btn" class="term-btn sm" onclick="window.SU.replayTutorial()">HELP / TUTORIAL</button>
+  <button id="lore-help-btn" class="term-btn sm purple" onclick="window.SU.openLore()">LORE CODEX</button>
+</div>
 
 <!-- ═══ FIGHTS PAGE ═══════════════════════════════════════════════════════ -->
 <div class="page" id="page-fights">
@@ -3279,6 +3333,137 @@ const WORKOUT_INFO = {
   General:   { label: '⚡ General', desc: 'Small boost to everything. Moderate fatigue.' },
 };
 
+const LORE_HELP = {
+  cummies: {
+    title: 'Cummies',
+    summary: 'Primary currency used across racing, breeding, betting, auctions, and alliance treasuries.',
+    tooltip: 'What it does: funds races, bets, breeding, and market activity. Why it matters: almost every strategic decision spends or earns it. Flavor: the Ussyverse long ago accepted that cummies are a legitimate and taxable currency.',
+  },
+  sappho: {
+    title: 'Sappho Score And Scale',
+    summary: 'The Sappho Score is a numeric quality signal; the Sappho Scale is the broader cultural and institutional doctrine around elite bloodstock.',
+    tooltip: 'What it does: summarizes perceived breeding quality on a 0-12 scale. Why it matters: higher scores signal more desirable bloodlines. Flavor: the Sappho Scale Achievement Board turned horse evaluation into religion, bureaucracy, and branding all at once.',
+  },
+  geoffrussy: {
+    title: 'Geoffrussy',
+    summary: 'The platform governance authority overseeing anti-fraud, market compliance, taxation, and tournament legitimacy.',
+    tooltip: 'What it does: explains taxes, monitoring, suspicious-trade warnings, and platform enforcement. Why it matters: Geoffrussy is why the economy mostly remains intact. Flavor: some call Geoffrussy a regulator, some an AI, some a divine pipeline. Nobody argues with the tax burn.',
+  },
+  drmittens: {
+    title: 'Dr. Mittens',
+    summary: 'Chief veterinary scientist, institutional mascot, quote machine, and the closest thing this universe has to a responsible adult.',
+    tooltip: 'What it does: frames training, healing, and biotech legitimacy. Why it matters: when a mechanic sounds medically dubious, Dr. Mittens is usually the one certifying it anyway. Flavor: cat, doctor, bureaucrat, and unstable genius in one lab coat.',
+  },
+  e008: {
+    title: 'E-008 And The Yogurt',
+    summary: 'E-008 is the central anomaly tied to sentient yogurt, resonance events, hauntings, and reality leakage inside the racing circuit.',
+    tooltip: 'What it does: explains haunted tracks, anomalous events, glitch flavor, and certain legendary horses. Why it matters: E-008 is the reason some systems stop behaving like ordinary horse racing. Flavor: the yogurt is patient, the yogurt remembers, containment is aspirational.',
+  },
+  burp: {
+    title: 'B.U.R.P.',
+    summary: 'Bureau of Unexplained Racing Phenomena, the field authority for anomaly incidents and rogue equine weirdness.',
+    tooltip: 'What it does: contextualizes paranormal race events and anomalous sightings. Why it matters: someone has to write reports when the rail starts whispering back. Flavor: underfunded, overworked, and always three incidents behind.',
+  },
+  genes: {
+    title: 'Horse Genetics',
+    summary: 'Every horse is defined by SPD, STM, TMP, SZE, REC, INT, and MUT gene pairs.',
+    tooltip: 'What it does: controls racing behavior, breeding outcomes, and long-term roster planning. Why it matters: genetics are the foundation of every serious stable decision. Flavor: the Ussyverse industrialized heredity and then pretended that was normal.',
+  },
+  fatigue: {
+    title: 'Fatigue',
+    summary: 'A horse condition meter showing accumulated exertion and risk.',
+    tooltip: 'What it does: high fatigue hurts readiness and raises injury danger. Why it matters: fresh horses outperform overworked ones. Flavor: even premium bloodstock cannot outrun tendon law.',
+  },
+  prestige: {
+    title: 'Prestige',
+    summary: 'Account-level progression that raises your status and practical stable limits.',
+    tooltip: 'What it does: unlocks bonuses like better cummies returns, training efficiency, and more horse capacity. Why it matters: it is your long-term account progression. Flavor: prestige is how the Ussyverse turns horse management into social rank.',
+  },
+  quickrace: {
+    title: 'Quick Race',
+    summary: 'An instant exhibition flow that assembles a field, opens betting briefly, then runs the race.',
+    tooltip: 'What it does: gives immediate action without manual setup. Why it matters: it is the fastest way to test pacing, spectate, and place bets. Flavor: even guest spectators are allowed into the cheap seats.',
+  },
+  hauntedussy: {
+    title: 'Hauntedussy Track',
+    summary: 'The 666m anomaly circuit where E-008 resonance and spectral events are most concentrated.',
+    tooltip: 'What it does: hosts the most volatile track behavior in the game. Why it matters: normal expectations are unreliable here. Flavor: the lights flicker, the rail hums, and something watches every finish.',
+  },
+  challenge: {
+    title: 'Challenges',
+    summary: 'Formal head-to-head honor races between stables, optionally backed by wagers.',
+    tooltip: 'What it does: lets one player call out another for a direct result. Why it matters: it is the cleanest social competition loop outside tournaments. Flavor: in the Ussyverse, bloodline pride is always one click away from a duel.',
+  },
+  betting: {
+    title: 'Betting Pools',
+    summary: 'Short-lived pari-mutuel race pools that open before select races.',
+    tooltip: 'What it does: allows spectators and competitors to wager on a field before the start. Why it matters: it adds a second economy loop around racing. Flavor: Geoffrussy takes the house cut, the crowd takes the risk.',
+  },
+};
+
+const LORE_CODEX = [
+  {
+    id: 'overview',
+    title: 'What Is The Ussyverse?',
+    summary: 'A biotech horse-management universe where elite bloodstock, haunted infrastructure, sentient yogurt, and platform bureaucracy all somehow coexist.',
+    body: 'The Ussyverse runs on three overlapping truths. <strong>First</strong>, genetics and horse management are treated seriously: bloodlines, tracks, fatigue, breeding, and reputation all matter. <strong>Second</strong>, the world is held together by overbuilt institutions like Dr. Mittens Laboratory, the Sappho Scale Achievement Board, Geoffrussy compliance systems, and B.U.R.P. anomaly investigators. <strong>Third</strong>, reality is not entirely stable. E-008, haunted tracks, prophetic systems, and yogurt resonance mean the setting can slide from sports sim into bureaucratic cosmic comedy without warning.',
+  },
+  {
+    id: 'institutions',
+    title: 'Institutions And Authorities',
+    summary: 'Dr. Mittens certifies, Geoffrussy governs, the Sappho Scale legitimizes, and B.U.R.P. cleans up the weirdest consequences.',
+    body: '<strong>Dr. Mittens</strong> is the resident veterinary scientist and the public face of responsible irresponsibility. <strong>Geoffrussy</strong> governs compliance, anti-fraud, taxes, and market legitimacy. <strong>The Sappho Scale Achievement Board</strong> translates elite bloodstock quality into status language and public recognition. <strong>B.U.R.P.</strong>, the Bureau of Unexplained Racing Phenomena, handles incidents where ordinary race reports stop being useful.',
+  },
+  {
+    id: 'science',
+    title: 'Horse Science',
+    summary: 'Every horse is a data-rich genetic asset shaped by genes, training, fatigue, pedigree, and anomaly exposure.',
+    body: '<strong>SPD, STM, TMP, SZE, REC, INT, and MUT</strong> define a horse\'s core inherited profile. Breeding turns those genes into long-term stable strategy, while training and race conditions expose what the genome can actually do. The Ussyverse treats breeding science as both hard optimization and high society ritual, which is why pedigree charts and gossip carry equal weight.',
+  },
+  {
+    id: 'tracks',
+    title: 'Tracks And Weather',
+    summary: 'Tracks are not just distances; they are institutions with personalities, reputations, and environmental ideologies.',
+    body: '<strong>Sprintussy</strong> rewards raw speed. <strong>Grindussy</strong> is the long-form suffering circuit. <strong>Mudussy</strong> privileges power and traction. <strong>Thunderussy</strong> normalizes weather chaos. <strong>Frostussy</strong> rewards lean control on ice. <strong>Hauntedussy</strong> is where the sport stops pretending it is separate from the anomaly layer. Weather is equally diegetic: when the fog rolls in or the haunted resonance spikes, that is not flavor pasted on top of the race. It is part of the world treating racing as a contact sport with unstable reality.',
+  },
+  {
+    id: 'economy',
+    title: 'Economy And Market Logic',
+    summary: 'Cummies are the legitimate currency of the circuit, with burns, taxes, purses, wagers, and prestige all tied into stable advancement.',
+    body: '<strong>Cummies</strong> fund racing, breeding, betting, auctions, alliance treasuries, and market activity. <strong>Purses</strong> move race money into stable progression. <strong>Burns and taxes</strong> keep the economy from inflating out of control and are usually justified by Geoffrussy compliance doctrine. The <strong>Sappho Score</strong> is the visible number people use to talk about bloodline desirability, while the broader <strong>Sappho Scale</strong> is the cultural system that makes those numbers matter socially.',
+  },
+  {
+    id: 'anomalies',
+    title: 'E-008, Yogurt, And Other Problems',
+    summary: 'The anomaly layer exists, is active, and has not been contained as thoroughly as official statements suggest.',
+    body: '<strong>E-008</strong> is the most famous anomaly in the setting and is deeply tied to sentient yogurt, resonance events, spectral injuries, and haunted infrastructure. The yogurt is not merely a joke object; it is the clearest sign that the Ussyverse can leak into stranger states at any time. Legendary horses, haunted track events, and certain flavor systems all sit downstream of this instability. Everyone agrees containment is important. Nobody agrees that containment is working.',
+  },
+  {
+    id: 'legends',
+    title: 'Legendary Horses And Mythic Status',
+    summary: 'The legendary lots are the founding myths of the platform and the benchmark for everyone trying to build a dynasty.',
+    body: '<strong>House of USSY</strong> seeded the canonical legendary lots into the world as both competitive baselines and myth objects. Sapphic Sunrise represents idealized excellence. E-008\'s Chosen represents anomaly contamination made flesh. Dr. Mittens\' Favorite, Derulo\'s Regret, Pastor Router\'s Blessing, Geoffrussy\'s Pipeline, and STARDUSTUSSY\'s Prophecy each map a different institution or cosmic joke onto bloodline mythology. When the codex talks about legends, it means horses that are simultaneously competitive assets and worldbuilding anchors.',
+  },
+];
+
+function loreTooltip(key) {
+  const entry = LORE_HELP[key];
+  if (!entry) return '';
+  return `<span class="has-tooltip"><span class="lore-chip">LORE</span><span class="tooltip-text">${escHtml(entry.tooltip)}</span></span>`;
+}
+
+function loreText(key) {
+  const entry = LORE_HELP[key];
+  return entry ? entry.tooltip : '';
+}
+
+function renderLoreHint(key, label) {
+  const entry = LORE_HELP[key];
+  if (!entry) return '';
+  const text = label || entry.title;
+  return `<span class="has-tooltip"><span class="lore-chip">${escHtml(text)}</span><span class="tooltip-text">${escHtml(entry.tooltip)}</span></span>`;
+}
+
 // ─── SYSTEM MESSAGES (LORE) ────────────────────────────────────────────────
 const SYSTEM_MESSAGES = [
   '[SYS] Dr. Mittens has been spotted near Sector 7... again.',
@@ -3534,6 +3719,7 @@ function navigate() {
     case 'leaderboard': loadLeaderboard(); break;
     case 'challenges': loadChallenges(); break;
     case 'achievements': loadAchievements(); break;
+    case 'lore': loadLorePage(); break;
     case 'alliances': loadAlliances(); break;
     case 'history': loadRaceHistory(); break;
     case 'replay': loadReplay(getPageParam()); break;
@@ -5231,6 +5417,20 @@ function renderSapphoBar(score) {
   return `<span class="sappho-bar" style="color:${color}">[${bar}] ${score.toFixed(1)}/${max}</span>`;
 }
 
+function renderTrackLore(track) {
+  const loreMap = {
+    Sprintussy: 'Built for raw acceleration and short-format glory.',
+    Grindussy: 'The old endurance circuit where pacing matters more than bravado.',
+    Mudussy: 'A traction-heavy course that rewards size, power, and tolerance for filth.',
+    Thunderussy: 'Weather-chaos racing normalized into a legitimate sporting venue.',
+    Frostussy: 'A cold technical track where balance matters as much as outright speed.',
+    Hauntedussy: 'B.U.R.P. still classifies this as raceable despite repeated anomaly reports.',
+  };
+  const key = track === 'Hauntedussy' ? 'hauntedussy' : (track === 'Thunderussy' ? 'burp' : null);
+  const hint = key ? ` ${renderLoreHint(key, 'LORE')}` : '';
+  return loreMap[track] ? `<span>${escHtml(loreMap[track])}${hint}</span>` : '';
+}
+
 // ─── AGE BRACKET INFO ──────────────────────────────────────────────────────
 function getAgeBracketInfo(age) {
   if (age <= 2) return { bracket: 'Foal', effects: '🍼 Foal: Cannot race. +20% training gains. Growing up on hay and dreams.' };
@@ -5281,7 +5481,7 @@ function renderWeatherBox(weather) {
     <span class="weather-icon">${info.icon}</span>
     <span>
       <span class="weather-name">${escHtml(w)}</span><br>
-      <span class="weather-effect">${info.desc}</span>
+      <span class="weather-effect">${escHtml(info.desc)} ${renderLoreHint('burp', 'FIELD NOTE')}</span>
     </span>
   </div>`;
 }
@@ -5784,6 +5984,7 @@ async function loadHorseDetail(horseId) {
         <div style="flex:1;min-width:280px;">
           <h3 class="${nameClass}" style="font-size:16px;margin-top:0;">${escHtml(h.name)} ${h.is_legendary ? '★ LEGENDARY' : ''} ${h.retired ? '<span class="text-red">[RETIRED]</span>' : ''}</h3>
           <div class="text-dim mb-4" style="font-size:10px;">${escHtml(h.lore || 'No lore recorded.')}</div>
+          <div style="font-size:11px;margin-bottom:6px;"><span class="text-dim">Genome:</span> ${renderLoreHint('genes', 'GENE LORE')}</div>
           <div class="genome-display mb-8">${formatGenomeDetailed(h.genome)}</div>
           <div style="font-size:12px;">
             <span class="text-dim">ELO:</span> <strong>${Math.round(h.elo || 1200)}</strong>
@@ -5799,7 +6000,7 @@ async function loadHorseDetail(horseId) {
             <span class="text-dim">Earnings:</span> <span class="text-amber">₵${(h.total_earnings || 0).toLocaleString()}</span>
           </div>
           <div style="font-size:12px;margin-top:4px;">
-            <span class="text-dim">Fatigue:</span> ${renderFatigueGauge(h.fatigue || 0)}
+            <span class="text-dim">Fatigue:</span> ${renderFatigueGauge(h.fatigue || 0)} ${renderLoreHint('fatigue', 'LORE')}
           </div>
           <div style="font-size:10px;margin-top:4px;" class="text-dim">
             ${ageBracketInfo.effects}
@@ -5816,7 +6017,7 @@ async function loadHorseDetail(horseId) {
 
     // ── Training Section ──
     html += `<div class="panel">
-      <h3 style="margin-top:0;">🏋️ TRAINING — Dr. Mittens' Approved Workout Regimen</h3>
+      <h3 style="margin-top:0;">🏋️ TRAINING — Dr. Mittens' Approved Workout Regimen ${renderLoreHint('drmittens', 'DR. MITTENS')}</h3>
       <div class="text-dim" style="font-size:10px;margin-bottom:8px;">"Discipline is the bridge between goals and accomplishment. Also between hooves and injury." — Dr. Mittens</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">`;
 
@@ -6222,7 +6423,9 @@ async function loadRacePage() {
 function updateTrackDesc() {
   const track = $('#race-track').value;
   const descEl = $('#track-desc');
-  descEl.textContent = TRACK_INFO[track] || '';
+  const mechanical = TRACK_INFO[track] || '';
+  const lore = renderTrackLore(track);
+  descEl.innerHTML = `${escHtml(mechanical)}${lore ? `<br>${lore}` : ''}`;
 }
 
 function renderRaceHorseList() {
@@ -6571,7 +6774,7 @@ function renderMarketListings() {
       html += `<tr>
       <td><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></td>
       <td class="text-amber">₵${(l.price || 0).toLocaleString()}</td>
-      <td>${sappho}</td>
+      <td>${sappho} ${renderLoreHint('sappho', 'LORE')}</td>
       <td class="text-dim" style="max-width:180px">${escHtml(l.pedigree || '—')}</td>
       <td>
         <select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select>
@@ -6606,7 +6809,7 @@ async function createListing() {
 
   try {
     await api('/market', { method: 'POST', body: { horseID, price } });
-    msgEl.textContent = 'Listing created successfully.';
+    msgEl.innerHTML = `Listing created successfully. ${renderLoreHint('geoffrussy', 'GEOFFRUSSY')}`;
     msgEl.style.color = 'var(--fg)';
     await loadMarket();
   } catch (e) {
@@ -7740,7 +7943,7 @@ function renderChallenges(challenges) {
       html += `<div class="challenge-card pending">
         <div class="challenge-header">
           <span>⚔️ <strong>${escHtml(c.challenger_name || c.challengerName || '?')}</strong> challenges you!</span>
-          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()}</span>
+          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()} ${renderLoreHint('betting', 'LORE')}</span>
         </div>
         <div class="text-dim" style="font-size:11px;">
           ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || 'your horse')}
@@ -7762,7 +7965,7 @@ function renderChallenges(challenges) {
       html += `<div class="challenge-card pending">
         <div class="challenge-header">
           <span>⚔️ You challenged <strong>${escHtml(c.defender_name || c.defenderName || '?')}</strong></span>
-          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()}</span>
+          <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()} ${renderLoreHint('betting', 'LORE')}</span>
         </div>
         <div class="text-dim" style="font-size:11px;">
           ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || '?')} — Waiting for response...
@@ -7820,7 +8023,7 @@ async function createChallenge() {
         wager,
       },
     });
-    msgEl.textContent = 'Challenge sent!';
+    msgEl.innerHTML = `Challenge sent! ${renderLoreHint('challenge', 'HONOR CODE')}`;
     msgEl.style.color = 'var(--fg)';
     await loadChallengeList();
     setTimeout(checkTutorialProgress, 50);
@@ -7888,7 +8091,7 @@ function onBettingPoolOpened(msg) {
 
   const infoEl = $('#betting-pool-info');
   if (infoEl) {
-    infoEl.textContent = `Race: ${pool.raceID || pool.race_id || '?'} | Status: OPEN`;
+    infoEl.innerHTML = `Race: ${escHtml(String(pool.raceID || pool.race_id || '?'))} | Status: OPEN ${renderLoreHint('betting', 'POOL LORE')}`;
   }
 
   renderBettingHorses(pool);
@@ -8080,10 +8283,32 @@ async function loadPrestige() {
     const labelEl = $('#prestige-xp-label');
 
     if (starsEl) starsEl.textContent = `[${starsStr}]`;
-    if (nameEl) nameEl.textContent = tier;
+    if (nameEl) nameEl.innerHTML = `${escHtml(tier)} ${renderLoreHint('prestige', 'LORE')}`;
     if (fillEl) fillEl.style.width = `${pct}%`;
     if (labelEl) labelEl.textContent = `(${xp.toLocaleString()} / ${nextXp.toLocaleString()} XP)`;
   } catch(e) { /* prestige endpoint might not exist yet */ }
+}
+
+function loadLorePage() {
+  const codexEl = $('#lore-codex');
+  if (!codexEl) return;
+
+  const html = [
+    `<div class="panel" style="margin-bottom:12px;">`,
+    `<div class="text-dim" style="font-size:11px;line-height:1.6;">`,
+    `Use the codex when a mechanic mentions Geoffrussy, Sappho scores, E-008, haunted tracks, or other terms the main UI does not fully unpack. The short rule is simple: gameplay text tells you what a system does, and the codex tells you why the world insists that this is normal.`,
+    `</div>`,
+    `</div>`,
+    ...LORE_CODEX.map(entry => `
+      <article class="lore-entry" id="lore-${escHtml(entry.id)}">
+        <h3>${escHtml(entry.title)}</h3>
+        <div class="lore-summary">${escHtml(entry.summary)}</div>
+        <div class="lore-body">${entry.body}</div>
+      </article>
+    `),
+  ].join('');
+
+  codexEl.innerHTML = html;
 }
 
 // ─── SEASON INFO ───────────────────────────────────────────────────────────
@@ -8182,7 +8407,17 @@ async function loadAchievements() {
     </div>`;
   });
 
-  gridEl.innerHTML = html || '<span class="text-dim">No achievement definitions found.</span>';
+  const intro = `<div class="panel" style="margin-bottom:12px;font-size:11px;line-height:1.6;">${LORE_HELP.sappho.summary} ${renderLoreHint('sappho', 'SAPPHO LORE')}</div>`;
+  gridEl.innerHTML = intro + (html || '<span class="text-dim">No achievement definitions found.</span>');
+}
+
+function openLore(sectionId) {
+  location.hash = '#lore';
+  if (!sectionId) return;
+  setTimeout(() => {
+    const el = $(`#lore-${sectionId}`);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 120);
 }
 
 // ─── AUTH SYSTEM ───────────────────────────────────────────────────────────
@@ -9032,6 +9267,7 @@ window.SU = {
   startTutorial,
   skipTutorial,
   replayTutorial,
+  openLore,
   claimDailyReward,
   switchLeaderboardTab,
   sortLeaderboard,

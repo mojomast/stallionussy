@@ -21,6 +21,17 @@ This repo was re-audited and tightened around the main product-breakers.
   - challenge acceptance can auto-pick a horse server-side and now surfaces the returned race in the SPA
   - betting resolution payload now matches the SPA expectation
   - SPA betting now sends `horseID` correctly
+- Added a first-pass lore/help system to the SPA:
+  - new `#lore` codex page in `web/index.html`
+  - lore/help data centralized in `LORE_HELP` and `LORE_CODEX`
+  - bottom-right help area now links to both tutorial replay and lore codex
+  - inline lore tooltips added on race, horse detail, prestige, market, achievements, challenges, and betting surfaces
+  - routing/export wiring added for `openLore()` and `loadLorePage()`
+- Lore terminology was normalized to reduce drift:
+  - `Sappho Score` = numeric bloodline quality signal shown in UI
+  - `Sappho Scale` = broader social/institutional ideology around elite bloodstock
+  - `Geoffrussy` = platform governance/compliance authority, not a random one-off joke label
+  - `B.U.R.P.` = Bureau of Unexplained Racing Phenomena, responsible for anomaly incident framing
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
@@ -49,5 +60,6 @@ All passed after the fixes in this pass.
 
 - Frontend still has no automated browser/API integration coverage.
 - Tutorial persistence is client-side only; it is not yet stored server-side per account.
+- Lore/codex content is currently SPA-local data, not server-backed content.
 - `docker-compose.yml` still does not provide Postgres.
 - `devplan.md` is now historical, not an accurate live delivery tracker.

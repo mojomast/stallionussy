@@ -13,6 +13,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Quick races open a short betting window before the race starts.
 - Bets and challenges now use authenticated ownership checks end to end.
 - Challenge history and betting resolution now render correctly in the SPA.
+- The SPA now includes an in-world lore codex page plus inline lore tooltips on core racing, genetics, progression, market, achievement, challenge, and betting surfaces.
 
 ## Current Rules
 
@@ -21,6 +22,8 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Shared race replays are public GET endpoints and are retained in cache/DB for about 7 days.
 - Custom race purses are funded from the authenticated creator's stable balance and cannot be minted from arbitrary client input.
 - Tutorial state is currently persisted in browser local storage and can be replayed from the in-app help button.
+- Lore help follows a progressive disclosure model: practical UI text first, short mechanic-plus-fiction tooltip second, full codex entry third.
+- Lore wording is now normalized around these terms: `Sappho Score` is the numeric rating, `Sappho Scale` is the broader institutional doctrine; `Geoffrussy` is the platform governance authority; `B.U.R.P.` is the anomaly-response bureau.
 
 ## Requirements
 
@@ -67,3 +70,4 @@ go build ./...
 - `docker-compose.yml` does not currently provision Postgres, so `docker-compose up` is not sufficient by itself for the server path.
 - Frontend is a single-file SPA at `web/index.html`.
 - The first-session tutorial intentionally focuses on the core loop first: stable -> horse -> training -> race -> results, then previews breeding, market, competition, and replay/share.
+- The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
