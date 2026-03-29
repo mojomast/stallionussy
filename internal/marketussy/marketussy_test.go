@@ -306,7 +306,7 @@ func TestPurchaseBreeding_BurnAmountSmallPrice(t *testing.T) {
 	}
 }
 
-func TestPurchaseBreeding_DeactivatesListing(t *testing.T) {
+func TestPurchaseBreeding_LeavesListingActiveUntilHandlerFinishes(t *testing.T) {
 	m := NewMarket()
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
@@ -314,20 +314,8 @@ func TestPurchaseBreeding_DeactivatesListing(t *testing.T) {
 	m.PurchaseBreeding(listing.ID, "buyer1")
 
 	got, _ := m.GetListing(listing.ID)
-	if got.Active {
-		t.Error("listing should be inactive after purchase")
-	}
-}
-
-func TestPurchaseBreeding_CantBuyTwice(t *testing.T) {
-	m := NewMarket()
-	horse := makeTestHorse("h1", "StudHorse", "seller1")
-	listing, _ := m.CreateListing(horse, "seller1", 1000)
-
-	m.PurchaseBreeding(listing.ID, "buyer1")
-	_, err := m.PurchaseBreeding(listing.ID, "buyer2")
-	if err == nil {
-		t.Fatal("expected error purchasing already-purchased listing")
+	if !got.Active {
+		t.Error("listing should remain active until the caller completes breeding and deactivates it")
 	}
 }
 

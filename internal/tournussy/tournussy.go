@@ -525,8 +525,8 @@ func (tm *TournamentManager) CreateTournament(name string, trackType models.Trac
 		rounds = 1
 	}
 
-	// PrizePool = entryFee * estimated 6 entries * rounds
-	prizePool := entryFee * 6 * int64(rounds)
+	// Prize pool starts at zero and grows from actual paid registrations.
+	prizePool := int64(0)
 
 	t := &models.Tournament{
 		ID:           uuid.New().String(),

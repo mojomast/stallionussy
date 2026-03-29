@@ -28,6 +28,7 @@ import (
 	"github.com/mojomast/stallionussy/internal/genussy"
 	"github.com/mojomast/stallionussy/internal/marketussy"
 	"github.com/mojomast/stallionussy/internal/models"
+	"github.com/mojomast/stallionussy/internal/nameussy"
 	"github.com/mojomast/stallionussy/internal/pedigreussy"
 	"github.com/mojomast/stallionussy/internal/racussy"
 	"github.com/mojomast/stallionussy/internal/repository"
@@ -115,6 +116,8 @@ type Server struct {
 	fightMu       sync.RWMutex
 }
 
+const starterHorseCount = 2
+
 // NewServer initializes all subsystems, seeds the legendary horses into a
 // "House of USSY" stable, registers all routes, and returns a ready Server.
 //
@@ -183,11 +186,10 @@ func NewServer(db *postgres.DB) *Server {
 
 		// Create auth handler with stable creation callback.
 		s.authHandler = authussy.NewAuthHandler(s.auth, s.userRepo, func(name, ownerID string) *models.Stable {
-			stable := s.stables.CreateStable(name, ownerID)
-			// Also persist the new stable to the database.
-			ctx := context.Background()
-			if err := s.stableRepo.CreateStable(ctx, stable); err != nil {
-				log.Printf("server: failed to persist stable %s to DB: %v", stable.ID, err)
+			stable, err := s.createOwnedStable(context.Background(), name, ownerID, true)
+			if err != nil {
+				log.Printf("server: failed to create starter stable for user %s: %v", ownerID, err)
+				return nil
 			}
 			return stable
 		})
@@ -259,6 +261,16 @@ func NewServer(db *postgres.DB) *Server {
 			for _, h := range legendaryHorses {
 				s.persistHorse(ctx, h)
 			}
+		}
+	}
+
+	// Backfill starter horses for any persisted user stables that are still empty.
+	for _, stable := range s.stables.ListStables() {
+		if stable.OwnerID == "" || stable.OwnerID == "system" || len(stable.Horses) > 0 {
+			continue
+		}
+		if err := s.ensureStarterHorses(context.Background(), stable); err != nil {
+			log.Printf("server: failed to seed starter horses for stable %s: %v", stable.ID, err)
 		}
 	}
 
@@ -481,10 +493,15 @@ func (s *Server) handleCreateStable(w http.ResponseWriter, r *http.Request) {
 		req.OwnerID = "player"
 	}
 
-	stable := s.stables.CreateStable(req.Name, req.OwnerID)
-
-	// Write-through: persist stable to DB.
-	s.persistStable(r.Context(), stable)
+	stable, err := s.createOwnedStable(r.Context(), req.Name, req.OwnerID, true)
+	if err != nil {
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "already has a stable") {
+			status = http.StatusConflict
+		}
+		writeError(w, status, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusCreated, stable)
 }
@@ -872,8 +889,7 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Verify target stable belongs to user.
-		userStable := s.getStableForUser(claims.UserID)
-		if userStable == nil || userStable.ID != req.StableID {
+		if !s.userOwnsStable(claims.UserID, req.StableID) {
 			http.Error(w, "target stable does not belong to you", http.StatusForbidden)
 			return
 		}
@@ -1469,9 +1485,49 @@ func (s *Server) syncHorseToStable(horse *models.Horse) {
 // getStableForUser finds the stable owned by a given user ID.
 // Returns nil if no stable is found for the user.
 func (s *Server) getStableForUser(userID string) *models.Stable {
+	stables := s.getStablesForUser(userID)
+	if len(stables) == 0 {
+		return nil
+	}
+	return stables[0]
+}
+
+func (s *Server) getStablesForUser(userID string) []*models.Stable {
+	if userID == "" {
+		return nil
+	}
+	stables := make([]*models.Stable, 0)
 	for _, stable := range s.stables.ListStables() {
 		if stable.OwnerID == userID {
-			return stable
+			stables = append(stables, stable)
+		}
+	}
+	sort.Slice(stables, func(i, j int) bool {
+		return stables[i].CreatedAt.Before(stables[j].CreatedAt)
+	})
+	return stables
+}
+
+func (s *Server) userOwnsStable(userID, stableID string) bool {
+	if userID == "" || stableID == "" {
+		return false
+	}
+	stable, err := s.stables.GetStable(stableID)
+	if err != nil {
+		return false
+	}
+	return stable.OwnerID == userID
+}
+
+func (s *Server) getStableForHorse(horseID string) *models.Stable {
+	if horseID == "" {
+		return nil
+	}
+	for _, stable := range s.stables.ListStables() {
+		for _, h := range stable.Horses {
+			if h.ID == horseID {
+				return stable
+			}
 		}
 	}
 	return nil
@@ -1480,16 +1536,74 @@ func (s *Server) getStableForUser(userID string) *models.Stable {
 // userOwnsHorse checks whether a user owns a specific horse by checking
 // if the horse exists in the user's stable.
 func (s *Server) userOwnsHorse(userID, horseID string) bool {
-	stable := s.getStableForUser(userID)
-	if stable == nil {
-		return false
+	stable := s.getStableForHorse(horseID)
+	return stable != nil && stable.OwnerID == userID
+}
+
+func (s *Server) createOwnedStable(ctx context.Context, name, ownerID string, seedStarters bool) (*models.Stable, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return nil, fmt.Errorf("name is required")
 	}
-	for _, h := range stable.Horses {
-		if h.ID == horseID {
-			return true
+	if ownerID == "" {
+		return nil, fmt.Errorf("ownerID is required")
+	}
+	if ownerID != "player" && ownerID != "system" {
+		if existing := s.getStableForUser(ownerID); existing != nil {
+			return nil, fmt.Errorf("user already has a stable")
 		}
 	}
-	return false
+
+	stable := s.stables.CreateStable(trimmedName, ownerID)
+	s.persistStable(ctx, stable)
+
+	if seedStarters {
+		if err := s.ensureStarterHorses(ctx, stable); err != nil {
+			return nil, err
+		}
+	}
+
+	return stable, nil
+}
+
+func (s *Server) ensureStarterHorses(ctx context.Context, stable *models.Stable) error {
+	if stable == nil || stable.OwnerID == "" || stable.OwnerID == "system" {
+		return nil
+	}
+	if len(stable.Horses) > 0 {
+		return nil
+	}
+
+	for i := 0; i < starterHorseCount; i++ {
+		founder := s.newStarterHorse(stable.OwnerID)
+		if err := s.stables.AddHorseToStable(stable.ID, founder); err != nil {
+			return fmt.Errorf("seed starter horses: %w", err)
+		}
+		s.trainer.AssignTraitsAtBirth(founder, nil, nil)
+		s.persistHorse(ctx, founder)
+	}
+
+	s.persistStable(ctx, stable)
+	return nil
+}
+
+func (s *Server) newStarterHorse(ownerID string) *models.Horse {
+	genome := genussy.RandomGenome()
+	ceiling := genussy.CalcFitnessCeiling(genome)
+	starter := &models.Horse{
+		ID:             uuid.New().String(),
+		Name:           nameussy.GenerateName(),
+		Genome:         genome,
+		Generation:     0,
+		Age:            0,
+		FitnessCeiling: ceiling,
+		CurrentFitness: ceiling * 0.6,
+		ELO:            1200,
+		OwnerID:        ownerID,
+		CreatedAt:      time.Now(),
+		Lore:           "Starter horse issued by the onboarding office so new owners can breed, race, and make bad decisions immediately.",
+	}
+	return starter
 }
 
 // checkAndApplyAchievements checks for new achievements for a horse and
@@ -1925,6 +2039,7 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		BuyerStableID string `json:"buyerStableID"`
+		MareID        string `json:"mareID"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
@@ -1963,6 +2078,10 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "buyerStableID is required")
 		return
 	}
+	if req.MareID == "" {
+		writeError(w, http.StatusBadRequest, "mareID is required")
+		return
+	}
 
 	// Look up the listing.
 	listing, err := s.market.GetListing(listingID)
@@ -1975,6 +2094,23 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 	buyerStable, err := s.stables.GetStable(req.BuyerStableID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "buyer stable not found: "+err.Error())
+		return
+	}
+	if req.MareID == listing.HorseID {
+		writeError(w, http.StatusBadRequest, "mareID must be different from the listed stallion")
+		return
+	}
+	mare, err := s.stables.GetHorse(req.MareID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "mare not found: "+err.Error())
+		return
+	}
+	if mare.Retired {
+		writeError(w, http.StatusBadRequest, "selected mare is retired")
+		return
+	}
+	if mareStable := s.getStableForHorse(req.MareID); mareStable == nil || mareStable.ID != req.BuyerStableID {
+		writeError(w, http.StatusForbidden, "selected mare does not belong to the buyer stable")
 		return
 	}
 
@@ -2020,23 +2156,6 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		s.persistStable(r.Context(), updatedSeller)
 	}
 
-	// The buyer needs a mare to breed with the stud.
-	buyerHorses := s.stables.ListHorses(req.BuyerStableID)
-	var mare *models.Horse
-	if len(buyerHorses) > 0 {
-		mare = buyerHorses[0]
-	} else {
-		mare = &models.Horse{
-			ID:             "temp-mare",
-			Name:           "Anonymous Mare",
-			Genome:         genussy.RandomGenome(),
-			Generation:     0,
-			FitnessCeiling: genussy.CalcFitnessCeiling(genussy.RandomGenome()),
-			CurrentFitness: 0.5,
-			ELO:            1200,
-		}
-	}
-
 	// Breed the stud horse with the mare.
 	foal := genussy.Breed(studHorse, mare)
 
@@ -2048,6 +2167,7 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add foal to stable: "+err.Error())
 		return
 	}
+	s.persistStable(r.Context(), buyerStable)
 
 	// Write-through: persist the new foal and update the listing (now inactive).
 	s.persistHorse(r.Context(), foal)
@@ -2290,22 +2410,29 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	registeredStable, err := s.stables.GetStable(req.StableID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "stable not found: "+err.Error())
+		return
+	}
+	ownerStable := s.getStableForHorse(req.HorseID)
+	if ownerStable == nil || ownerStable.ID != req.StableID {
+		writeError(w, http.StatusBadRequest, "horse does not belong to the selected stable")
+		return
+	}
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok && registeredStable.OwnerID != claims.UserID {
+		writeError(w, http.StatusForbidden, "selected stable does not belong to authenticated user")
+		return
+	}
+
+	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Collect entry fee if the tournament has one.
 	if tournament.EntryFee > 0 {
-		// Find the registering user's stable. Prefer JWT-authenticated user,
-		// fall back to the stableID in the request.
-		var payingStable *models.Stable
-		if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-			payingStable = s.getStableForUser(claims.UserID)
-		}
-		if payingStable == nil {
-			// Fall back to the stableID provided in the request.
-			payingStable, _ = s.stables.GetStable(req.StableID)
-		}
-		if payingStable == nil {
-			writeError(w, http.StatusBadRequest, "stable not found for entry fee payment")
-			return
-		}
+		payingStable := registeredStable
 
 		// Check sufficient funds.
 		if payingStable.Cummies < tournament.EntryFee {
@@ -2324,11 +2451,6 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 
 		log.Printf("server: collected %d cummies entry fee from stable %s (%s) for tournament %s",
 			tournament.EntryFee, payingStable.Name, payingStable.ID, tournament.Name)
-	}
-
-	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
 	}
 
 	// Write-through: persist updated tournament (with new registration + prize pool) to DB.

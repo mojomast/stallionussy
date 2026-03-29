@@ -2741,6 +2741,8 @@ let ws = null;
 let currentRace = null;
 let raceNarrativeLog = [];
 let raceViz = null;
+let liveRaceSource = null;
+let liveRaceID = null;
 let leaderboardFilter = 'active';
 let leaderboardTab = 'stables';   // 'stables' or 'horses'
 let leaderboardSort = 'elo';      // current sort column for stable leaderboard
@@ -2775,6 +2777,42 @@ function escHtml(s) {
 function truncate(str, len) {
   if (!str) return '';
   return str.length > len ? str.substring(0, len - 1) + '…' : str;
+}
+
+function getMyStables() {
+  const ownerID = getOwnerID();
+  return allStables.filter(s => s.owner_id === ownerID);
+}
+
+function getMyStableIDs() {
+  return getMyStables().map(s => s.id);
+}
+
+function getMyHorses(includeRetired = false) {
+  const ownerID = getOwnerID();
+  return allHorses.filter(h => {
+    if (!includeRetired && h.retired) return false;
+    if (h.owner_id === ownerID) return true;
+    return false;
+  });
+}
+
+function isMyHorse(horse) {
+  return !!horse && horse.owner_id === getOwnerID();
+}
+
+function renderHorseOptions(horses, opts = {}) {
+  const includeRetired = !!opts.includeRetired;
+  const placeholder = opts.placeholder || '-- SELECT HORSE --';
+  const selectedID = opts.selectedID || '';
+  let html = `<option value="">${placeholder}</option>`;
+  horses
+    .filter(h => includeRetired || !h.retired)
+    .forEach(h => {
+      const selected = h.id === selectedID ? ' selected' : '';
+      html += `<option value="${escHtml(h.id)}"${selected}>${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)} G${h.generation || 0}]</option>`;
+    });
+  return html;
 }
 
 // ─── TOAST NOTIFICATIONS ──────────────────────────────────────────────────
@@ -3339,7 +3377,10 @@ function handleWsMessage(msg) {
 
 // ─── RACE WS HANDLERS ─────────────────────────────────────────────────────
 function onRaceStart(msg) {
+  if (liveRaceSource === 'local' && liveRaceID && msg.raceID === liveRaceID) return;
   currentRace = msg.race || msg.data;
+  liveRaceID = msg.raceID || (currentRace && currentRace.id) || null;
+  liveRaceSource = 'ws';
   raceNarrativeLog = [];
 
   const liveEl = $('#race-live');
@@ -3382,6 +3423,7 @@ function onRaceStart(msg) {
 }
 
 function onRaceTick(msg) {
+  if (liveRaceSource === 'local' && liveRaceID && msg.raceID === liveRaceID) return;
   const dist = currentRace ? (currentRace.distance || 1600) : 1600;
   const entries = msg.entries || [];
 
@@ -3434,8 +3476,11 @@ function onRaceTick(msg) {
 }
 
 function onRaceEnd(msg) {
+  if (liveRaceSource === 'local' && liveRaceID && msg.raceID === liveRaceID) return;
   const race = msg.race || msg.data;
   currentRace = race;
+  liveRaceID = msg.raceID || (race && race.id) || liveRaceID;
+  liveRaceSource = null;
 
   $('#race-live-status').textContent = 'FINISHED';
   $('#race-live-status').className = 'text-fg';
@@ -3461,6 +3506,7 @@ function onNarrative(msg) {
 }
 
 function onNarrativeTick(msg) {
+  if (liveRaceSource === 'local' && liveRaceID && msg.raceID === liveRaceID) return;
   const lines = msg.lines || [];
   lines.forEach(line => {
     addNarrativeLine(line.text, line.class || getEventClass(line.text || ''));
@@ -3788,27 +3834,31 @@ function showRaceResults(race) {
   tableEl.innerHTML = html;
 }
 
-function copyRaceLink(raceID) {
+function copyRaceLink(raceID, buttonId = 'btn-share-race', label = 'SHARE RACE LINK') {
   const url = `${location.origin}/#replay/${raceID}`;
-  navigator.clipboard.writeText(url).then(() => {
-    const btn = $('#btn-share-race');
+  const markCopied = () => {
+    const btn = buttonId ? document.getElementById(buttonId) : null;
     if (btn) {
       btn.classList.add('copied');
       btn.textContent = 'LINK COPIED!';
-      const urlEl = $('#share-race-url');
-      if (urlEl) urlEl.textContent = url;
-      setTimeout(() => { btn.classList.remove('copied'); btn.textContent = 'SHARE RACE LINK'; }, 3000);
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.textContent = label;
+      }, 3000);
     }
+    const urlEl = $('#share-race-url');
+    if (urlEl) urlEl.textContent = url;
+  };
+  navigator.clipboard.writeText(url).then(() => {
+    markCopied();
   }).catch(() => {
-    // Fallback: select/copy
     const ta = document.createElement('textarea');
     ta.value = url;
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    const btn = $('#btn-share-race');
-    if (btn) { btn.classList.add('copied'); btn.textContent = 'LINK COPIED!'; setTimeout(() => { btn.classList.remove('copied'); btn.textContent = 'SHARE RACE LINK'; }, 3000); }
+    markCopied();
   });
 }
 
@@ -3820,9 +3870,7 @@ async function loadRaceHistory() {
   container.innerHTML = '<span class="loading cursor-blink">Loading race history...</span>';
 
   try {
-    const res = await apiFetch('/api/races/recent?limit=50');
-    if (!res.ok) throw new Error('Failed to fetch race history');
-    const replays = await res.json();
+    const replays = await api('/races/recent?limit=50');
 
     if (!replays || replays.length === 0) {
       container.innerHTML = '<div class="text-dim">No race replays yet. Run some races first!</div>';
@@ -4175,9 +4223,8 @@ async function loadReplay(raceID) {
       showReplayResults(race, resultsTable);
 
       // Share button in replay results too
-      const shareUrl = `${location.origin}/#replay/${raceID}`;
       resultsTable.innerHTML += `<div style="margin-top:8px;">
-        <button class="share-race-btn" onclick="copyRaceLink('${raceID}')">COPY SHARE LINK</button>
+        <button class="share-race-btn" id="btn-share-race-replay" onclick="copyRaceLink('${raceID}', 'btn-share-race-replay', 'COPY SHARE LINK')">COPY SHARE LINK</button>
       </div>`;
     }, replayDuration);
 
@@ -4231,15 +4278,15 @@ function replayRace(race, narrativeIndexed, narrativeEl, viz) {
         const tickEntries = entries.map((entry, i) => {
           const td = tickIndices[i][t];
           return {
-            horse_id: entry.horse_id,
-            horse_name: entry.horse_name,
+            index: i,
             position: td ? td.position : 0,
-            tick_log: td ? [{ tick: t, position: td.position, speed: td.speed, event: td.event }] : [],
+            speed: td ? td.speed : 0,
+            event: td ? (td.event || '') : '',
           };
         });
 
         if (viz && typeof viz.updateTick === 'function') {
-          viz.updateTick(t, tickEntries, race.distance);
+          viz.updateTick(tickEntries);
         }
 
         // Narrative for this tick
@@ -5195,6 +5242,12 @@ async function createStable() {
   const name = nameInput.value.trim();
   const msgEl = $('#stable-create-msg');
 
+  if (currentUser && getMyStables().length > 0) {
+    msgEl.textContent = 'mkdir: error: your account already has a stable';
+    msgEl.style.color = 'var(--red)';
+    return;
+  }
+
   if (!name) {
     msgEl.textContent = 'ERROR: stable name required';
     msgEl.style.color = 'var(--red)';
@@ -5206,7 +5259,7 @@ async function createStable() {
 
   try {
     const result = await api('/stables', { method: 'POST', body: { name, ownerID: getOwnerID() } });
-    msgEl.textContent = `mkdir: created stable '${result.name || name}' [${(result.id || '').substring(0, 8)}]`;
+    msgEl.textContent = `mkdir: created stable '${result.name || name}' [${(result.id || '').substring(0, 8)}] with starter horses`;
     msgEl.style.color = 'var(--fg)';
     nameInput.value = '';
     await loadStables();
@@ -5525,25 +5578,21 @@ async function loadBreedPage() {
     allStables = sData.status === 'fulfilled' ? (Array.isArray(sData.value) ? sData.value : []) : allStables;
   } catch (e) {}
 
-  const activeHorses = allHorses.filter(h => !h.retired);
+  const myHorses = getMyHorses(false);
+  const myStables = getMyStables();
 
   const sireEl = $('#breed-sire');
-  sireEl.innerHTML = '<option value="">-- SELECT SIRE --</option>';
-  activeHorses.forEach(h => {
-    sireEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)} G${h.generation}]</option>`;
-  });
+  sireEl.innerHTML = renderHorseOptions(myHorses, { placeholder: '-- SELECT SIRE --' });
 
   const mareEl = $('#breed-mare');
-  mareEl.innerHTML = '<option value="">-- SELECT MARE --</option>';
-  activeHorses.forEach(h => {
-    mareEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)} G${h.generation}]</option>`;
-  });
+  mareEl.innerHTML = renderHorseOptions(myHorses, { placeholder: '-- SELECT MARE --' });
 
   const stableEl = $('#breed-stable');
   stableEl.innerHTML = '<option value="">-- SELECT STABLE --</option>';
-  allStables.forEach(s => {
+  myStables.forEach(s => {
     stableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)} (₵${(s.cummies || 0).toLocaleString()})</option>`;
   });
+  if (myStables.length === 1) stableEl.value = myStables[0].id;
 
   // Set up inbreeding warning check
   sireEl.onchange = checkInbreeding;
@@ -5782,18 +5831,7 @@ function renderRaceHorseList() {
     return;
   }
 
-  // Find the current user's stable to separate own horses from opponents
-  const myUserID = currentUser ? currentUser.id : null;
-  const myStable = myUserID ? allStables.find(s => s.owner_id === myUserID) : null;
-  const myHorseIDs = new Set();
-  if (myStable && myStable.horses) {
-    myStable.horses.forEach(h => myHorseIDs.add(h.id));
-  }
-  // Fallback: match by owner_id on the horse objects
-  if (myUserID) {
-    active.forEach(h => { if (h.owner_id === myUserID) myHorseIDs.add(h.id); });
-  }
-
+  const myHorseIDs = new Set(getMyHorses(false).map(h => h.id));
   const myHorses = active.filter(h => myHorseIDs.has(h.id));
   const otherHorses = active.filter(h => !myHorseIDs.has(h.id));
 
@@ -5904,6 +5942,8 @@ async function quickRace() {
 }
 
 function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
+  liveRaceSource = 'local';
+  liveRaceID = race.id || null;
   const liveEl = $('#race-live');
   liveEl.classList.remove('hidden');
 
@@ -5979,6 +6019,7 @@ function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
       }
     });
     addNarrativeLine('═══ RACE FINISHED ═══', 'event-burst');
+    liveRaceSource = null;
     showRaceResults(race);
     return;
   }
@@ -5988,6 +6029,7 @@ function simulateLocalRace(race, serverNarrative, narrativeIndexed) {
     if (tick >= maxTicks) {
       clearInterval(interval);
       $('#race-live-status').textContent = 'FINISHED';
+      liveRaceSource = null;
 
       // Show post-race narrative lines
       narrativeByTick.forEach((nls, t) => {
@@ -6077,12 +6119,12 @@ async function loadMarket() {
     allListings = [];
   }
 
+  const myHorses = getMyHorses(false);
+  const myStables = getMyStables();
+
   // Populate horse select
   const horseEl = $('#market-horse');
-  horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-  allHorses.filter(h => !h.retired).forEach(h => {
-    horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
-  });
+  horseEl.innerHTML = renderHorseOptions(myHorses, { placeholder: '-- SELECT HORSE --' });
 
   renderMarketListings();
 
@@ -6111,17 +6153,25 @@ function renderMarketListings() {
   active.forEach(l => {
     const sappho = renderSapphoBar(l.sappho_score || 0);
     // Build stable selector for each listing
-    let stableOpts = '<option value="">-- Select --</option>';
-    allStables.forEach(s => {
-      stableOpts += `<option value="${s.id}">${escHtml(s.name)}</option>`;
-    });
+      let stableOpts = '<option value="">-- Select --</option>';
+      myStables.forEach(s => {
+        stableOpts += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+      });
 
-    html += `<tr>
+      let mareOpts = '<option value="">-- Select Mare --</option>';
+      myHorses.forEach(h => {
+        mareOpts += `<option value="${h.id}">${escHtml(h.name)}</option>`;
+      });
+
+      html += `<tr>
       <td><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></td>
       <td class="text-amber">₵${(l.price || 0).toLocaleString()}</td>
       <td>${sappho}</td>
       <td class="text-dim" style="max-width:180px">${escHtml(l.pedigree || '—')}</td>
-      <td><select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select></td>
+      <td>
+        <select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select>
+        <select class="term-input" id="market-mare-${l.id}" style="max-width:150px;font-size:10px;margin-top:4px;">${mareOpts}</select>
+      </td>
       <td>
         <button class="term-btn sm" onclick="window.SU.buyListing('${escHtml(l.id)}')">BUY</button>
         <button class="term-btn danger sm" onclick="window.SU.cancelListing('${escHtml(l.id)}')">DEL</button>
@@ -6162,10 +6212,16 @@ async function createListing() {
 
 async function buyListing(listingId) {
   const stableSelect = $(`#market-buyer-${listingId}`);
+  const mareSelect = $(`#market-mare-${listingId}`);
   const buyerStableID = stableSelect ? stableSelect.value : '';
+  const mareID = mareSelect ? mareSelect.value : '';
 
   if (!buyerStableID) {
     alert('Please select a buyer stable first.');
+    return;
+  }
+  if (!mareID) {
+    alert('Please select a mare first.');
     return;
   }
 
@@ -6174,7 +6230,7 @@ async function buyListing(listingId) {
   try {
     await api(`/market/${listingId}/buy`, {
       method: 'POST',
-      body: { buyerStableID },
+      body: { buyerStableID, mareID },
     });
     await loadMarket();
   } catch (e) {
@@ -6213,10 +6269,7 @@ async function loadAuctions() {
   // Populate horse select for creating auctions (only user's non-retired horses)
   const horseEl = $('#auction-horse');
   if (horseEl) {
-    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-    allHorses.filter(h => !h.retired).forEach(h => {
-      horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
-    });
+    horseEl.innerHTML = renderHorseOptions(getMyHorses(false), { placeholder: '-- SELECT HORSE --' });
   }
 
   renderAuctions();
@@ -6632,12 +6685,14 @@ async function viewTournament(tourneyId) {
 
     // Registration form (if open)
     if (isOpen || isInProgress) {
+      const myHorses = getMyHorses(false);
+      const myStables = getMyStables();
       html += `<h3>REGISTER HORSE</h3>
         <div class="form-row">
           <label>HORSE:</label>
           <select class="term-input" id="tourney-reg-horse" style="max-width:250px;">
             <option value="">-- SELECT --</option>`;
-      allHorses.filter(h => !h.retired).forEach(h => {
+      myHorses.forEach(h => {
         html += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
       });
       html += `</select>
@@ -6646,7 +6701,7 @@ async function viewTournament(tourneyId) {
           <label>STABLE:</label>
           <select class="term-input" id="tourney-reg-stable" style="max-width:250px;">
             <option value="">-- SELECT --</option>`;
-      allStables.forEach(s => {
+      myStables.forEach(s => {
         html += `<option value="${s.id}">${escHtml(s.name)}</option>`;
       });
       html += `</select>
@@ -6733,17 +6788,16 @@ async function loadTrades() {
 
   // Populate form selects
   const horseEl = $('#trade-horse');
-  horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-  allHorses.filter(h => !h.retired).forEach(h => {
-    horseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
-  });
+  horseEl.innerHTML = renderHorseOptions(getMyHorses(false), { placeholder: '-- SELECT HORSE --' });
 
   const fromEl = $('#trade-from');
   const toEl = $('#trade-to');
   fromEl.innerHTML = '<option value="">-- SOURCE --</option>';
   toEl.innerHTML = '<option value="">-- DESTINATION --</option>';
-  allStables.forEach(s => {
+  getMyStables().forEach(s => {
     fromEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+  });
+  allStables.filter(s => s.owner_id !== getOwnerID()).forEach(s => {
     toEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
   });
 
@@ -7208,27 +7262,17 @@ async function loadChallenges() {
   const myHorseEl = $('#challenge-my-horse');
   if (myHorseEl) {
     myHorseEl.innerHTML = '<option value="">-- SELECT YOUR HORSE --</option>';
-    // Show horses from user's stables
-    const myStableIds = allStables
-      .filter(s => s.owner_id === getOwnerID() || (!s.owner_id && allStables.length <= 3))
-      .map(s => s.id);
-    const myHorses = allHorses.filter(h => myStableIds.includes(h.stable_id) && !h.retired);
+    const myHorses = getMyHorses(false);
     myHorses.forEach(h => {
       myHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
     });
-    // If no stables found for owner, show all active horses
-    if (myHorses.length === 0) {
-      allHorses.filter(h => !h.retired).forEach(h => {
-        myHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
-      });
-    }
   }
 
   // Populate target stable dropdown
   const targetStableEl = $('#challenge-target-stable');
   if (targetStableEl) {
     targetStableEl.innerHTML = '<option value="">-- SELECT OPPONENT --</option>';
-    allStables.forEach(s => {
+    allStables.filter(s => s.owner_id !== getOwnerID()).forEach(s => {
       targetStableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
     });
   }
@@ -8019,11 +8063,12 @@ async function loadFights() {
 
     const fights = fightsData.status === 'fulfilled' ? (fightsData.value || {}) : {};
     const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
+    const myHorses = horses.filter(h => isMyHorse(h) && !h.retired);
 
     // Populate horse dropdown with user's horses (for fighting)
     const horseEl = $('#fight-horse');
     horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-    horses.forEach(h => {
+    myHorses.forEach(h => {
       horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
     });
 
@@ -8050,7 +8095,7 @@ async function loadFights() {
           <div style="margin-top:8px;">
             <select class="term-input" id="join-horse-${escHtml(f.id)}" style="max-width:200px; display:inline-block;">
               <option value="">-- YOUR HORSE --</option>
-              ${horses.map(h => `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`).join('')}
+               ${myHorses.map(h => `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`).join('')}
             </select>
             <button class="term-btn danger" style="margin-left:8px;" onclick="window.SU.joinFight('${escHtml(f.id)}')">⚔️ ACCEPT CHALLENGE</button>
           </div>
@@ -8205,11 +8250,12 @@ async function loadGluePage() {
     ]);
 
     const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
+    const myHorses = horses.filter(h => isMyHorse(h) && !h.retired);
 
     // Populate horse dropdown
     const horseEl = $('#glue-horse');
     horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-    horses.forEach(h => {
+    horses.filter(h => isMyHorse(h)).forEach(h => {
       horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
     });
 
@@ -8296,7 +8342,7 @@ async function loadStuds() {
     // Populate horse dropdown for assigning breeder
     const horseEl = $('#breeder-horse');
     horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-    horses.forEach(h => {
+    myHorses.forEach(h => {
       horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
     });
 
@@ -8347,7 +8393,7 @@ async function loadStuds() {
     // Populate mare dropdown for breeding
     const mareEl = $('#stud-mare');
     mareEl.innerHTML = '<option value="">-- SELECT YOUR MARE --</option>';
-    horses.forEach(h => {
+    myHorses.forEach(h => {
       mareEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`;
     });
   } catch (e) {

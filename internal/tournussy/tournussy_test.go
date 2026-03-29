@@ -487,9 +487,8 @@ func TestCreateTournament(t *testing.T) {
 	if tournament.EntryFee != 100 {
 		t.Errorf("EntryFee = %d, want 100", tournament.EntryFee)
 	}
-	// PrizePool = entryFee * 6 * rounds = 100 * 6 * 3 = 1800
-	if tournament.PrizePool != 1800 {
-		t.Errorf("PrizePool = %d, want 1800", tournament.PrizePool)
+	if tournament.PrizePool != 0 {
+		t.Errorf("PrizePool = %d, want 0", tournament.PrizePool)
 	}
 	if tournament.Status != "Open" {
 		t.Errorf("Status = %q, want Open", tournament.Status)
