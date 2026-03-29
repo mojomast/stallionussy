@@ -162,9 +162,8 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Skip auth for race replay endpoints (shareable links).
-		// Match /api/races/{uuid} but not /api/races/quick.
-		if strings.HasPrefix(path, "/api/races/") && r.Method == "GET" && path != "/api/races/quick" {
+		// Skip auth for shareable/read-only race endpoints, including quick race.
+		if strings.HasPrefix(path, "/api/races/") && r.Method == "GET" {
 			next.ServeHTTP(w, r)
 			return
 		}

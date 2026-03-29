@@ -1032,6 +1032,10 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "at least 2 horses are required to race")
 		return
 	}
+	if req.Purse < 0 {
+		writeError(w, http.StatusBadRequest, "purse must not be negative")
+		return
+	}
 
 	// Ownership check: the requesting player must own at least one horse
 	// in the race. Other slots can be filled with AI / system horses or
@@ -1048,6 +1052,22 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "you must enter at least one of your own horses in the race", http.StatusForbidden)
 			return
 		}
+		if req.Purse > 0 {
+			stable := s.getStableForUser(claims.UserID)
+			if stable == nil {
+				writeError(w, http.StatusBadRequest, "you need a stable to fund a purse")
+				return
+			}
+			if stable.Cummies < req.Purse {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", stable.Cummies, req.Purse))
+				return
+			}
+			stable.Cummies -= req.Purse
+			s.persistStable(r.Context(), stable)
+		}
+	} else if req.Purse > 0 {
+		writeError(w, http.StatusBadRequest, "custom purse races require authentication")
+		return
 	}
 
 	// Validate track type.
@@ -1107,7 +1127,10 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	// Default purse for quick races.
 	purse := int64(500)
 
-	result := s.runRace(selected, trackType, purse)
+	race := racussy.NewRace(selected, trackType, purse)
+	s.openBettingPool(race.ID, selected)
+	time.Sleep(10 * time.Second)
+	result := s.runRace(selected, trackType, purse, race.ID)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -1139,12 +1162,15 @@ type raceResult struct {
 // runRace creates a race, simulates it with weather, updates stats, records
 // history, distributes purse, applies fatigue, checks achievements, and
 // broadcasts to WebSocket clients.
-func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, purse int64) raceResult {
+func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, purse int64, existingRaceID ...string) raceResult {
 	// 1. Generate weather appropriate for the track.
 	weather := tournussy.RandomWeatherForTrack(trackType)
 
 	// 2. Create and simulate the race with weather.
 	race := racussy.NewRace(horses, trackType, purse)
+	if len(existingRaceID) > 0 && existingRaceID[0] != "" {
+		race.ID = existingRaceID[0]
+	}
 
 	// Close any open betting pool for this race before simulation starts.
 	s.closeBettingPool(race.ID)
@@ -3706,7 +3732,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 
 // handleCreateChallenge processes POST /api/challenges.
-// Body: {defenderName, horseID, wager}
+// Accepts both:
+//
+//	{defenderName, horseID, wager}
+//
+// and the legacy SPA shape:
+//
+//	{challenger_horse_id, defender_horse_id, defender_stable_id, wager}
 func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	claims, ok := authussy.GetUserFromContext(r.Context())
 	if !ok {
@@ -3715,14 +3747,53 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		DefenderName string `json:"defenderName"`
-		HorseID      string `json:"horseID"`
-		Wager        int64  `json:"wager"`
+		DefenderName      string `json:"defenderName"`
+		HorseID           string `json:"horseID"`
+		Wager             int64  `json:"wager"`
+		ChallengerHorseID string `json:"challenger_horse_id"`
+		DefenderHorseID   string `json:"defender_horse_id"`
+		DefenderStableID  string `json:"defender_stable_id"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+
+	// Backward compatibility for the existing SPA challenge form.
+	if req.HorseID == "" {
+		req.HorseID = req.ChallengerHorseID
+	}
+	if req.DefenderName == "" {
+		if req.DefenderStableID != "" {
+			if stable, err := s.stables.GetStable(req.DefenderStableID); err == nil {
+				if stable.OwnerID == claims.UserID {
+					writeError(w, http.StatusBadRequest, "you can't challenge yourself, weirdo")
+					return
+				}
+				defenderName := stable.OwnerID
+				if userID, username := s.findUserByStableOwnerID(stable.OwnerID); userID != "" {
+					_ = userID
+					defenderName = username
+				}
+				req.DefenderName = defenderName
+			}
+		}
+		if req.DefenderName == "" && req.DefenderHorseID != "" {
+			if ownerID := s.findHorseOwnerID(req.DefenderHorseID); ownerID != "" {
+				if ownerID == claims.UserID {
+					writeError(w, http.StatusBadRequest, "you can't challenge yourself, weirdo")
+					return
+				}
+				defenderName := ownerID
+				if userID, username := s.findUserByStableOwnerID(ownerID); userID != "" {
+					_ = userID
+					defenderName = username
+				}
+				req.DefenderName = defenderName
+			}
+		}
+	}
+
 	if req.DefenderName == "" || req.HorseID == "" {
 		writeError(w, http.StatusBadRequest, "defenderName and horseID are required")
 		return
@@ -3752,7 +3823,8 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAcceptChallenge processes POST /api/challenges/{id}/accept.
-// Body: {horseID}
+// Accepts either {horseID} or an empty body, in which case the first eligible
+// non-retired horse in the defender's stable is used.
 func (s *Server) handleAcceptChallenge(w http.ResponseWriter, r *http.Request) {
 	claims, ok := authussy.GetUserFromContext(r.Context())
 	if !ok {
@@ -3769,13 +3841,25 @@ func (s *Server) handleAcceptChallenge(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		HorseID string `json:"horseID"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
+	if r.Body != nil {
+		if err := readJSON(r, &req); err != nil && err.Error() != "EOF" {
+			writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
 	}
 	if req.HorseID == "" {
-		writeError(w, http.StatusBadRequest, "horseID is required")
-		return
+		if stable := s.getStableForUser(claims.UserID); stable != nil {
+			for i := range stable.Horses {
+				if !stable.Horses[i].Retired {
+					req.HorseID = stable.Horses[i].ID
+					break
+				}
+			}
+		}
+		if req.HorseID == "" {
+			writeError(w, http.StatusBadRequest, "horseID is required")
+			return
+		}
 	}
 
 	result, errMsg := s.acceptChallenge(challengeID, claims.UserID, req.HorseID)
@@ -3825,9 +3909,6 @@ func (s *Server) handleListChallenges(w http.ResponseWriter, r *http.Request) {
 
 	var result []*models.Challenge
 	for _, c := range s.challenges {
-		if c.Status != models.ChallengeStatusPending {
-			continue
-		}
 		if userFilter != "" && c.ChallengerID != userFilter && c.DefenderID != userFilter {
 			continue
 		}
@@ -4120,11 +4201,12 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 		wagerText = fmt.Sprintf(" — won ₵%d (₵%d burned)", wagerEarnings, wagerBurn)
 	}
 	s.hub.BroadcastJSON(map[string]interface{}{
-		"type":      "challenge",
-		"action":    "completed",
-		"challenge": challenge,
-		"winnerID":  winnerID,
-		"result":    result,
+		"type":       "challenge",
+		"action":     "completed",
+		"challenge":  challenge,
+		"winnerID":   winnerID,
+		"winnerName": winnerName,
+		"result":     result,
 	})
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type": "chat_system",
@@ -4200,6 +4282,40 @@ func (s *Server) findUserByUsername(name string) (string, string) {
 	}
 
 	return "", ""
+}
+
+// findUserByStableOwnerID resolves a stable owner ID to a canonical user ID and
+// username when auth-backed users exist. Falls back to the owner ID itself.
+func (s *Server) findUserByStableOwnerID(ownerID string) (string, string) {
+	if ownerID == "" {
+		return "", ""
+	}
+
+	if s.userRepo != nil {
+		user, err := s.userRepo.GetUserByID(context.Background(), ownerID)
+		if err == nil && user != nil {
+			return user.ID, user.Username
+		}
+	}
+
+	return ownerID, ownerID
+}
+
+// findHorseOwnerID returns the owner user ID for the stable containing the horse.
+func (s *Server) findHorseOwnerID(horseID string) string {
+	if horseID == "" {
+		return ""
+	}
+
+	for _, stable := range s.stables.ListStables() {
+		for _, horse := range stable.Horses {
+			if horse.ID == horseID {
+				return stable.OwnerID
+			}
+		}
+	}
+
+	return ""
 }
 
 // findHorseByNameInStable does a case-insensitive search for a horse by name
@@ -5429,11 +5545,13 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 		"raceID":          raceID,
 		"winnerHorseID":   winnerHorseID,
 		"winnerHorseName": winnerHorseName,
+		"winnerName":      winnerHorseName,
 		"totalPool":       pool.TotalPool,
 		"houseCut":        houseCut,
 		"distributable":   distributable,
 		"winnerCount":     winnerCount,
 		"bets":            pool.Bets,
+		"payouts":         pool.Bets,
 	})
 
 	// Announce results in chat.
@@ -5610,12 +5728,16 @@ func (s *Server) handlePlaceBet(w http.ResponseWriter, r *http.Request) {
 	username := claims.Username
 
 	var req struct {
-		HorseID string `json:"horseID"`
-		Amount  int64  `json:"amount"`
+		HorseID       string `json:"horseID"`
+		LegacyHorseID string `json:"horse_id"`
+		Amount        int64  `json:"amount"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if req.HorseID == "" {
+		req.HorseID = req.LegacyHorseID
 	}
 	if req.HorseID == "" || req.Amount <= 0 {
 		writeError(w, http.StatusBadRequest, "horseID and positive amount required")
