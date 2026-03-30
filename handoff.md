@@ -53,6 +53,12 @@ This repo was re-audited and tightened around the main product-breakers.
 - The SPA shell and chat layout were tightened:
   - desktop now uses a fixed-height two-pane layout with a persistent left chat rail and a dedicated scrolling main-content pane
   - mobile chat now opens as a clearer drawer with close/backdrop handling instead of relying on page scroll behavior
+- Gameplay balance and QoL were tightened in a follow-up pass:
+  - active horse slots now exclude retired horses, reducing cap pressure on breeding, retirement, and breeder assignments
+  - quick race auto-picks the best active owned horse rather than the first one in roster order
+  - race purse distribution is flatter and streak multipliers are less top-heavy, so deeper placements still move a roster forward
+  - training fatigue penalties start earlier and rest recovery is less extreme, which pushes healthier horse rotation
+  - destructive loops like glue now protect the last active horse from irreversible account-bricking mistakes
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
@@ -73,6 +79,7 @@ All passed after the fixes in this pass.
 - Authenticated user: one stable only.
 - New stable: seeded with 2 starter horses.
 - Empty owned stable: may claim one emergency replacement starter pair.
+- Retired horses do not count against active prestige horse-slot limits.
 - First-time authenticated session: tutorial is offered once by default, can be skipped, and can be replayed later.
 - Replay share links: `#replay/{raceID}`.
 - Guest quick race is allowed.

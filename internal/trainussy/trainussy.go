@@ -56,7 +56,7 @@ var fatigueDelta = map[models.WorkoutType]float64{
 	models.WorkoutEndurance: 20,
 	models.WorkoutMentalRep: 8,
 	models.WorkoutMudRun:    15,
-	models.WorkoutRecovery:  -30, // RestDay heals
+	models.WorkoutRecovery:  -24, // RestDay heals, but rotation should still matter
 	models.WorkoutGeneral:   10,
 }
 
@@ -240,11 +240,15 @@ func calcXP(horse *models.Horse, workout models.WorkoutType) float64 {
 		// BB: no multiplier (x1.0)
 	}
 
-	// Fatigue penalty
+	// Fatigue penalty: taper earlier so horse rotation beats spam training.
 	if horse.Fatigue > 80 {
 		xp *= 0.25 // quartered
+	} else if horse.Fatigue > 65 {
+		xp *= 0.4
 	} else if horse.Fatigue > 50 {
 		xp *= 0.5 // halved
+	} else if horse.Fatigue > 35 {
+		xp *= 0.8
 	}
 
 	// Trait: training_boost (e.g. Sappho's Chosen) — multiply XP by magnitude.

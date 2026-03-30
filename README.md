@@ -19,6 +19,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Authenticated quick races now guarantee solo progression by auto-filling the field with matched computer-controlled opponents when needed.
 - The challenge page now supports a `CPU Arena` fallback for immediate 1v1 progression when no other player is available.
 - The SPA now uses a fixed desktop app shell: the left chat column stays pinned while the right content pane scrolls independently.
+- Quick Race now auto-selects your strongest active horse instead of the first available one.
 
 ## Current Rules
 
@@ -32,6 +33,10 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Lore wording is now normalized around these terms: `Sappho Score` is the numeric rating, `Sappho Scale` is the broader institutional doctrine; `Geoffrussy` is the platform governance authority; `B.U.R.P.` is the anomaly-response bureau.
 - Prestige thresholds were pulled forward for better early and mid-game pacing, while higher tiers still ramp sharply.
 - Stud-market and breeder-stallion breeding now respect stable-cap and breeding-cooldown rules just like direct breeding.
+- Stable-cap checks now count active racing horses, so retired horses do not consume your competitive slots.
+- Race purse distribution is flatter and win-streak multipliers are lower, so non-winning finishes still produce some forward progress.
+- Training fatigue penalties now taper earlier and rest recovers less, which makes rotating horses more valuable than cycling one favorite endlessly.
+- Irreversible destruction loops now protect your last active horse from being deleted.
 
 ## Requirements
 

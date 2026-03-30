@@ -5826,7 +5826,7 @@ function refreshStableCreationState() {
     input.disabled = true;
     button.disabled = true;
     input.placeholder = 'stable already provisioned';
-    msg.textContent = 'Your stable was created during registration and seeded with starter horses. Open it below to begin.';
+    msg.textContent = 'Your stable was created during registration. Active horse slots are capped by prestige, while retired horses no longer consume those racing slots.';
     msg.style.color = 'var(--fg-dim)';
   } else {
     if (heading) heading.textContent = 'CREATE NEW STABLE';
@@ -5969,11 +5969,12 @@ function renderStableList() {
 
   allStables.forEach(s => {
     const horseCount = (s.horses && s.horses.length) || 0;
+    const activeCount = (s.horses || []).filter(h => !h.retired).length;
     const date = s.created_at ? new Date(s.created_at).toLocaleDateString() : '—';
     html += `<tr class="clickable" onclick="window.SU.viewStable('${escHtml(s.id)}')">
       <td class="text-dim">drwxr-xr-x</td>
       <td><a onclick="event.stopPropagation()">${escHtml(s.name)}</a></td>
-      <td>${horseCount}</td>
+      <td>${activeCount}<span class="text-dim">/${horseCount}</span></td>
       <td class="text-amber">₵${(s.cummies || 0).toLocaleString()}</td>
       <td class="text-dim">₵${(s.total_earnings || 0).toLocaleString()}</td>
       <td class="text-dim">${date}</td>
@@ -6587,7 +6588,7 @@ function renderRaceHorseList() {
   const active = allHorses.filter(h => !h.retired);
 
   if (active.length === 0) {
-    const guestHint = isGuest ? 'Quick Race is available in guest mode if you want instant action.' : 'Breed some first!';
+    const guestHint = isGuest ? 'Quick Race is available in guest mode if you want instant action.' : 'Recover or breed a new active horse from your stable page first.';
     listEl.innerHTML = `<div class="text-dim">No horses available. ${guestHint}</div>`;
     return;
   }
@@ -6613,10 +6614,10 @@ function renderRaceHorseList() {
   let html = '<div style="max-height:400px;overflow-y:auto;">';
 
   if (myHorses.length > 0) {
-    html += '<div style="color:var(--green);border-bottom:1px solid var(--green);padding:4px 0;margin-bottom:4px;font-weight:bold;">YOUR HORSES (select at least 1)</div>';
+    html += '<div style="color:var(--green);border-bottom:1px solid var(--green);padding:4px 0;margin-bottom:4px;font-weight:bold;">YOUR HORSES (best active horse is auto-used in Quick Race)</div>';
     myHorses.forEach(h => { html += renderHorse(h, false); });
   } else {
-    html += `<div style="color:var(--amber);padding:4px 0;">You have no horses yet. ${isGuest ? 'Use QUICK RACE for instant races in guest mode.' : 'Breed some first, or use QUICK RACE.'}</div>`;
+    html += `<div style="color:var(--amber);padding:4px 0;">You have no active horses. ${isGuest ? 'Use QUICK RACE for instant races in guest mode.' : 'Open your stable to recover starters or breed a replacement first.'}</div>`;
   }
 
   if (otherHorses.length > 0) {

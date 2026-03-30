@@ -1187,17 +1187,7 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var playerHorse *models.Horse
-		for i := range stable.Horses {
-			if stable.Horses[i].Retired {
-				continue
-			}
-			h, err := s.stables.GetHorse(stable.Horses[i].ID)
-			if err == nil {
-				playerHorse = h
-				break
-			}
-		}
+		playerHorse := s.firstBestActiveHorse(stable)
 		if playerHorse == nil {
 			writeError(w, http.StatusBadRequest, "no active horse available for quick race")
 			return
@@ -1693,6 +1683,50 @@ func (s *Server) getStableForHorse(horseID string) *models.Stable {
 		}
 	}
 	return nil
+}
+
+func countActiveStableHorses(stable *models.Stable) int {
+	if stable == nil {
+		return 0
+	}
+	count := 0
+	for _, h := range stable.Horses {
+		if h.Retired {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+func lastActiveHorseWarning(horse *models.Horse, stable *models.Stable, action string) error {
+	if horse == nil || stable == nil || horse.Retired {
+		return nil
+	}
+	if countActiveStableHorses(stable) <= 1 {
+		return fmt.Errorf("cannot %s your last active horse; retire or breed a replacement first", action)
+	}
+	return nil
+}
+
+func (s *Server) firstBestActiveHorse(stable *models.Stable) *models.Horse {
+	if stable == nil {
+		return nil
+	}
+	var best *models.Horse
+	for i := range stable.Horses {
+		if stable.Horses[i].Retired {
+			continue
+		}
+		h, err := s.stables.GetHorse(stable.Horses[i].ID)
+		if err != nil || h == nil {
+			continue
+		}
+		if best == nil || h.ELO > best.ELO || (h.ELO == best.ELO && h.CurrentFitness > best.CurrentFitness) {
+			best = h
+		}
+	}
+	return best
 }
 
 // userOwnsHorse checks whether a user owns a specific horse by checking
@@ -5315,11 +5349,11 @@ func (s *Server) addPrestigeXPForHorse(horse *models.Horse, xp int64) {
 func winStreakMultiplier(streak int) float64 {
 	switch {
 	case streak >= 10:
-		return 2.0
+		return 1.6
 	case streak >= 7:
-		return 1.75
+		return 1.45
 	case streak >= 5:
-		return 1.5
+		return 1.3
 	case streak >= 3:
 		return 1.2
 	case streak >= 2:
@@ -8569,6 +8603,22 @@ func (s *Server) handleCreateFight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you don't have a stable")
 		return
 	}
+	if err := lastActiveHorseWarning(horse, stable, "retire for arena duty"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.IsToDeath {
+		retiredCount := 0
+		for _, h := range stable.Horses {
+			if h.Retired {
+				retiredCount++
+			}
+		}
+		if retiredCount <= 1 {
+			writeError(w, http.StatusBadRequest, "to-the-death fights require at least two retired horses in your stable so you are not left with no veteran roster")
+			return
+		}
+	}
 	if req.EntryFee < 0 {
 		writeError(w, http.StatusBadRequest, "entry fee cannot be negative")
 		return
@@ -8942,6 +8992,11 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "horse not found")
 		return
 	}
+	stable := s.getStableForUser(claims.UserID)
+	if err := lastActiveHorseWarning(horse, stable, "send to the glue factory"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Calculate glue production based on horse stats.
 	// Base glue = 50 + (age * 3) + (races * 2) + (wins * 5)
@@ -8970,7 +9025,6 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Award cummies to the owner.
-	stable := s.getStableForUser(claims.UserID)
 	if stable != nil {
 		stable.Cummies += cummiesEarned
 	}
@@ -9335,8 +9389,8 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ownerTier := s.getPrestigeTierForUser(stable.OwnerID)
-	if len(stable.Horses) >= ownerTier.MaxHorses {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
+	if countActiveStableHorses(stable) >= ownerTier.MaxHorses {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max active capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
 		return
 	}
 	if breeder.Fee > 0 && stable.Cummies < breeder.Fee {

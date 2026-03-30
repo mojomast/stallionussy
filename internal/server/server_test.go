@@ -128,3 +128,53 @@ func TestUserOwnsHorseAcrossOwnedStable(t *testing.T) {
 		t.Fatal("unexpected ownership match for different user")
 	}
 }
+
+func TestCountActiveStableHorsesIgnoresRetired(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	if len(stable.Horses) < 2 {
+		t.Fatalf("expected at least 2 horses, got %d", len(stable.Horses))
+	}
+	stable.Horses[0].Retired = true
+	if got := countActiveStableHorses(stable); got != len(stable.Horses)-1 {
+		t.Fatalf("countActiveStableHorses = %d, want %d", got, len(stable.Horses)-1)
+	}
+}
+
+func TestLastActiveHorseWarningBlocksDestructiveAction(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	if len(stable.Horses) < 2 {
+		t.Fatalf("expected at least 2 horses, got %d", len(stable.Horses))
+	}
+	stable.Horses[1].Retired = true
+	if err := lastActiveHorseWarning(&stable.Horses[0], stable, "glue"); err == nil {
+		t.Fatal("expected last active horse warning")
+	}
+}
+
+func TestFirstBestActiveHorseChoosesHighestELO(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	if len(stable.Horses) < 2 {
+		t.Fatalf("expected at least 2 horses, got %d", len(stable.Horses))
+	}
+	stable.Horses[0].ELO = 1200
+	stable.Horses[1].ELO = 1350
+	best := s.firstBestActiveHorse(stable)
+	if best == nil {
+		t.Fatal("expected best active horse")
+	}
+	if best.ID != stable.Horses[1].ID {
+		t.Fatalf("best horse = %s, want %s", best.ID, stable.Horses[1].ID)
+	}
+}
