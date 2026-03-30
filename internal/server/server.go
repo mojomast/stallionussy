@@ -481,7 +481,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/casino/poker/{id}/action", s.handleHoldemAction)
 	s.mux.HandleFunc("GET /api/casino/slots/spin", s.handleSpinSlots)
 	s.mux.HandleFunc("POST /api/casino/slots/spin", s.handleSpinSlots)
-	s.mux.HandleFunc("GET /api/casino/jackpot", s.handleGetJackpot)
+	s.mux.HandleFunc("GET /api/casino/slots/jackpot", s.handleGetJackpot)
+	s.mux.HandleFunc("GET /api/casino/jackpot", s.handleGetJackpot) // backward-compat alias
 
 	// --- Breeding Stallions (Permanent Stud Duty) ---
 	s.mux.HandleFunc("POST /api/horses/{id}/assign-breeder", s.handleAssignBreeder)
