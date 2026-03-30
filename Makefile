@@ -6,7 +6,7 @@ BINARY_NAME=stallionussy
 BUILD_DIR=./cmd/stallionussy
 PORT?=8080
 
-.PHONY: all build run serve cli test vet clean docker docker-run fmt
+.PHONY: all build run serve cli test vet clean docker docker-run fmt smoke
 
 # Default: build the binary
 all: build
@@ -59,6 +59,10 @@ docker-run: docker
 # Docker Compose up
 up:
 	docker-compose up --build
+
+# Smoke test the local compose stack
+smoke:
+	curl -fsS http://localhost:$(PORT)/api/capabilities | grep 'starter_recovery'
 
 # Docker Compose down
 down:

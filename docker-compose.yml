@@ -4,6 +4,23 @@
 # The yogurt is patient. The yogurt remembers.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stallionussy-postgres
+    environment:
+      POSTGRES_DB: stallionussy
+      POSTGRES_USER: stallionussy
+      POSTGRES_PASSWORD: h0rs3ussy420
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stallionussy -d stallionussy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   stallionussy:
     build: .
     container_name: stallionussy
@@ -12,25 +29,17 @@ services:
     environment:
       - STALLIONUSSY_PORT=8080
       - STALLIONUSSY_TICK_DELAY_MS=50
+      - DATABASE_URL=postgres://stallionussy:h0rs3ussy420@postgres:5432/stallionussy?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/api/stables"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/capabilities | grep -q 'starter_recovery'"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 5s
-
-  # Future: PostgreSQL for persistent storage
-  # postgres:
-  #   image: postgres:16-alpine
-  #   environment:
-  #     POSTGRES_DB: stallionussy
-  #     POSTGRES_USER: stallion
-  #     POSTGRES_PASSWORD: ${DB_PASSWORD:-neigh}
-  #   volumes:
-  #     - pgdata:/var/lib/postgresql/data
-  #   ports:
-  #     - "5432:5432"
 
   # Future: Redis for pub/sub race telemetry
   # redis:
@@ -38,5 +47,5 @@ services:
   #   ports:
   #     - "6379:6379"
 
-# volumes:
-#   pgdata:
+volumes:
+  pgdata:

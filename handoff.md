@@ -121,6 +121,12 @@ All passed after the fixes in this pass.
   - race share links now work again because `copyRaceLink` is globally reachable and clipboard fallback is hardened
   - the studs page now defines its owned-horse lists correctly and only offers retired horses for breeder assignment
   - custom race creation now validates “at least one owned horse” client-side and shows inline status instead of raw alerts where possible
+- Capability payload was tightened to match what the SPA actually gates today, instead of advertising unused subfeature flags.
+- Added request-level server tests for `GET /api/capabilities` and `POST /api/stables/{id}/claim-starters` so these routes are not only helper-tested.
+- Local container wiring was completed:
+  - `docker-compose.yml` now includes a Postgres service plus `DATABASE_URL` for the app container
+  - compose health now checks `/api/capabilities` instead of an old shallow `/api/stables` probe
+  - `make smoke` now verifies the local stack exposes the capability endpoint expected by the SPA
 - Casino/departed follow-ups were tightened during the repair:
   - daily casino chip grants are now applied consistently from the casino overview path
   - poker table payloads now redact opponent hands until settlement

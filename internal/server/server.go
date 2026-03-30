@@ -558,8 +558,6 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"casino":             true,
 			"departed_horses":    true,
 			"starter_recovery":   true,
-			"async_draw_poker":   true,
-			"slot_machine":       true,
 			"stable_detail_hash": true,
 		},
 	})

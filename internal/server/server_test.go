@@ -2,8 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/mojomast/stallionussy/internal/authussy"
 	"github.com/mojomast/stallionussy/internal/models"
 )
 
@@ -311,5 +315,76 @@ func TestSpinSlotsForStableConsumesAndPaysOut(t *testing.T) {
 	}
 	if stable.CasinoChips < 90 {
 		t.Fatalf("stable chips = %d, want at least 90 after spin resolution", stable.CasinoChips)
+	}
+}
+
+func TestHandleCapabilities(t *testing.T) {
+	s := NewServer(nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/capabilities", nil)
+	rr := httptest.NewRecorder()
+	s.handleCapabilities(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var body struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !body.Capabilities["starter_recovery"] || !body.Capabilities["casino"] || !body.Capabilities["departed_horses"] {
+		t.Fatalf("unexpected capabilities payload: %#v", body.Capabilities)
+	}
+	if body.Capabilities["async_draw_poker"] || body.Capabilities["slot_machine"] {
+		t.Fatalf("capabilities should not advertise unused subfeature keys: %#v", body.Capabilities)
+	}
+}
+
+func TestHandleClaimStarterHorsesRequiresOwnershipAndEmptyStable(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+
+	unauthReq := httptest.NewRequest(http.MethodPost, "/api/stables/"+stable.ID+"/claim-starters", nil)
+	unauthReq.SetPathValue("id", stable.ID)
+	unauthRR := httptest.NewRecorder()
+	s.handleClaimStarterHorses(unauthRR, unauthReq)
+	if unauthRR.Code != http.StatusUnauthorized {
+		t.Fatalf("unauth status = %d, want 401", unauthRR.Code)
+	}
+
+	wrongOwnerReq := httptest.NewRequest(http.MethodPost, "/api/stables/"+stable.ID+"/claim-starters", nil)
+	wrongOwnerReq.SetPathValue("id", stable.ID)
+	wrongOwnerReq = wrongOwnerReq.WithContext(context.WithValue(wrongOwnerReq.Context(), authussy.UserContextKey, &authussy.Claims{UserID: "user-2", Username: "other"}))
+	wrongOwnerRR := httptest.NewRecorder()
+	s.handleClaimStarterHorses(wrongOwnerRR, wrongOwnerReq)
+	if wrongOwnerRR.Code != http.StatusForbidden {
+		t.Fatalf("wrong owner status = %d, want 403", wrongOwnerRR.Code)
+	}
+
+	ownedReq := httptest.NewRequest(http.MethodPost, "/api/stables/"+stable.ID+"/claim-starters", nil)
+	ownedReq.SetPathValue("id", stable.ID)
+	ownedReq = ownedReq.WithContext(context.WithValue(ownedReq.Context(), authussy.UserContextKey, &authussy.Claims{UserID: "user-1", Username: "owner"}))
+	ownedRR := httptest.NewRecorder()
+	s.handleClaimStarterHorses(ownedRR, ownedReq)
+	if ownedRR.Code != http.StatusBadRequest {
+		t.Fatalf("non-empty stable status = %d, want 400", ownedRR.Code)
+	}
+
+	for _, horse := range append([]models.Horse(nil), stable.Horses...) {
+		if err := s.stables.RemoveHorse(horse.ID); err != nil {
+			t.Fatalf("RemoveHorse failed: %v", err)
+		}
+	}
+	stable.Horses = nil
+	recoveryReq := httptest.NewRequest(http.MethodPost, "/api/stables/"+stable.ID+"/claim-starters", nil)
+	recoveryReq.SetPathValue("id", stable.ID)
+	recoveryReq = recoveryReq.WithContext(context.WithValue(recoveryReq.Context(), authussy.UserContextKey, &authussy.Claims{UserID: "user-1", Username: "owner"}))
+	recoveryRR := httptest.NewRecorder()
+	s.handleClaimStarterHorses(recoveryRR, recoveryReq)
+	if recoveryRR.Code != http.StatusOK {
+		t.Fatalf("recovery status = %d, want 200", recoveryRR.Code)
 	}
 }
