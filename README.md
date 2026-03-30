@@ -8,6 +8,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - New authenticated stables are seeded with 2 starter horses so users can immediately race and breed.
 - Existing empty user stables are backfilled with starter horses on server boot.
 - Authenticated users who end up with an empty stable can claim a one-time emergency starter pair from the stable page.
+- Owned empty stables now show an explicit recovery panel instead of sending zero-horse players into breeding dead ends.
 - First-time authenticated players are offered a skippable interactive tutorial that walks the main gameplay loop.
 - Race replay links use `#replay/{raceID}` and recent replays are available via `/api/races/recent`.
 - Stud-market breeding now requires an explicit owned mare.
@@ -40,6 +41,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Training fatigue penalties now taper earlier and rest recovers less, which makes rotating horses more valuable than cycling one favorite endlessly.
 - Irreversible destruction loops now protect your last active horse from being deleted.
 - Casino gambling uses a separate `casino chips` wallet by default so poker and slots do not directly destroy core stable progression.
+- Slot spins accept the main authenticated `POST` path and a compatibility `GET` fallback on the same endpoint to avoid dead-end method mismatches in the SPA.
 - Async poker is lightweight five-card draw: one buy-in, one draw phase, no live side pots, no websocket-dependent turn engine.
 - Casino chip exchange enforces a protected cummies floor so gambling cannot bankrupt a stable below basic operating capital.
 - Departed horses do not freely revive. They enter a dormant ledger, may surface a rare omen later, and return permanently altered with reduced efficiency and anomalous traits.

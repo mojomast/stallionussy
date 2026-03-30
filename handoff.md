@@ -112,6 +112,9 @@ All passed after the fixes in this pass.
 
 - The post-casino SPA regression that caused a black screen was fixed by removing a stale `window.SU.claimStarterRecovery` export that no longer had a matching function implementation.
 - Routing now falls back to `#home` on unknown hashes instead of leaving the app with no active page.
+- Stable detail is now route-addressable as `#stable/{id}`, which lets the owned empty-stable recovery panel survive refresh/navigation.
+- Owned empty stables once again surface the emergency starter recovery CTA instead of incorrectly pushing players toward breeding with zero horses.
+- Slot spins now support the normal `POST` path plus a compatibility `GET` variant on the same route, reducing 405 dead ends while keeping auth intact.
 - Casino/departed follow-ups were tightened during the repair:
   - daily casino chip grants are now applied consistently from the casino overview path
   - poker table payloads now redact opponent hands until settlement

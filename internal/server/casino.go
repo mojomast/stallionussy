@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -340,9 +341,18 @@ func (s *Server) handleSpinSlots(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Wager int64 `json:"wager"`
 	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if r.Method == http.MethodGet {
+		wager, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("wager")), 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "wager query parameter is required")
+			return
+		}
+		req.Wager = wager
+	} else {
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 	if req.Wager <= 0 {
 		writeError(w, http.StatusBadRequest, "wager must be positive")
@@ -357,16 +367,34 @@ func (s *Server) handleSpinSlots(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "insufficient casino chips")
 		return
 	}
-	stable.CasinoChips -= req.Wager
+	spin, err := s.spinSlotsForStable(r.Context(), stable, claims.UserID, req.Wager)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, spin)
+}
+
+func (s *Server) spinSlotsForStable(ctx context.Context, stable *models.Stable, userID string, wager int64) (*models.SlotSpin, error) {
+	if stable == nil {
+		return nil, fmt.Errorf("you need a stable first")
+	}
+	if wager <= 0 {
+		return nil, fmt.Errorf("wager must be positive")
+	}
+	if stable.CasinoChips < wager {
+		return nil, fmt.Errorf("insufficient casino chips")
+	}
+	stable.CasinoChips -= wager
 	symbols := []string{slotSymbolPool[rand.IntN(len(slotSymbolPool))], slotSymbolPool[rand.IntN(len(slotSymbolPool))], slotSymbolPool[rand.IntN(len(slotSymbolPool))]}
 	multiplier := slotMultiplier(symbols)
-	payout := int64(math.Round(float64(req.Wager) * multiplier))
+	payout := int64(math.Round(float64(wager) * multiplier))
 	stable.CasinoChips += payout
 	spin := &models.SlotSpin{
 		ID:           uuid.New().String(),
 		StableID:     stable.ID,
-		UserID:       claims.UserID,
-		WagerAmount:  req.Wager,
+		UserID:       userID,
+		WagerAmount:  wager,
 		PayoutAmount: payout,
 		Multiplier:   multiplier,
 		Symbols:      symbols,
@@ -374,10 +402,10 @@ func (s *Server) handleSpinSlots(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:    time.Now(),
 	}
 	if s.casinoRepo != nil {
-		_ = s.casinoRepo.RecordSlotSpin(r.Context(), spin)
+		_ = s.casinoRepo.RecordSlotSpin(ctx, spin)
 	}
-	s.persistStable(r.Context(), stable)
-	writeJSON(w, http.StatusOK, spin)
+	s.persistStable(ctx, stable)
+	return spin, nil
 }
 
 func (s *Server) handleListDepartedHorses(w http.ResponseWriter, r *http.Request) {

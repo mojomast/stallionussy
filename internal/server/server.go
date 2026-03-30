@@ -429,6 +429,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/casino/poker", s.handleCreatePokerTable)
 	s.mux.HandleFunc("POST /api/casino/poker/{id}/join", s.handleJoinPokerTable)
 	s.mux.HandleFunc("POST /api/casino/poker/{id}/draw", s.handleDrawPokerHand)
+	s.mux.HandleFunc("GET /api/casino/slots/spin", s.handleSpinSlots)
 	s.mux.HandleFunc("POST /api/casino/slots/spin", s.handleSpinSlots)
 
 	// --- Breeding Stallions (Permanent Stud Duty) ---

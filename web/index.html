@@ -3879,7 +3879,13 @@ function navigate() {
 
   switch (page) {
     case 'home': loadDashboard(); break;
-    case 'stable': loadStables(); break;
+    case 'stable': {
+      const param = getPageParam();
+      loadStables().then(() => {
+        if (param) viewStable(param);
+      });
+      break;
+    }
     case 'horse': loadHorseDetail(getPageParam()); break;
     case 'breed': loadBreedPage(); break;
     case 'race': loadRacePage(); break;
@@ -6039,14 +6045,14 @@ function renderStableList() {
     const horseCount = (s.horses && s.horses.length) || 0;
     const activeCount = (s.horses || []).filter(h => !h.retired).length;
     const date = s.created_at ? new Date(s.created_at).toLocaleDateString() : '—';
-    html += `<tr class="clickable" onclick="window.SU.viewStable('${escHtml(s.id)}')">
+    html += `<tr class="clickable" onclick="location.hash='#stable/${escHtml(s.id)}'">
       <td class="text-dim">drwxr-xr-x</td>
       <td><a onclick="event.stopPropagation()">${escHtml(s.name)}</a></td>
       <td>${activeCount}<span class="text-dim">/${horseCount}</span></td>
       <td class="text-amber">₵${(s.cummies || 0).toLocaleString()}</td>
       <td class="text-dim">₵${(s.total_earnings || 0).toLocaleString()}</td>
       <td class="text-dim">${date}</td>
-      <td><a onclick="event.stopPropagation(); window.SU.viewStable('${escHtml(s.id)}')">[cd]</a></td>
+      <td><a onclick="event.stopPropagation(); location.hash='#stable/${escHtml(s.id)}'">[cd]</a></td>
       <td><a onclick="event.stopPropagation(); window.SU.challengeStable('${escHtml(s.id)}', '${escHtml(s.name)}')" style="color:var(--red);">[⚔️]</a></td>
     </tr>`;
   });
@@ -6102,9 +6108,29 @@ async function viewStable(stableId) {
   try {
     const horses = await api(`/stables/${stableId}/horses`);
     const horseList = Array.isArray(horses) ? horses : [];
+    const isOwnedStable = !!(currentUser && stable && stable.owner_id === currentUser.id);
 
     if (horseList.length === 0) {
-      $('#stable-horses').innerHTML = '<div class="text-dim">total 0<br>Empty stable. Breed some horses!</div>';
+      if (isOwnedStable) {
+        const grantsUsed = Number(stable.starter_grants || 0);
+        const canRecover = grantsUsed < 2;
+        $('#stable-horses').innerHTML = `<div class="text-dim">total 0</div>
+          <div class="panel" style="margin-top:8px;">
+            <div class="section-hdr">// EMPTY STABLE RECOVERY</div>
+            <div class="text-dim" style="font-size:11px; line-height:1.6;">
+              You have no horses left, so breeding and racing are dead ends right now.
+              ${canRecover ? 'Use your emergency starter recovery grant to get back into the game.' : 'Your one-time emergency recovery grant has already been used for this stable.'}
+            </div>
+            <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+              ${canRecover ? `<button class="term-btn amber" onclick="window.SU.claimStarterRecovery('${escHtml(stableId)}')">CLAIM STARTER RECOVERY</button>` : ''}
+              <button class="term-btn" onclick="location.hash='#glue'">CHECK RETURN OMENS</button>
+              <button class="term-btn" onclick="location.hash='#casino'">VISIT CASINO</button>
+            </div>
+            <div id="stable-recovery-msg" class="text-dim" style="font-size:11px; margin-top:8px;"></div>
+          </div>`;
+      } else {
+        $('#stable-horses').innerHTML = '<div class="text-dim">total 0<br>This stable currently has no horses.</div>';
+      }
     } else {
       let html = `<div class="text-dim mb-8">total ${horseList.length}</div>
 <table class="term-table"><thead><tr>
@@ -9308,8 +9334,38 @@ async function spinSlots() {
     msgEl.innerHTML = `<span class="text-purple">${escHtml((spin.symbols || []).join(' | '))}</span> -> payout ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span>`;
     loadCasinoPage();
   } catch (e) {
+    if ((e.message || '').includes('HTTP 405')) {
+      try {
+        const spin = await api(`/casino/slots/spin?wager=${encodeURIComponent(String(wager))}`);
+        msgEl.innerHTML = `<span class="text-purple">${escHtml((spin.symbols || []).join(' | '))}</span> -> payout ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span>`;
+        loadCasinoPage();
+        return;
+      } catch (fallbackErr) {
+        msgEl.textContent = `Error: ${fallbackErr.message}`;
+        msgEl.style.color = 'var(--red)';
+        return;
+      }
+    }
     msgEl.textContent = `Error: ${e.message}`;
     msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function claimStarterRecovery(stableID) {
+  const msgEl = $('#stable-recovery-msg') || $('#stable-create-msg');
+  try {
+    const result = await api(`/stables/${encodeURIComponent(stableID)}/claim-starters`, { method: 'POST' });
+    if (msgEl) {
+      msgEl.textContent = result.message || 'Starter recovery granted.';
+      msgEl.style.color = 'var(--fg)';
+    }
+    await loadStables();
+    await viewStable(stableID);
+  } catch (e) {
+    if (msgEl) {
+      msgEl.textContent = e.message || 'Starter recovery failed.';
+      msgEl.style.color = 'var(--red)';
+    }
   }
 }
 
@@ -9676,6 +9732,7 @@ window.SU = {
   replayTutorial,
   openLore,
   claimDailyReward,
+  claimStarterRecovery,
   toggleChatSidebar,
   switchLeaderboardTab,
   sortLeaderboard,

@@ -291,3 +291,25 @@ func TestRedactPokerTableForUserHidesOpponentHand(t *testing.T) {
 		t.Fatal("expected opponent hand to be hidden during active hand")
 	}
 }
+
+func TestSpinSlotsForStableConsumesAndPaysOut(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Casino Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	stable.CasinoChips = 100
+	spin, err := s.spinSlotsForStable(context.Background(), stable, "user-1", 10)
+	if err != nil {
+		t.Fatalf("spinSlotsForStable failed: %v", err)
+	}
+	if spin == nil {
+		t.Fatal("expected spin result")
+	}
+	if spin.WagerAmount != 10 {
+		t.Fatalf("wager = %d, want 10", spin.WagerAmount)
+	}
+	if stable.CasinoChips < 90 {
+		t.Fatalf("stable chips = %d, want at least 90 after spin resolution", stable.CasinoChips)
+	}
+}
