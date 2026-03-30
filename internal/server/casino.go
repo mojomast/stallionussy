@@ -268,6 +268,12 @@ func (s *Server) handleCreatePokerTable(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
+
+	// Prevent players from creating multiple active tables simultaneously.
+	if s.userHasActivePokerTable(claims.UserID) {
+		writeError(w, http.StatusConflict, "you already have an active poker table — finish or wait for it to expire before opening another")
+		return
+	}
 	if req.BuyIn <= 0 {
 		req.BuyIn = 50
 	}
@@ -371,6 +377,11 @@ func (s *Server) handleJoinPokerTable(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "you are already seated at this table")
 			return
 		}
+	}
+	// Prevent joining if user is already in another active game.
+	if s.userHasActivePokerTable(claims.UserID) {
+		writeError(w, http.StatusConflict, "you're already in an active poker game — finish it first")
+		return
 	}
 	if len(table.Seats) >= table.MaxPlayers {
 		writeError(w, http.StatusBadRequest, "table is full")
@@ -1010,6 +1021,96 @@ func (s *Server) savePokerTable(ctx context.Context, table *models.PokerTable) {
 		if err := s.casinoRepo.CreatePokerTable(ctx, table); err != nil {
 			_ = s.casinoRepo.UpdatePokerTable(ctx, table)
 		}
+	}
+}
+
+// userHasActivePokerTable returns true if the user is seated at any
+// non-settled poker table (i.e. still open or in progress).
+func (s *Server) userHasActivePokerTable(userID string) bool {
+	s.pokerMu.RLock()
+	defer s.pokerMu.RUnlock()
+	for _, table := range s.pokerTables {
+		if table.Status == models.PokerTableSettled {
+			continue
+		}
+		for _, seat := range table.Seats {
+			if seat.UserID == userID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pokerTableCleanupLoop periodically expires stale open tables (no second
+// player within 5 minutes) and garbage-collects old settled tables from the
+// in-memory map.
+func (s *Server) pokerTableCleanupLoop(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanupPokerTables()
+		}
+	}
+}
+
+func (s *Server) cleanupPokerTables() {
+	now := time.Now()
+	const (
+		openTableTimeout   = 5 * time.Minute  // open tables with <2 players
+		settledTableRetain = 30 * time.Minute // keep settled tables for history
+	)
+
+	s.pokerMu.Lock()
+	var toExpire []*models.PokerTable
+	var toDelete []string
+	for id, table := range s.pokerTables {
+		switch table.Status {
+		case models.PokerTableOpen:
+			// Expire open tables that have been waiting too long.
+			if now.Sub(table.CreatedAt) > openTableTimeout && len(table.Seats) < 2 {
+				toExpire = append(toExpire, table)
+			}
+		case models.PokerTableSettled:
+			// GC settled tables older than the retention period.
+			if now.Sub(table.UpdatedAt) > settledTableRetain {
+				toDelete = append(toDelete, id)
+			}
+		}
+	}
+	// Remove settled tables from the map.
+	for _, id := range toDelete {
+		delete(s.pokerTables, id)
+	}
+	s.pokerMu.Unlock()
+
+	// Expire stale open tables: refund buy-ins and mark settled.
+	for _, table := range toExpire {
+		table.Status = models.PokerTableSettled
+		table.UpdatedAt = now
+		table.Log = append(table.Log, "Table expired — no one else showed up. Buy-ins refunded.")
+		for i := range table.Seats {
+			seat := &table.Seats[i]
+			seat.Payout = seat.BuyIn
+			refundStable := s.getStableForUser(seat.UserID)
+			if refundStable != nil {
+				mu := s.stableMu(refundStable.ID)
+				mu.Lock()
+				if table.StakeCurrency == "cummies" {
+					refundStable.Cummies += seat.BuyIn
+				} else {
+					refundStable.CasinoChips += seat.BuyIn
+				}
+				mu.Unlock()
+				s.persistStable(context.Background(), refundStable)
+			}
+		}
+		s.savePokerTable(context.Background(), table)
+		log.Printf("casino: expired stale poker table %s (created %s ago)", table.ID, now.Sub(table.CreatedAt).Round(time.Second))
 	}
 }
 

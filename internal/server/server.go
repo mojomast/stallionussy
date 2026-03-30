@@ -575,6 +575,7 @@ func (s *Server) Start(addr string) error {
 	go s.auctionExpiryLoop(ctx)
 	go s.replayCleanupLoop(ctx)
 	go rateLimiterCleanupLoop(ctx, rl)
+	go s.pokerTableCleanupLoop(ctx)
 
 	// Signal handling: trap SIGINT and SIGTERM for graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
