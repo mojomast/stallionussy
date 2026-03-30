@@ -17,6 +17,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Progression now has a real daily action loop for authenticated players: training and race entries are limited per day and surfaced in the dashboard.
 - Authenticated quick races now guarantee solo progression by auto-filling the field with matched computer-controlled opponents when needed.
 - The challenge page now supports a `CPU Arena` fallback for immediate 1v1 progression when no other player is available.
+- The SPA now uses a fixed desktop app shell: the left chat column stays pinned while the right content pane scrolls independently.
 
 ## Current Rules
 
@@ -78,3 +79,4 @@ go build ./...
 - The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
 - Authenticated player progression and season state now persist in Postgres and survive server restarts.
 - Challenges and betting pools are still in-memory and reset on server restart.
+- On mobile, chat remains a drawer instead of a persistent side column.

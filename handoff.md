@@ -49,6 +49,9 @@ This repo was re-audited and tightened around the main product-breakers.
 - Player progression and season state now persist server-side:
   - `PlayerProgress` daily limits, login streaks, prestige XP, and related counters are written through to Postgres
   - seasons are loaded from Postgres on boot and season rollover now updates the archived and active season records
+- The SPA shell and chat layout were tightened:
+  - desktop now uses a fixed-height two-pane layout with a persistent left chat rail and a dedicated scrolling main-content pane
+  - mobile chat now opens as a clearer drawer with close/backdrop handling instead of relying on page scroll behavior
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
