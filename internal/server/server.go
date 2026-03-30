@@ -70,6 +70,8 @@ type Server struct {
 	achievementRepo repository.AchievementRepository
 	trainingRepo    repository.TrainingSessionRepository
 	marketTxRepo    repository.MarketTransactionRepository
+	progressRepo    repository.PlayerProgressRepository
+	seasonRepo      repository.SeasonRepository
 	auctionRepo     repository.AuctionRepository
 	replayRepo      repository.RaceReplayRepository
 	allianceRepo    repository.AllianceRepository
@@ -131,25 +133,20 @@ func NewServer(db *postgres.DB) *Server {
 	rh := tournussy.NewRaceHistory()
 
 	s := &Server{
-		stables:      sm,
-		market:       marketussy.NewMarket(),
-		hub:          commussy.NewHub(),
-		trainer:      trainussy.NewTrainer(),
-		tournaments:  tournussy.NewTournamentManager(rh),
-		raceHistory:  rh,
-		pedigree:     pedigreussy.NewPedigreeEngine(sm.GetHorse),
-		trades:       pedigreussy.NewTradeManager(),
-		mux:          http.NewServeMux(),
-		raceCache:    make(map[string]*raceResult),
-		challenges:   make(map[string]*models.Challenge),
-		auctions:     make(map[string]*models.Auction),
-		bettingPools: make(map[string]*models.BettingPool),
-		currentSeason: &models.Season{
-			ID:        1,
-			Name:      "Season 1: The Ussening",
-			StartedAt: time.Now(),
-			Active:    true,
-		},
+		stables:       sm,
+		market:        marketussy.NewMarket(),
+		hub:           commussy.NewHub(),
+		trainer:       trainussy.NewTrainer(),
+		tournaments:   tournussy.NewTournamentManager(rh),
+		raceHistory:   rh,
+		pedigree:      pedigreussy.NewPedigreeEngine(sm.GetHorse),
+		trades:        pedigreussy.NewTradeManager(),
+		mux:           http.NewServeMux(),
+		raceCache:     make(map[string]*raceResult),
+		challenges:    make(map[string]*models.Challenge),
+		auctions:      make(map[string]*models.Auction),
+		bettingPools:  make(map[string]*models.BettingPool),
+		currentSeason: nil,
 		pastSeasons:   []models.Season{},
 		progress:      make(map[string]*models.PlayerProgress),
 		rivalries:     make(map[string]map[string]int),
@@ -170,6 +167,8 @@ func NewServer(db *postgres.DB) *Server {
 		s.achievementRepo = postgres.NewAchievementRepo(db)
 		s.trainingRepo = postgres.NewTrainingSessionRepo(db)
 		s.marketTxRepo = postgres.NewMarketTransactionRepo(db)
+		s.progressRepo = postgres.NewProgressRepo(db)
+		s.seasonRepo = postgres.NewSeasonRepo(db)
 		s.auctionRepo = postgres.NewAuctionRepo(db)
 		s.replayRepo = postgres.NewReplayRepo(db)
 		s.allianceRepo = postgres.NewAllianceRepo(db)
@@ -196,6 +195,16 @@ func NewServer(db *postgres.DB) *Server {
 
 		// Load persisted data from DB into in-memory managers.
 		s.loadFromDB()
+	}
+
+	if s.currentSeason == nil {
+		s.currentSeason = &models.Season{
+			ID:        1,
+			Name:      "Season 1: The Ussening",
+			StartedAt: time.Now(),
+			Active:    true,
+		}
+		s.persistSeason(context.Background(), s.currentSeason)
 	}
 
 	// Start the WebSocket hub event loop.
@@ -3733,6 +3742,7 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 	s.currentSeason.Active = false
 	s.currentSeason.EndedAt = time.Now()
 	s.currentSeason.Champions = champions
+	endedSeasonSnapshot := cloneSeason(s.currentSeason)
 
 	endedSeason := *s.currentSeason
 	s.pastSeasons = append(s.pastSeasons, endedSeason)
@@ -3753,6 +3763,9 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 		StartedAt: time.Now(),
 		Active:    true,
 	}
+	newSeasonSnapshot := cloneSeason(s.currentSeason)
+	s.persistSeason(r.Context(), endedSeasonSnapshot)
+	s.persistSeason(r.Context(), newSeasonSnapshot)
 
 	if s.hub != nil {
 		s.hub.BroadcastJSON(map[string]interface{}{
@@ -5017,8 +5030,28 @@ func (s *Server) getOrCreateProgress(userID string) *models.PlayerProgress {
 			LastDailyReset:  time.Now().UTC().Format("2006-01-02"),
 		}
 		s.progress[userID] = p
+		go s.persistProgress(context.Background(), clonePlayerProgress(p))
 	}
 	return p
+}
+
+func clonePlayerProgress(p *models.PlayerProgress) *models.PlayerProgress {
+	if p == nil {
+		return nil
+	}
+	clone := *p
+	return &clone
+}
+
+func cloneSeason(season *models.Season) *models.Season {
+	if season == nil {
+		return nil
+	}
+	clone := *season
+	if season.Champions != nil {
+		clone.Champions = append([]models.SeasonChampion(nil), season.Champions...)
+	}
+	return &clone
 }
 
 // resetDailyLimitsIfNeeded resets daily trains/races if the date has changed.
@@ -5033,26 +5066,32 @@ func resetDailyLimitsIfNeeded(p *models.PlayerProgress) {
 
 func (s *Server) consumeDailyTrain(userID string) (*models.PlayerProgress, error) {
 	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
 	p := s.getOrCreateProgress(userID)
 	resetDailyLimitsIfNeeded(p)
 	if p.DailyTrainsLeft <= 0 {
+		s.progressMu.Unlock()
 		return nil, fmt.Errorf("no daily training sessions left; check back after reset")
 	}
 	p.DailyTrainsLeft--
-	return p, nil
+	progressSnapshot := clonePlayerProgress(p)
+	s.progressMu.Unlock()
+	s.persistProgress(context.Background(), progressSnapshot)
+	return progressSnapshot, nil
 }
 
 func (s *Server) consumeDailyRace(userID string) (*models.PlayerProgress, error) {
 	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
 	p := s.getOrCreateProgress(userID)
 	resetDailyLimitsIfNeeded(p)
 	if p.DailyRacesLeft <= 0 {
+		s.progressMu.Unlock()
 		return nil, fmt.Errorf("no daily race entries left; check back after reset")
 	}
 	p.DailyRacesLeft--
-	return p, nil
+	progressSnapshot := clonePlayerProgress(p)
+	s.progressMu.Unlock()
+	s.persistProgress(context.Background(), progressSnapshot)
+	return progressSnapshot, nil
 }
 
 func isBotHorse(h *models.Horse) bool {
@@ -5156,13 +5195,14 @@ func getNextPrestigeTier(currentLevel int) *models.PrestigeTier {
 // addPrestigeXP grants XP to a player and checks for level-ups.
 func (s *Server) addPrestigeXP(userID string, username string, xp int64) {
 	s.progressMu.Lock()
-	defer s.progressMu.Unlock()
 
 	p := s.getOrCreateProgress(userID)
 	oldTier := getPrestigeTier(p.PrestigeXP)
 	p.PrestigeXP += xp
 	newTier := getPrestigeTier(p.PrestigeXP)
 	p.PrestigeLevel = newTier.Level
+	progressSnapshot := clonePlayerProgress(p)
+	s.progressMu.Unlock()
 
 	// Broadcast level-up if the tier changed.
 	if newTier.Level > oldTier.Level {
@@ -5175,6 +5215,8 @@ func (s *Server) addPrestigeXP(userID string, username string, xp int64) {
 		log.Printf("server: prestige level-up! %s reached %s (level %d, XP %d)",
 			username, newTier.Name, newTier.Level, p.PrestigeXP)
 	}
+
+	s.persistProgress(context.Background(), progressSnapshot)
 }
 
 // getPrestigeTierForUser returns the prestige tier for a user (read-locked).
@@ -5235,7 +5277,9 @@ func (s *Server) handleGetProgress(w http.ResponseWriter, r *http.Request) {
 	s.progressMu.Lock()
 	p := s.getOrCreateProgress(claims.UserID)
 	resetDailyLimitsIfNeeded(p)
+	progressSnapshot := clonePlayerProgress(p)
 	s.progressMu.Unlock()
+	s.persistProgress(r.Context(), progressSnapshot)
 
 	// Return a copy under read lock.
 	s.progressMu.RLock()
@@ -5292,8 +5336,10 @@ func (s *Server) handleClaimDailyReward(w http.ResponseWriter, r *http.Request) 
 
 	reward := dailyRewards[cycleDay-1]
 	actualCummies := reward.Cummies
+	progressSnapshot := clonePlayerProgress(p)
 
 	s.progressMu.Unlock()
+	s.persistProgress(r.Context(), progressSnapshot)
 
 	// Find the player's stable and add cummies.
 	stable := s.getStableForUser(claims.UserID)
@@ -5346,7 +5392,9 @@ func (s *Server) handleGetPrestige(w http.ResponseWriter, r *http.Request) {
 		// Create a default progress entry.
 		s.progressMu.Lock()
 		p = s.getOrCreateProgress(claims.UserID)
+		progressSnapshot := clonePlayerProgress(p)
 		s.progressMu.Unlock()
+		s.persistProgress(r.Context(), progressSnapshot)
 		s.progressMu.RLock()
 	}
 
@@ -5412,6 +5460,30 @@ func (s *Server) persistStable(ctx context.Context, stable *models.Stable) {
 	if err := s.stableRepo.CreateStable(ctx, stable); err != nil {
 		if err2 := s.stableRepo.UpdateStable(ctx, stable); err2 != nil {
 			log.Printf("server: persistStable %s: create=%v update=%v", stable.ID, err, err2)
+		}
+	}
+}
+
+// persistProgress creates or updates player progression state in the database.
+func (s *Server) persistProgress(ctx context.Context, progress *models.PlayerProgress) {
+	if s.progressRepo == nil || progress == nil {
+		return
+	}
+	if err := s.progressRepo.CreateProgress(ctx, progress); err != nil {
+		if err2 := s.progressRepo.UpdateProgress(ctx, progress); err2 != nil {
+			log.Printf("server: persistProgress %s: create=%v update=%v", progress.UserID, err, err2)
+		}
+	}
+}
+
+// persistSeason creates or updates season state in the database.
+func (s *Server) persistSeason(ctx context.Context, season *models.Season) {
+	if s.seasonRepo == nil || season == nil {
+		return
+	}
+	if err := s.seasonRepo.CreateSeason(ctx, season); err != nil {
+		if err2 := s.seasonRepo.UpdateSeason(ctx, season); err2 != nil {
+			log.Printf("server: persistSeason %d: create=%v update=%v", season.ID, err, err2)
 		}
 	}
 }
@@ -5591,9 +5663,56 @@ func (s *Server) loadFromDB() {
 		}
 	}
 
+	// 6. Load player progression into the in-memory progress store.
+	if s.progressRepo != nil {
+		dbProgress, err := s.progressRepo.ListProgress(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load player progress: %v", err)
+		} else {
+			s.progressMu.Lock()
+			for _, p := range dbProgress {
+				if p == nil || p.UserID == "" {
+					continue
+				}
+				s.progress[p.UserID] = p
+			}
+			s.progressMu.Unlock()
+			if len(dbProgress) > 0 {
+				log.Printf("server: loadFromDB: loaded %d player progress records", len(dbProgress))
+			}
+		}
+	}
+
+	// 7. Load seasons into the in-memory season store.
+	if s.seasonRepo != nil {
+		dbSeasons, err := s.seasonRepo.ListSeasons(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load seasons: %v", err)
+		} else {
+			s.seasonMu.Lock()
+			s.currentSeason = nil
+			s.pastSeasons = s.pastSeasons[:0]
+			for _, season := range dbSeasons {
+				if season == nil {
+					continue
+				}
+				if season.Active {
+					seasonCopy := *season
+					s.currentSeason = &seasonCopy
+					continue
+				}
+				s.pastSeasons = append(s.pastSeasons, *season)
+			}
+			s.seasonMu.Unlock()
+			if len(dbSeasons) > 0 {
+				log.Printf("server: loadFromDB: loaded %d seasons", len(dbSeasons))
+			}
+		}
+	}
+
 	log.Printf("server: loadFromDB: completed — %d stables loaded from database", len(dbStables))
 
-	// 6. Load alliances into the in-memory store.
+	// 8. Load alliances into the in-memory store.
 	if s.allianceRepo != nil {
 		dbAlliances, err := s.allianceRepo.ListAlliances(ctx)
 		if err != nil {

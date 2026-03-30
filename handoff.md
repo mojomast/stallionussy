@@ -46,6 +46,9 @@ This repo was re-audited and tightened around the main product-breakers.
 - Breeding progression guardrails were unified:
   - stud-market breeding now enforces prestige stable-cap and breeding cooldown rules
   - breeder-stallion breeding now enforces the same cap/cooldown checks before charging fees
+- Player progression and season state now persist server-side:
+  - `PlayerProgress` daily limits, login streaks, prestige XP, and related counters are written through to Postgres
+  - seasons are loaded from Postgres on boot and season rollover now updates the archived and active season records
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
@@ -75,6 +78,6 @@ All passed after the fixes in this pass.
 - Frontend still has no automated browser/API integration coverage.
 - Tutorial persistence is client-side only; it is not yet stored server-side per account.
 - Lore/codex content is currently SPA-local data, not server-backed content.
-- Player progression, daily limits, challenges, and seasonal state are still primarily in-memory and do not yet survive server restart.
+- Challenges and betting pools are still in-memory and do not yet survive server restart.
 - `docker-compose.yml` still does not provide Postgres.
 - `devplan.md` is now historical, not an accurate live delivery tracker.

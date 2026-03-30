@@ -76,4 +76,5 @@ go build ./...
 - Frontend is a single-file SPA at `web/index.html`.
 - The first-session tutorial intentionally focuses on the core loop first: stable -> horse -> training -> race -> results, then previews breeding, market, competition, and replay/share.
 - The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
-- Authenticated progression state is still server-memory only for now; daily limits and prestige survive requests but not server restarts.
+- Authenticated player progression and season state now persist in Postgres and survive server restarts.
+- Challenges and betting pools are still in-memory and reset on server restart.

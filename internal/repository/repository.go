@@ -202,6 +202,44 @@ type TrainingSessionRepository interface {
 }
 
 // ---------------------------------------------------------------------------
+// PlayerProgressRepository — engagement/progression state
+// ---------------------------------------------------------------------------
+
+// PlayerProgressRepository handles persistence for player progression state.
+type PlayerProgressRepository interface {
+	// CreateProgress persists a new player progress record.
+	CreateProgress(ctx context.Context, progress *models.PlayerProgress) error
+
+	// GetProgress retrieves a player's progress by user ID.
+	GetProgress(ctx context.Context, userID string) (*models.PlayerProgress, error)
+
+	// ListProgress returns all player progress records.
+	ListProgress(ctx context.Context) ([]*models.PlayerProgress, error)
+
+	// UpdateProgress saves changes to an existing player progress record.
+	UpdateProgress(ctx context.Context, progress *models.PlayerProgress) error
+}
+
+// ---------------------------------------------------------------------------
+// SeasonRepository — seasonal competition state
+// ---------------------------------------------------------------------------
+
+// SeasonRepository handles persistence for seasons.
+type SeasonRepository interface {
+	// CreateSeason persists a new season.
+	CreateSeason(ctx context.Context, season *models.Season) error
+
+	// GetCurrentSeason retrieves the active season.
+	GetCurrentSeason(ctx context.Context) (*models.Season, error)
+
+	// ListSeasons returns all seasons, oldest first.
+	ListSeasons(ctx context.Context) ([]*models.Season, error)
+
+	// UpdateSeason saves changes to an existing season.
+	UpdateSeason(ctx context.Context, season *models.Season) error
+}
+
+// ---------------------------------------------------------------------------
 // MarketTransactionRepository — market transaction history
 // ---------------------------------------------------------------------------
 

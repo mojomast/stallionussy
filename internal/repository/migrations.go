@@ -189,6 +189,36 @@ CREATE TABLE IF NOT EXISTS training_sessions (
 CREATE INDEX IF NOT EXISTS idx_training_sessions_horse_id ON training_sessions (horse_id);
 
 -- ===========================================================================
+-- Player Progress
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS player_progress (
+    user_id             TEXT PRIMARY KEY,
+    login_streak        INT NOT NULL DEFAULT 0,
+    last_login_date     TEXT NOT NULL DEFAULT '',
+    total_logins        INT NOT NULL DEFAULT 0,
+    daily_trains_left   INT NOT NULL DEFAULT 6,
+    daily_races_left    INT NOT NULL DEFAULT 6,
+    last_daily_reset    TEXT NOT NULL DEFAULT '',
+    prestige_level      INT NOT NULL DEFAULT 0,
+    prestige_xp         BIGINT NOT NULL DEFAULT 0,
+    lifetime_earnings   BIGINT NOT NULL DEFAULT 0
+);
+
+-- ===========================================================================
+-- Seasons
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS seasons (
+    id          INT PRIMARY KEY,
+    name        TEXT NOT NULL DEFAULT '',
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at    TIMESTAMPTZ,
+    active      BOOLEAN NOT NULL DEFAULT FALSE,
+    champions   JSONB NOT NULL DEFAULT '[]'
+);
+
+CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons (active);
+
+-- ===========================================================================
 -- Market Transactions
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS market_transactions (
