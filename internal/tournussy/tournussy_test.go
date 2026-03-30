@@ -682,7 +682,7 @@ func TestRecordRoundResults(t *testing.T) {
 	// Simulate the race
 	race = racussy.SimulateRace(race, horses)
 
-	err := tm.RecordRoundResults(tournament.ID, race)
+	_, err := tm.RecordRoundResults(tournament.ID, race)
 	if err != nil {
 		t.Fatalf("RecordRoundResults error: %v", err)
 	}
@@ -703,7 +703,7 @@ func TestRecordRoundResults_TournamentNotFound(t *testing.T) {
 	tm := NewTournamentManager(rh)
 
 	race := &models.Race{ID: "fake-race"}
-	err := tm.RecordRoundResults("nonexistent", race)
+	_, err := tm.RecordRoundResults("nonexistent", race)
 	if err == nil {
 		t.Error("expected error for nonexistent tournament")
 	}
@@ -1284,7 +1284,7 @@ func TestFullTournamentSimulation(t *testing.T) {
 
 		race = racussy.SimulateRace(race, horses)
 
-		err = tm.RecordRoundResults(tournament.ID, race)
+		_, err = tm.RecordRoundResults(tournament.ID, race)
 		if err != nil {
 			t.Fatalf("RecordRoundResults %d error: %v", i+1, err)
 		}

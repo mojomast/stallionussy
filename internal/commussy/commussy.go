@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 	"github.com/mojomast/stallionussy/internal/models"
@@ -514,21 +515,24 @@ func (c *Client) ReadPump() {
 		}
 
 		msgType, _ := msg["type"].(string)
-		switch msgType {
-		case "chat":
-			// Rate limit: max 1 message per 500ms per client.
+
+		// Rate limit: max 1 message per 500ms per client for chat, emote, and whisper.
+		if msgType == "chat" || msgType == "chat_emote" || msgType == "whisper" {
 			now := time.Now()
 			if now.Sub(c.lastChatTime) < 500*time.Millisecond {
 				continue
 			}
 			c.lastChatTime = now
+		}
 
+		switch msgType {
+		case "chat":
 			text, _ := msg["text"].(string)
 			// Sanitize: strip HTML tags.
 			text = stripHTMLTags(text)
-			// Max text length: 500 chars (truncate if longer).
-			if len(text) > 500 {
-				text = text[:500]
+			// Max text length: 500 runes (truncate if longer, UTF-8 safe).
+			if utf8.RuneCountInString(text) > 500 {
+				text = string([]rune(text)[:500])
 			}
 			if text == "" {
 				continue
@@ -539,15 +543,15 @@ func (c *Client) ReadPump() {
 				"user":    c.Username,
 				"userID":  c.UserID,
 				"text":    text,
-				"ts":      now.Unix(),
+				"ts":      time.Now().Unix(),
 				"isGuest": c.IsGuest,
 			})
 
 		case "chat_emote":
 			text, _ := msg["text"].(string)
 			text = stripHTMLTags(text)
-			if len(text) > 500 {
-				text = text[:500]
+			if utf8.RuneCountInString(text) > 500 {
+				text = string([]rune(text)[:500])
 			}
 			if text == "" {
 				continue
@@ -569,22 +573,19 @@ func (c *Client) ReadPump() {
 
 		case "whisper":
 			// Private message to another user.
-			// Rate limit: reuse the same chat rate limiter.
-			now := time.Now()
-			if now.Sub(c.lastChatTime) < 500*time.Millisecond {
-				continue
-			}
-			c.lastChatTime = now
+			// Rate limiting is handled above the switch statement.
 
 			target, _ := msg["target"].(string)
 			text, _ := msg["text"].(string)
 			text = stripHTMLTags(text)
-			if len(text) > 500 {
-				text = text[:500]
+			if utf8.RuneCountInString(text) > 500 {
+				text = string([]rune(text)[:500])
 			}
 			if target == "" || text == "" {
 				continue
 			}
+
+			now := time.Now()
 
 			// Find the target client by username (case-insensitive).
 			targetClient := c.hub.GetClientByUsername(target)
@@ -597,8 +598,9 @@ func (c *Client) ReadPump() {
 				continue
 			}
 
-			// Don't allow whispering yourself.
-			if strings.EqualFold(c.Username, target) {
+			// Don't allow whispering yourself (compare by UserID, not username,
+			// to avoid case-sensitivity issues and handle display name changes).
+			if c.UserID == targetClient.UserID {
 				c.hub.SendToClient(c, map[string]interface{}{
 					"type": "whisper_error",
 					"text": "You can't whisper to yourself, weirdo.",
@@ -658,17 +660,24 @@ func (c *Client) WritePump() {
 				return
 			}
 			w.Write(message)
-
-			// Drain any queued messages into the same write to reduce
-			// syscall overhead (nagle-style batching).
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.send)
-			}
-
 			if err := w.Close(); err != nil {
 				return
+			}
+
+			// Drain any queued messages, sending each as its own WebSocket
+			// frame to avoid concatenating multiple JSON objects into one
+			// message (which would break JSON.parse on the client).
+			n := len(c.send)
+			for i := 0; i < n; i++ {
+				next := <-c.send
+				w, err := c.conn.NextWriter(websocket.TextMessage)
+				if err != nil {
+					return
+				}
+				w.Write(next)
+				if err := w.Close(); err != nil {
+					return
+				}
 			}
 
 		case <-ticker.C:

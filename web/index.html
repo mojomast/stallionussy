@@ -2322,6 +2322,403 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .spin-history-item.loss { color: var(--fg-dim); }
 .spin-history-item.jackpot { color: var(--purple); font-weight: bold; }
 
+/* ═══ RACING STYLES ═══════════════════════════════════════════════════════ */
+.race-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  transition: border-color 0.3s ease;
+}
+.race-card:hover { border-color: var(--green); }
+.race-card.active { border-left: 3px solid var(--green); animation: race-pulse 2s infinite; }
+@keyframes race-pulse { 0%, 100% { border-left-color: var(--green); } 50% { border-left-color: var(--amber); } }
+.race-track-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  border: 1px solid;
+  text-transform: uppercase;
+}
+.race-track-badge.sprintussy { border-color: #ff4444; color: #ff4444; }
+.race-track-badge.grindussy { border-color: #44ff44; color: #44ff44; }
+.race-track-badge.frostussy { border-color: #4488ff; color: #4488ff; }
+.race-track-badge.mudussy { border-color: #aa8844; color: #aa8844; }
+.race-track-badge.thunderdome { border-color: #ffaa00; color: #ffaa00; }
+.race-track-badge.hauntedussy { border-color: #aa44ff; color: #aa44ff; }
+.race-track-badge.thunderussy { border-color: #ffaa00; color: #ffaa00; }
+.race-positions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 11px;
+}
+.race-position-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+}
+.race-position-item.first { border-left-color: gold; color: gold; }
+.race-position-item.second { border-left-color: #c0c0c0; color: #c0c0c0; }
+.race-position-item.third { border-left-color: #cd7f32; color: #cd7f32; }
+.race-position-item.dnf { opacity: 0.4; text-decoration: line-through; }
+.race-progress-bar {
+  height: 6px;
+  background: rgba(0, 255, 65, 0.1);
+  border: 1px solid var(--border);
+  margin: 4px 0;
+  position: relative;
+  overflow: hidden;
+}
+.race-progress-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width 0.3s ease;
+  box-shadow: 0 0 6px var(--green);
+}
+.weather-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 9px;
+  border: 1px solid var(--fg-dim);
+  margin-left: 6px;
+}
+
+/* ═══ HORSE DETAIL STYLES ═════════════════════════════════════════════════ */
+.horse-profile {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+@media (max-width: 700px) {
+  .horse-profile { grid-template-columns: 1fr; }
+}
+.horse-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+.horse-stat-item {
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+.horse-stat-item .stat-label {
+  font-size: 9px;
+  color: var(--fg-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.horse-stat-item .stat-value {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--green);
+}
+.horse-stat-item .stat-value.low { color: #ff4444; }
+.horse-stat-item .stat-value.mid { color: var(--amber); }
+.horse-stat-item .stat-value.high { color: var(--green); }
+.gene-display {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+.gene-badge {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: bold;
+  background: rgba(0, 0, 0, 0.4);
+}
+.gene-badge.aa { border-color: var(--green); color: var(--green); }
+.gene-badge.ab { border-color: var(--amber); color: var(--amber); }
+.gene-badge.bb { border-color: #ff4444; color: #ff4444; }
+.trait-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+.trait-item {
+  padding: 6px 10px;
+  border-left: 2px solid var(--border);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.trait-item.common { border-left-color: var(--fg-dim); }
+.trait-item.rare { border-left-color: var(--amber); }
+.trait-item.legendary { border-left-color: var(--purple); }
+.trait-item.anomalous { border-left-color: #ff4444; }
+.trait-item .trait-name { font-weight: bold; }
+.trait-item .trait-desc { color: var(--fg-dim); font-size: 10px; margin-top: 2px; }
+.fitness-bar {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+  position: relative;
+  margin: 4px 0;
+}
+.fitness-bar .fitness-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+.fitness-bar .fitness-fill.good { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.fitness-bar .fitness-fill.ok { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.fitness-bar .fitness-fill.bad { background: #ff4444; box-shadow: 0 0 4px #ff4444; }
+
+/* ═══ COMBAT STYLES ═══════════════════════════════════════════════════════ */
+.fight-result-card {
+  border: 1px solid var(--border);
+  padding: 16px;
+  margin-bottom: 12px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.fight-result-card.fatality { border-color: #ff4444; background: rgba(255, 0, 0, 0.05); }
+.fight-result-card .fight-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.fight-versus {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  margin: 12px 0;
+  font-size: 14px;
+}
+.fight-versus .vs { color: #ff4444; font-weight: bold; font-size: 16px; }
+.fight-hp-bar {
+  height: 10px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border);
+  position: relative;
+  margin: 4px 0;
+}
+.fight-hp-bar .hp-fill {
+  height: 100%;
+  background: #ff4444;
+  transition: width 0.3s ease;
+  box-shadow: 0 0 4px #ff4444;
+}
+.fight-hp-bar .hp-fill.healthy { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.fight-hp-bar .hp-fill.wounded { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
+.arena-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  border: 1px solid var(--purple);
+  color: var(--purple);
+  text-transform: uppercase;
+}
+.fight-log {
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 10px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+  margin-top: 8px;
+}
+.fight-log-entry { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.fight-log-entry.critical { color: #ff4444; font-weight: bold; }
+.fight-log-entry.dodge { color: var(--fg-dim); font-style: italic; }
+.fight-log-entry.event { color: var(--purple); }
+.mace-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 9px;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+}
+
+/* ═══ BREEDING STYLES ═════════════════════════════════════════════════════ */
+.breed-parent-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  text-align: center;
+}
+.breed-parent-card.selected { border-color: var(--green); background: rgba(0, 255, 65, 0.05); }
+.breed-parent-card .parent-name { font-weight: bold; font-size: 13px; color: var(--green); }
+.breed-parent-card .parent-stats { font-size: 10px; color: var(--fg-dim); margin-top: 4px; }
+.breed-result-card {
+  border: 2px solid var(--amber);
+  padding: 16px;
+  text-align: center;
+  background: rgba(255, 176, 0, 0.05);
+  margin-top: 16px;
+  animation: foal-appear 0.5s ease-out;
+}
+@keyframes foal-appear {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.breed-result-card .foal-name { font-size: 16px; font-weight: bold; color: var(--amber); }
+
+/* ═══ MARKET STYLES (LISTINGS) ════════════════════════════════════════════ */
+.market-listing {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: center;
+  transition: border-color 0.2s;
+}
+.market-listing:hover { border-color: var(--amber); }
+.market-listing .listing-price {
+  font-size: 16px;
+  font-weight: bold;
+  color: var(--amber);
+  text-align: right;
+}
+.market-listing .listing-sappho {
+  font-size: 10px;
+  color: var(--purple);
+}
+.sappho-meter {
+  display: flex;
+  gap: 2px;
+  margin: 4px 0;
+}
+.sappho-meter .sappho-pip {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+}
+.sappho-meter .sappho-pip.filled { background: var(--purple); border-color: var(--purple); box-shadow: 0 0 4px rgba(128, 0, 255, 0.3); }
+
+/* ═══ TOURNAMENT STYLES ═══════════════════════════════════════════════════ */
+.tournament-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.tournament-card.status-open { border-left: 3px solid var(--green); }
+.tournament-card.status-in_progress { border-left: 3px solid var(--amber); }
+.tournament-card.status-finished { border-left: 3px solid var(--fg-dim); }
+.tournament-standings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0;
+  font-size: 11px;
+}
+.tournament-standing-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+}
+.tournament-standing-row.rank-1 { border-left-color: gold; color: gold; }
+.tournament-standing-row.rank-2 { border-left-color: #c0c0c0; }
+.tournament-standing-row.rank-3 { border-left-color: #cd7f32; }
+.tournament-standing-row .standing-points { font-weight: bold; color: var(--amber); }
+
+/* ═══ LEADERBOARD STYLES ═════════════════════════════════════════════════ */
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.leaderboard-table th {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 2px solid var(--green);
+  color: var(--green);
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.leaderboard-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.leaderboard-table tr:hover { background: rgba(0, 255, 65, 0.05); }
+.leaderboard-table tr.top-3 { color: var(--amber); }
+.leaderboard-table .rank-cell { font-weight: bold; width: 40px; }
+.leaderboard-table .elo-cell { color: var(--amber); font-weight: bold; }
+
+/* ═══ ACHIEVEMENT STYLES (ENHANCED) ══════════════════════════════════════ */
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+.achievement-card {
+  border: 1px solid var(--border);
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  text-align: center;
+  transition: all 0.3s ease;
+}
+.achievement-card.unlocked { border-color: var(--amber); background: rgba(255, 176, 0, 0.05); }
+.achievement-card.locked { opacity: 0.4; }
+.achievement-card .achievement-icon { font-size: 24px; margin-bottom: 4px; }
+.achievement-card .achievement-name { font-size: 11px; font-weight: bold; color: var(--amber); }
+.achievement-card .achievement-desc { font-size: 9px; color: var(--fg-dim); margin-top: 4px; }
+.achievement-card.rarity-common .achievement-icon { filter: grayscale(0.5); }
+.achievement-card.rarity-rare { border-color: var(--purple); }
+.achievement-card.rarity-rare .achievement-name { color: var(--purple); }
+.achievement-card.rarity-legendary { border-color: gold; }
+.achievement-card.rarity-legendary .achievement-name { color: gold; }
+
+/* ═══ STABLE STYLES ═══════════════════════════════════════════════════════ */
+.stable-header {
+  padding: 16px;
+  border: 1px solid var(--green);
+  background: rgba(0, 255, 65, 0.03);
+  margin-bottom: 16px;
+}
+.stable-header h2 { color: var(--green); margin: 0 0 4px 0; }
+.stable-stats-bar {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.stable-stats-bar .stat-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.stable-stats-bar .stat-label { color: var(--fg-dim); font-size: 9px; text-transform: uppercase; }
+.stable-stats-bar .stat-val { font-weight: bold; }
+.horse-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+.horse-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.horse-card:hover { border-color: var(--green); transform: translateY(-2px); }
+.horse-card .horse-name { font-weight: bold; color: var(--green); font-size: 13px; }
+.horse-card .horse-meta { font-size: 10px; color: var(--fg-dim); margin-top: 4px; }
+.horse-card .horse-genes { margin-top: 6px; }
+.horse-card.injured { border-color: #ff4444; }
+.horse-card.retired { opacity: 0.5; border-style: dashed; }
+.horse-card.legendary { border-color: var(--amber); background: rgba(255, 176, 0, 0.03); }
+
 </style>
 </head>
 <body>
@@ -5317,25 +5714,22 @@ function showRaceResults(race) {
 
   const sorted = [...(race.entries || [])].sort((a, b) => (a.finish_place || 999) - (b.finish_place || 999));
 
-  let html = `<table class="term-table">
-    <thead><tr><th>PLACE</th><th>HORSE</th><th>TIME</th><th>ID</th></tr></thead>
-    <tbody>`;
+  let html = `<div class="race-positions">`;
 
   sorted.forEach((e, i) => {
     const place = e.finish_place || (i + 1);
-    const placeClass = place === 1 ? 'gold' : place === 2 ? 'silver' : place === 3 ? 'bronze' : '';
+    const placeCls = place === 1 ? 'first' : place === 2 ? 'second' : place === 3 ? 'third' : '';
     const medal = place === 1 ? '🏆' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
     const timeStr = e.final_time ? formatDuration(e.final_time) : '—';
 
-    html += `<tr>
-      <td class="result-place ${placeClass}">${medal}</td>
-      <td><a href="#horse/${e.horse_id}">${escHtml(e.horse_name)}</a></td>
-      <td class="text-amber">${timeStr}</td>
-      <td class="text-dim">${(e.horse_id || '').substring(0, 8)}</td>
-    </tr>`;
+    html += `<div class="race-position-item ${placeCls}">
+      <span style="min-width:40px;font-weight:bold;">${medal}</span>
+      <span style="flex:1;"><a href="#horse/${e.horse_id}">${escHtml(e.horse_name)}</a></span>
+      <span class="text-amber" style="min-width:80px;">${timeStr}</span>
+    </div>`;
   });
 
-  html += '</tbody></table>';
+  html += '</div>';
 
   if (race.purse && race.purse > 0) {
     html += `<div class="text-amber mt-4" style="font-size:11px;">PURSE: ₵${race.purse.toLocaleString()} distributed to winners</div>`;
@@ -6413,6 +6807,52 @@ function renderTraitBadges(traits) {
   }).join('');
 }
 
+// ─── GENOME BADGES (ENHANCED) ──────────────────────────────────────────────
+function formatGenomeBadges(genome) {
+  if (!genome) return '<span class="text-dim">No genome data</span>';
+  const types = ['SPD','STM','TMP','SZE','REC','INT','MUT'];
+  const labels = {
+    SPD: 'Speed', STM: 'Stamina', TMP: 'Temper',
+    SZE: 'Size', REC: 'Recovery', INT: 'Intel', MUT: 'Mutation'
+  };
+  return types.map(t => {
+    const g = genome[t];
+    if (!g) return '';
+    const expr = expressGene(g);
+    const cls = expr === 'AA' ? 'aa' : expr === 'AB' ? 'ab' : 'bb';
+    return `<span class="gene-badge ${cls}">${labels[t] || t}: ${expr}</span>`;
+  }).join('');
+}
+
+// ─── TRAIT LIST (DETAILED) ─────────────────────────────────────────────────
+function renderTraitList(traits) {
+  if (!traits || traits.length === 0) return '<div class="text-dim" style="font-size:10px;">No traits</div>';
+  return traits.map(t => {
+    const rarity = (t.rarity || 'common').toLowerCase();
+    return `<div class="trait-item ${rarity}">
+      <div class="trait-name">${escHtml(t.name)}</div>
+      <div class="trait-desc">${escHtml(t.description || '')}${t.effect ? ` | Effect: ${escHtml(t.effect)} (${t.magnitude || 1}x)` : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── TRACK BADGE ───────────────────────────────────────────────────────────
+function renderTrackBadge(track) {
+  const t = (track || '').toLowerCase().replace(/[^a-z]/g, '');
+  return `<span class="race-track-badge ${t}">${escHtml(track || '?')}</span>`;
+}
+
+// ─── SAPPHO PIP METER ──────────────────────────────────────────────────────
+function renderSapphoPips(score) {
+  const max = 12;
+  const filled = Math.round((score / max) * 12);
+  let pips = '';
+  for (let i = 0; i < max; i++) {
+    pips += `<span class="sappho-pip${i < filled ? ' filled' : ''}"></span>`;
+  }
+  return `<div class="sappho-meter">${pips}</div><span style="font-size:9px;color:var(--fg-dim);">${score.toFixed(1)}/${max}</span>`;
+}
+
 // ─── FATIGUE GAUGE ─────────────────────────────────────────────────────────
 function renderFatigueGauge(fatigue) {
   const val = fatigue || 0;
@@ -6928,27 +7368,37 @@ async function viewStable(stableId) {
       }
     } else {
       let html = `<div class="text-dim mb-8">total ${horseList.length}</div>
-<table class="term-table"><thead><tr>
-  <th>NAME</th><th>ELO</th><th>W/L/R</th><th>FITNESS</th><th>FATIGUE</th><th>TRAITS</th><th>GEN</th><th>STATUS</th>
-</tr></thead><tbody>`;
+<div class="horse-grid">`;
 
       horseList.forEach(h => {
-        let cls = '';
-        if (h.is_legendary) cls = ' class="legendary"';
-        else if (h.retired) cls = ' class="retired"';
-        html += `<tr${cls}>
-          <td><a href="#horse/${h.id}">${escHtml(h.name)}</a></td>
-          <td>${Math.round(h.elo || 1200)}</td>
-          <td>${h.wins}/${h.losses}/${h.races}</td>
-          <td class="text-amber">${(h.current_fitness || 0).toFixed(2)}</td>
-          <td>${renderFatigueGauge(h.fatigue || 0)}</td>
-          <td>${renderTraitBadges(h.traits)}</td>
-          <td class="text-dim">G${h.generation}</td>
-          <td>${h.retired ? '<span class="text-red">RETIRED</span>' : '<span class="text-dim">Active</span>'}</td>
-        </tr>`;
+        let cardCls = 'horse-card';
+        if (h.is_legendary) cardCls += ' legendary';
+        else if (h.retired) cardCls += ' retired';
+        else if (h.injury) cardCls += ' injured';
+
+        const fitVal = h.current_fitness || 0;
+        const fitPct = Math.min(100, fitVal * 100);
+        const fitCls = fitVal >= 0.7 ? 'good' : fitVal >= 0.4 ? 'ok' : 'bad';
+
+        html += `<div class="${cardCls}" onclick="location.hash='#horse/${h.id}'">
+          <div class="horse-name">${h.is_legendary ? '★ ' : ''}${escHtml(h.name)}</div>
+          <div class="horse-meta">
+            ELO: <strong>${Math.round(h.elo || 1200)}</strong> | W/L/R: ${h.wins}/${h.losses}/${h.races} | G${h.generation}
+            ${h.retired ? ' | <span class="text-red">RETIRED</span>' : ''}
+            ${h.injury ? ' | <span class="text-red">INJURED</span>' : ''}
+          </div>
+          <div style="margin-top:6px;">
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--fg-dim);"><span>FITNESS</span><span>${fitVal.toFixed(2)}</span></div>
+            <div class="fitness-bar"><div class="fitness-fill ${fitCls}" style="width:${fitPct}%"></div></div>
+          </div>
+          <div style="margin-top:4px;font-size:10px;">
+            ${renderFatigueGauge(h.fatigue || 0)}
+          </div>
+          <div class="horse-genes">${renderTraitBadges(h.traits)}</div>
+        </div>`;
       });
 
-      html += '</tbody></table>';
+      html += '</div>';
       $('#stable-horses').innerHTML = html;
     }
   } catch (e) {
@@ -6964,10 +7414,13 @@ async function viewStable(stableId) {
     if (achList.length === 0) {
       achEl.innerHTML = '<span class="text-dim">No achievements unlocked yet.</span>';
     } else {
-      achEl.innerHTML = achList.map(a => {
-        const rarCls = `ach-rarity-${(a.rarity || 'common').toLowerCase()}`;
-        return `<span style="margin-right:12px;">${a.icon || '🏅'} <strong class="${rarCls}">${escHtml(a.name)}</strong></span>`;
-      }).join('');
+      achEl.innerHTML = '<div class="achievement-grid">' + achList.map(a => {
+        const rarCls = (a.rarity || 'common').toLowerCase();
+        return `<div class="achievement-card unlocked rarity-${rarCls}">
+          <div class="achievement-icon">${a.icon || '🏅'}</div>
+          <div class="achievement-name">${escHtml(a.name)}</div>
+        </div>`;
+      }).join('') + '</div>';
     }
   } catch (e) {
     $('#stable-achievements').innerHTML = '<span class="text-dim">Could not load achievements.</span>';
@@ -7022,26 +7475,44 @@ async function loadHorseDetail(horseId) {
 
     // ── Info Card ──
     html += `<div class="panel">
-      <div style="display:flex;gap:20px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:280px;">
+      <div class="horse-profile">
+        <div>
           <h3 class="${nameClass}" style="font-size:16px;margin-top:0;">${escHtml(h.name)} ${h.is_legendary ? '★ LEGENDARY' : ''} ${h.retired ? '<span class="text-red">[RETIRED]</span>' : ''}</h3>
           <div class="text-dim mb-4" style="font-size:10px;">${escHtml(h.lore || 'No lore recorded.')}</div>
           <div style="font-size:11px;margin-bottom:6px;"><span class="text-dim">Genome:</span> ${renderLoreHint('genes', 'GENE LORE')}</div>
-          <div class="genome-display mb-8">${formatGenomeDetailed(h.genome)}</div>
-          <div style="font-size:12px;">
-            <span class="text-dim">ELO:</span> <strong>${Math.round(h.elo || 1200)}</strong>
-            <span class="text-dim">(Peak: ${Math.round(h.peak_elo || h.elo || 1200)})</span> |
-            <span class="text-dim">W/L/R:</span> ${h.wins}/${h.losses}/${h.races} |
-            <span class="text-dim">Gen:</span> G${h.generation} |
-            <span class="text-dim">Age:</span> ${h.age || 0} <span class="age-badge age-${ageBracketInfo.bracket.toLowerCase()}">${ageBracketInfo.bracket}</span>
+          <div class="gene-display">${formatGenomeBadges(h.genome)}</div>
+          <div class="horse-stat-grid" style="margin-top:12px;">
+            <div class="horse-stat-item">
+              <div class="stat-label">ELO</div>
+              <div class="stat-value ${(h.elo || 1200) >= 1400 ? 'high' : (h.elo || 1200) >= 1200 ? 'mid' : 'low'}">${Math.round(h.elo || 1200)}</div>
+            </div>
+            <div class="horse-stat-item">
+              <div class="stat-label">PEAK ELO</div>
+              <div class="stat-value">${Math.round(h.peak_elo || h.elo || 1200)}</div>
+            </div>
+            <div class="horse-stat-item">
+              <div class="stat-label">W / L / R</div>
+              <div class="stat-value">${h.wins}/${h.losses}/${h.races}</div>
+            </div>
+            <div class="horse-stat-item">
+              <div class="stat-label">GENERATION</div>
+              <div class="stat-value">G${h.generation}</div>
+            </div>
+            <div class="horse-stat-item">
+              <div class="stat-label">AGE</div>
+              <div class="stat-value">${h.age || 0} <span class="age-badge age-${ageBracketInfo.bracket.toLowerCase()}" style="font-size:9px;">${ageBracketInfo.bracket}</span></div>
+            </div>
+            <div class="horse-stat-item">
+              <div class="stat-label">EARNINGS</div>
+              <div class="stat-value mid">₵${(h.total_earnings || 0).toLocaleString()}</div>
+            </div>
           </div>
-          <div style="font-size:12px;margin-top:4px;">
-            <span class="text-dim">Fitness:</span> <span class="text-amber">${(h.current_fitness || 0).toFixed(3)}</span>
-            <span class="text-dim">(Ceiling: ${(h.fitness_ceiling || 0).toFixed(3)})</span> |
+          <div style="margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--fg-dim);"><span>FITNESS</span><span>${(h.current_fitness || 0).toFixed(3)} / ${(h.fitness_ceiling || 0).toFixed(3)}</span></div>
+            <div class="fitness-bar"><div class="fitness-fill ${(h.current_fitness || 0) >= 0.7 ? 'good' : (h.current_fitness || 0) >= 0.4 ? 'ok' : 'bad'}" style="width:${Math.min(100, (h.current_fitness || 0) * 100)}%"></div></div>
+          </div>
+          <div style="font-size:11px;margin-top:6px;">
             <span class="text-dim">Training XP:</span> ${(h.training_xp || 0).toFixed(1)} |
-            <span class="text-dim">Earnings:</span> <span class="text-amber">₵${(h.total_earnings || 0).toLocaleString()}</span>
-          </div>
-          <div style="font-size:12px;margin-top:4px;">
             <span class="text-dim">Fatigue:</span> ${renderFatigueGauge(h.fatigue || 0)} ${renderLoreHint('fatigue', 'LORE')}
           </div>
           <div style="font-size:10px;margin-top:4px;" class="text-dim">
@@ -7049,10 +7520,13 @@ async function loadHorseDetail(horseId) {
           </div>
           ${injuryHtml}
         </div>
-        <div style="min-width:200px;">
+        <div>
           <h3 style="margin-top:0;">TRAITS</h3>
-          <div>${renderTraitBadges(h.traits)}</div>
-          ${achData.length > 0 ? `<h3 class="mt-8">ACHIEVEMENTS</h3><div>${achData.map(a => `<span style="margin-right:8px;">${a.icon || '🏅'} ${escHtml(a.name)}</span>`).join('')}</div>` : ''}
+          <div class="trait-list">${renderTraitList(h.traits)}</div>
+          ${achData.length > 0 ? `<h3 class="mt-8">ACHIEVEMENTS</h3><div class="achievement-grid" style="grid-template-columns:repeat(auto-fill,minmax(100px,1fr));">${achData.map(a => {
+            const rar = (a.rarity || 'common').toLowerCase();
+            return `<div class="achievement-card unlocked rarity-${rar}"><div class="achievement-icon">${a.icon || '🏅'}</div><div class="achievement-name">${escHtml(a.name)}</div></div>`;
+          }).join('')}</div>` : ''}
         </div>
       </div>
     </div>`;
@@ -7105,19 +7579,21 @@ async function loadHorseDetail(horseId) {
     if (statsData || historyData.length > 0) {
       html += `<div class="panel">
         <h3 style="margin-top:0;">📊 COMPUTED STATS</h3>
-        <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;">`;
+        <div class="horse-stat-grid">`;
 
       if (statsData) {
+        const wr = ((statsData.win_rate || 0) * 100).toFixed(1);
+        const wrCls = parseFloat(wr) >= 50 ? 'high' : parseFloat(wr) >= 25 ? 'mid' : 'low';
         html += `
-          <div><span class="text-dim">Win Rate:</span> <span class="text-amber">${((statsData.win_rate || 0) * 100).toFixed(1)}%</span></div>
-          <div><span class="text-dim">Avg Place:</span> ${(statsData.avg_place || 0).toFixed(2)}</div>
-          <div><span class="text-dim">Best Streak:</span> ${statsData.best_streak || 0}W</div>
-          <div><span class="text-dim">Current Streak:</span> ${statsData.current_streak || 0}W</div>
-          <div><span class="text-dim">Favorite Track:</span> ${escHtml(statsData.favorite_track || '—')}</div>
-          <div><span class="text-dim">Best Time:</span> ${statsData.best_time ? formatDuration(statsData.best_time) : '—'}</div>`;
+          <div class="horse-stat-item"><div class="stat-label">WIN RATE</div><div class="stat-value ${wrCls}">${wr}%</div></div>
+          <div class="horse-stat-item"><div class="stat-label">AVG PLACE</div><div class="stat-value">${(statsData.avg_place || 0).toFixed(2)}</div></div>
+          <div class="horse-stat-item"><div class="stat-label">BEST STREAK</div><div class="stat-value high">${statsData.best_streak || 0}W</div></div>
+          <div class="horse-stat-item"><div class="stat-label">CUR STREAK</div><div class="stat-value">${statsData.current_streak || 0}W</div></div>
+          <div class="horse-stat-item"><div class="stat-label">FAV TRACK</div><div class="stat-value" style="font-size:11px;">${renderTrackBadge(statsData.favorite_track || '—')}</div></div>
+          <div class="horse-stat-item"><div class="stat-label">BEST TIME</div><div class="stat-value mid">${statsData.best_time ? formatDuration(statsData.best_time) : '—'}</div></div>`;
       } else if (h.races > 0) {
         const winRate = h.races > 0 ? ((h.wins / h.races) * 100).toFixed(1) : '0.0';
-        html += `<div><span class="text-dim">Win Rate:</span> <span class="text-amber">${winRate}%</span></div>`;
+        html += `<div class="horse-stat-item"><div class="stat-label">WIN RATE</div><div class="stat-value">${winRate}%</div></div>`;
       }
 
       html += '</div></div>';
@@ -7128,24 +7604,23 @@ async function loadHorseDetail(horseId) {
       <h3 style="margin-top:0;">🏁 RACE HISTORY</h3>`;
 
     if (historyData.length > 0) {
-      html += `<table class="term-table"><thead><tr>
-        <th>TRACK</th><th>PLACE</th><th>TIME</th><th>ELO Δ</th><th>💰</th><th>WEATHER</th>
-      </tr></thead><tbody>`;
+      html += `<div class="race-positions">`;
       historyData.slice(0, 20).forEach(r => {
         const eloDelta = (r.elo_after || 0) - (r.elo_before || 0);
         const deltaClass = eloDelta >= 0 ? 'ticker-up' : 'ticker-down';
         const deltaStr = eloDelta >= 0 ? `+${eloDelta.toFixed(0)}` : eloDelta.toFixed(0);
         const wIcon = r.weather ? (WEATHER_INFO[r.weather] || {}).icon || '' : '';
-        html += `<tr>
-          <td>${escHtml(r.track_type || '?')}</td>
-          <td>${r.finish_place}/${r.total_horses}</td>
-          <td class="text-amber">${r.final_time ? formatDuration(r.final_time) : '—'}</td>
-          <td class="${deltaClass}">${deltaStr}</td>
-          <td class="text-amber">₵${r.earnings || 0}</td>
-          <td>${wIcon} ${escHtml(r.weather || '—')}</td>
-        </tr>`;
+        const placeCls = r.finish_place === 1 ? 'first' : r.finish_place === 2 ? 'second' : r.finish_place === 3 ? 'third' : '';
+        html += `<div class="race-position-item ${placeCls}">
+          <span>${r.finish_place === 1 ? '🏆' : r.finish_place === 2 ? '🥈' : r.finish_place === 3 ? '🥉' : '#' + r.finish_place} ${r.finish_place}/${r.total_horses}</span>
+          <span>${renderTrackBadge(r.track_type)}</span>
+          <span class="text-amber">${r.final_time ? formatDuration(r.final_time) : '—'}</span>
+          <span class="${deltaClass}">${deltaStr}</span>
+          <span class="text-amber">₵${r.earnings || 0}</span>
+          <span>${wIcon ? `<span class="weather-badge">${wIcon} ${escHtml(r.weather || '')}</span>` : ''}</span>
+        </div>`;
       });
-      html += '</tbody></table>';
+      html += '</div>';
     } else {
       html += '<span class="text-dim">No race history.</span>';
     }
@@ -7488,14 +7963,23 @@ function renderRaceHorseList() {
 
   const renderHorse = (h, checked) => {
     const legendary = h.is_legendary ? ' ★' : '';
-    const fatigueClass = (h.fatigue || 0) >= 70 ? 'text-red' : (h.fatigue || 0) >= 50 ? 'text-amber' : 'text-dim';
-    return `<div style="padding:2px 0;">
-      <label>
+    const fitVal = h.current_fitness || 0;
+    const fitPct = Math.min(100, fitVal * 100);
+    const fitCls = fitVal >= 0.7 ? 'good' : fitVal >= 0.4 ? 'ok' : 'bad';
+    return `<div class="race-card">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
         <input type="checkbox" class="term-checkbox race-horse-cb" value="${h.id}"${checked ? ' checked' : ''}>
-        <span>${escHtml(h.name)}${legendary}</span>
-        <span class="text-dim">[ELO:${Math.round(h.elo || 1200)}]</span>
-        <span class="text-dim">Fit:${(h.current_fitness || 0).toFixed(2)}</span>
-        <span class="${fatigueClass}">Fat:${(h.fatigue || 0).toFixed(0)}%</span>
+        <div style="flex:1;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:bold;">${escHtml(h.name)}${legendary}</span>
+            <span class="text-dim" style="font-size:10px;">ELO: <strong>${Math.round(h.elo || 1200)}</strong></span>
+          </div>
+          <div class="race-progress-bar" style="margin:4px 0;"><div class="race-progress-fill" style="width:${fitPct}%;background:${fitCls === 'good' ? 'var(--green)' : fitCls === 'ok' ? 'var(--amber)' : '#ff4444'};"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:9px;">
+            <span class="text-dim">Fit: ${fitVal.toFixed(2)}</span>
+            <span>${renderFatigueGauge(h.fatigue || 0)}</span>
+          </div>
+        </div>
       </label>
     </div>`;
   };
@@ -7503,14 +7987,14 @@ function renderRaceHorseList() {
   let html = '<div style="max-height:400px;overflow-y:auto;">';
 
   if (myHorses.length > 0) {
-    html += '<div style="color:var(--green);border-bottom:1px solid var(--green);padding:4px 0;margin-bottom:4px;font-weight:bold;">YOUR HORSES (best active horse is auto-used in Quick Race)</div>';
+    html += '<div style="color:var(--green);border-bottom:1px solid var(--green);padding:4px 0;margin-bottom:8px;font-weight:bold;font-size:10px;letter-spacing:1px;">YOUR HORSES</div>';
     myHorses.forEach(h => { html += renderHorse(h, false); });
   } else {
     html += `<div style="color:var(--amber);padding:4px 0;">You have no active horses. ${isGuest ? 'Use QUICK RACE for instant races in guest mode.' : 'Open your stable to recover starters or breed a replacement first.'}</div>`;
   }
 
   if (otherHorses.length > 0) {
-    html += '<div style="color:var(--amber);border-bottom:1px solid var(--dim);padding:4px 0;margin:8px 0 4px 0;font-weight:bold;">OPPONENTS (optional — race against AI/other stables)</div>';
+    html += '<div style="color:var(--amber);border-bottom:1px solid var(--amber);padding:4px 0;margin:12px 0 8px 0;font-weight:bold;font-size:10px;letter-spacing:1px;">OPPONENTS</div>';
     otherHorses.forEach(h => { html += renderHorse(h, false); });
   }
 
@@ -7818,46 +8302,50 @@ async function loadMarket() {
 function renderMarketListings() {
   const listEl = $('#market-listings');
   const active = allListings.filter(l => l.active);
+  const curMyStables = getMyStables();
+  const curMyHorses = getMyHorses(false);
 
   if (active.length === 0) {
     listEl.innerHTML = '<div class="text-dim">No active listings. The market awaits your studs.</div>';
     return;
   }
 
-  let html = `<table class="term-table"><thead><tr>
-    <th>HORSE</th><th>PRICE</th><th>SAPPHO</th><th>PEDIGREE</th><th>BUYER STABLE</th><th>ACTIONS</th>
-  </tr></thead><tbody>`;
+  let html = '';
 
   active.forEach(l => {
-    const sappho = renderSapphoBar(l.sappho_score || 0);
     // Build stable selector for each listing
-      let stableOpts = '<option value="">-- Select --</option>';
-      myStables.forEach(s => {
-        stableOpts += `<option value="${s.id}">${escHtml(s.name)}</option>`;
-      });
+    let stableOpts = '<option value="">-- Select Stable --</option>';
+    curMyStables.forEach(s => {
+      stableOpts += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+    });
 
-      let mareOpts = '<option value="">-- Select Mare --</option>';
-      myHorses.forEach(h => {
-        mareOpts += `<option value="${h.id}">${escHtml(h.name)}</option>`;
-      });
+    let mareOpts = '<option value="">-- Select Mare --</option>';
+    curMyHorses.forEach(h => {
+      mareOpts += `<option value="${h.id}">${escHtml(h.name)}</option>`;
+    });
 
-      html += `<tr>
-      <td><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></td>
-      <td class="text-amber">₵${(l.price || 0).toLocaleString()}</td>
-      <td>${sappho} ${renderLoreHint('sappho', 'LORE')}</td>
-      <td class="text-dim" style="max-width:180px">${escHtml(l.pedigree || '—')}</td>
-      <td>
-        <select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select>
-        <select class="term-input" id="market-mare-${l.id}" style="max-width:150px;font-size:10px;margin-top:4px;">${mareOpts}</select>
-      </td>
-      <td>
-        <button class="term-btn sm" onclick="window.SU.buyListing('${escHtml(l.id)}')">BUY</button>
-        <button class="term-btn danger sm" onclick="window.SU.cancelListing('${escHtml(l.id)}')">DEL</button>
-      </td>
-    </tr>`;
+    html += `<div class="market-listing">
+      <div>
+        <div style="font-weight:bold;"><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></div>
+        <div style="margin-top:4px;font-size:10px;">
+          <span class="text-dim">SAPPHO:</span> ${renderSapphoPips(l.sappho_score || 0)} ${renderLoreHint('sappho', 'LORE')}
+        </div>
+        <div class="text-dim" style="font-size:10px;margin-top:4px;">${escHtml(l.pedigree || '—')}</div>
+        <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+          <select class="term-input" id="market-buyer-${l.id}" style="max-width:150px;font-size:10px;">${stableOpts}</select>
+          <select class="term-input" id="market-mare-${l.id}" style="max-width:150px;font-size:10px;">${mareOpts}</select>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div class="listing-price">₵${(l.price || 0).toLocaleString()}</div>
+        <div style="margin-top:8px;display:flex;gap:4px;justify-content:flex-end;">
+          <button class="term-btn sm" onclick="window.SU.buyListing('${escHtml(l.id)}')">BUY</button>
+          <button class="term-btn danger sm" onclick="window.SU.cancelListing('${escHtml(l.id)}')">DEL</button>
+        </div>
+      </div>
+    </div>`;
   });
 
-  html += '</tbody></table>';
   listEl.innerHTML = html;
 }
 
@@ -8272,25 +8760,28 @@ function renderTournamentList() {
     return;
   }
 
-  let html = `<table class="term-table"><thead><tr>
-    <th>NAME</th><th>TRACK</th><th>STATUS</th><th>ROUND</th><th>PRIZE POOL</th><th>ENTRANTS</th><th></th>
-  </tr></thead><tbody>`;
+  let html = '';
 
   allTournaments.forEach(t => {
     const name = t.name || `Tournament ${(t.id || '').substring(0, 8)}`;
     const entrants = (t.standings || []).length;
-    html += `<tr class="clickable" onclick="window.SU.viewTournament('${escHtml(t.id)}')">
-      <td>${escHtml(name)}</td>
-      <td class="text-dim">${escHtml(t.track_type || '?')}</td>
-      <td>${renderStatusBadge(t.status || 'Open')}</td>
-      <td>${t.current_round || 0}/${t.rounds || '?'}</td>
-      <td class="text-amber">₵${(t.prize_pool || 0).toLocaleString()}</td>
-      <td>${entrants}</td>
-      <td><a onclick="event.stopPropagation()">[VIEW]</a></td>
-    </tr>`;
+    const statusKey = (t.status || 'open').toLowerCase().replace(/\s/g, '_');
+    html += `<div class="tournament-card status-${statusKey}" style="cursor:pointer;" onclick="window.SU.viewTournament('${escHtml(t.id)}')">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <span style="font-weight:bold;font-size:13px;">${escHtml(name)}</span>
+          <span style="margin-left:8px;">${renderTrackBadge(t.track_type)}</span>
+          <span style="margin-left:8px;">${renderStatusBadge(t.status || 'Open')}</span>
+        </div>
+        <div class="text-amber" style="font-size:14px;font-weight:bold;">₵${(t.prize_pool || 0).toLocaleString()}</div>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:6px;font-size:10px;color:var(--fg-dim);">
+        <span>Round: ${t.current_round || 0}/${t.rounds || '?'}</span>
+        <span>Entrants: ${entrants}</span>
+      </div>
+    </div>`;
   });
 
-  html += '</tbody></table>';
   listEl.innerHTML = html;
 }
 
@@ -8335,30 +8826,31 @@ async function viewTournament(tourneyId) {
 
     let html = `<h3>🏆 ${escHtml(name)} ${renderStatusBadge(t.status || 'Open')}</h3>
       <div style="font-size:12px;margin:8px 0;">
-        <span class="text-dim">Track:</span> ${escHtml(t.track_type || '?')} |
+        <span class="text-dim">Track:</span> ${renderTrackBadge(t.track_type)} |
         <span class="text-dim">Rounds:</span> ${t.current_round || 0}/${t.rounds || '?'} |
         <span class="text-dim">Prize Pool:</span> <span class="text-amber">₵${(t.prize_pool || 0).toLocaleString()}</span> |
         <span class="text-dim">Entry Fee:</span> ₵${(t.entry_fee || 0).toLocaleString()}
       </div>`;
 
-    // Standings table
+    // Standings
     if (standings.length > 0) {
       html += `<h3>STANDINGS</h3>
-        <table class="term-table"><thead><tr>
-          <th>RANK</th><th>HORSE</th><th>POINTS</th><th>RACES</th><th>BEST PLACE</th>
-        </tr></thead><tbody>`;
+        <div class="tournament-standings">`;
 
       const sorted = [...standings].sort((a, b) => (b.points || 0) - (a.points || 0));
       sorted.forEach((s, i) => {
-        html += `<tr>
-          <td>${i + 1}</td>
-          <td><a href="#horse/${s.horse_id}">${escHtml(s.horse_name)}</a></td>
-          <td class="text-amber">${s.points || 0}</td>
-          <td>${s.races_run || 0}</td>
-          <td>${s.best_place || '—'}</td>
-        </tr>`;
+        const rank = i + 1;
+        const rankCls = rank <= 3 ? `rank-${rank}` : '';
+        const medal = rank === 1 ? '🏆' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `#${rank}`;
+        html += `<div class="tournament-standing-row ${rankCls}">
+          <span style="min-width:40px;font-weight:bold;">${medal}</span>
+          <span style="flex:1;"><a href="#horse/${s.horse_id}">${escHtml(s.horse_name)}</a></span>
+          <span class="standing-points">${s.points || 0} pts</span>
+          <span class="text-dim" style="min-width:60px;">Races: ${s.races_run || 0}</span>
+          <span class="text-dim" style="min-width:60px;">Best: ${s.best_place || '—'}</span>
+        </div>`;
       });
-      html += '</tbody></table>';
+      html += '</div>';
     }
 
     // Registration form (if open)
@@ -8753,13 +9245,13 @@ function renderStableLeaderboardData(entries) {
   const sortH = (col) => `onclick="window.SU.sortLeaderboard('${col}')"`;
   const activeClass = (col) => leaderboardSort === col ? ' sortable sort-active' : ' sortable';
 
-  let html = `<table class="term-table"><thead><tr>
-    <th>#</th>
-    <th class="${activeClass('name')}" ${sortH('name')}>STABLE</th>
-    <th class="${activeClass('elo')}" ${sortH('elo')}>ELO</th>
-    <th class="${activeClass('wins')}" ${sortH('wins')}>W/L</th>
-    <th class="${activeClass('winpct')}" ${sortH('winpct')}>WIN%</th>
-    <th class="${activeClass('earnings')}" ${sortH('earnings')}>EARNINGS</th>
+  let html = `<table class="leaderboard-table"><thead><tr>
+    <th class="rank-cell">#</th>
+    <th class="${activeClass('name')}" ${sortH('name')} style="cursor:pointer;">STABLE</th>
+    <th class="${activeClass('elo')}" ${sortH('elo')} style="cursor:pointer;">ELO</th>
+    <th class="${activeClass('wins')}" ${sortH('wins')} style="cursor:pointer;">W/L</th>
+    <th class="${activeClass('winpct')}" ${sortH('winpct')} style="cursor:pointer;">WIN%</th>
+    <th class="${activeClass('earnings')}" ${sortH('earnings')} style="cursor:pointer;">EARNINGS</th>
     <th>BEST HORSE</th>
     <th>STREAK</th>
   </tr></thead><tbody>`;
@@ -8775,14 +9267,16 @@ function renderStableLeaderboardData(entries) {
       ? `<span class="${rank === 1 ? 'result-place gold' : rank === 2 ? 'result-place silver' : 'result-place bronze'}">${rank}</span>`
       : rank;
 
-    html += `<tr>
-      <td>${rankDisplay}</td>
+    const trCls = rank <= 3 ? ' class="top-3"' : '';
+
+    html += `<tr${trCls}>
+      <td class="rank-cell">${rankDisplay}</td>
       <td>${escHtml(s.name || s.stable_name || '?')}</td>
-      <td style="font-weight:bold">${Math.round(s.elo || s.max_elo || 1200)}</td>
+      <td class="elo-cell">${Math.round(s.elo || s.max_elo || 1200)}</td>
       <td>${s.wins || 0}/${s.losses || 0}</td>
-      <td class="text-amber">${winPct}%</td>
-      <td class="text-dim">₵${(s.earnings || s.total_earnings || 0).toLocaleString()}</td>
-      <td class="text-dim">${escHtml(s.bestHorse || s.best_horse || '—')}</td>
+      <td style="color:var(--amber);">${winPct}%</td>
+      <td style="color:var(--fg-dim);">₵${(s.earnings || s.total_earnings || 0).toLocaleString()}</td>
+      <td style="color:var(--fg-dim);">${escHtml(s.bestHorse || s.best_horse || '—')}</td>
       <td>${streakStr}</td>
     </tr>`;
   });
@@ -8830,31 +9324,31 @@ async function loadHorseLeaderboard() {
 
 function renderHorseLeaderboardData(entries) {
   const tableEl = $('#leaderboard-table');
-  let html = `<table class="term-table"><thead><tr>
-    <th>#</th><th>HORSE</th><th>ELO</th><th>W/L/R</th><th>WIN%</th><th>STABLE</th><th>GEN</th><th>TRAITS</th>
+  let html = `<table class="leaderboard-table"><thead><tr>
+    <th class="rank-cell">#</th><th>HORSE</th><th>ELO</th><th>W/L/R</th><th>WIN%</th><th>STABLE</th><th>GEN</th><th>TRAITS</th>
   </tr></thead><tbody>`;
 
   entries.forEach((h, i) => {
     const rank = i + 1;
     const winPct = (h.races || h.total_races || 0) > 0
       ? ((h.wins / (h.races || h.total_races)) * 100).toFixed(1) : '0.0';
-    let cls = '';
-    if (h.retired) cls = ' class="retired"';
-    else if (h.is_legendary) cls = ' class="legendary"';
+    let cls = rank <= 3 ? 'top-3' : '';
+    if (h.retired) cls += ' retired';
+    else if (h.is_legendary) cls += ' legendary';
 
     const rankDisplay = rank <= 3
       ? `<span class="${rank === 1 ? 'result-place gold' : rank === 2 ? 'result-place silver' : 'result-place bronze'}">${rank}</span>`
       : rank;
 
-    html += `<tr${cls}>
-      <td>${rankDisplay}</td>
+    html += `<tr class="${cls.trim()}">
+      <td class="rank-cell">${rankDisplay}</td>
       <td><a href="#horse/${h.id}">${h.is_legendary ? '★ ' : ''}${escHtml(h.name)}</a></td>
-      <td style="font-weight:bold">${Math.round(h.elo || 1200)}</td>
+      <td class="elo-cell">${Math.round(h.elo || 1200)}</td>
       <td>${h.wins || 0}/${h.losses || 0}/${h.races || h.total_races || 0}</td>
-      <td class="text-amber">${winPct}%</td>
-      <td class="text-dim">${escHtml(h.stable_name || '—')}</td>
-      <td class="text-dim">G${h.generation || 0}</td>
-      <td class="text-dim">${(h.traits || []).length}</td>
+      <td style="color:var(--amber);">${winPct}%</td>
+      <td style="color:var(--fg-dim);">${escHtml(h.stable_name || '—')}</td>
+      <td style="color:var(--fg-dim);">G${h.generation || 0}</td>
+      <td style="color:var(--fg-dim);">${(h.traits || []).length}</td>
     </tr>`;
   });
 

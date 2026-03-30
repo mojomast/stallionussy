@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,26 +29,6 @@ const (
 	DistanceFrostussy   = 1200
 	DistanceHauntedussy = 666
 )
-
-// ---------------------------------------------------------------------------
-// RaceConfig
-// ---------------------------------------------------------------------------
-
-// RaceConfig holds the parameters that define how a race is set up.
-type RaceConfig struct {
-	TrackType    models.TrackType
-	Distance     int           // auto-populated from TrackType if zero
-	TickInterval time.Duration // default 100ms game-time per tick
-}
-
-// DefaultConfig returns a RaceConfig with sensible defaults for the given track.
-func DefaultConfig(trackType models.TrackType) RaceConfig {
-	return RaceConfig{
-		TrackType:    trackType,
-		Distance:     models.TrackDistance(trackType),
-		TickInterval: 100 * time.Millisecond,
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Weather modifiers — applied to simulation parameters per-weather condition
@@ -71,9 +52,9 @@ func weatherModifiers(w models.Weather) weatherMods {
 	case models.WeatherFoggy:
 		return weatherMods{speedMod: 0.90, fatigueMod: 1.0, chaosMod: 1.5, panicMod: 1.2}
 	case models.WeatherScorching:
-		return weatherMods{speedMod: 0.92, fatigueMod: 1.5, chaosMod: 0.8, panicMod: 0.8}
+		return weatherMods{speedMod: 0.92, fatigueMod: 1.5, chaosMod: 1.2, panicMod: 1.1}
 	case models.WeatherHaunted:
-		return weatherMods{speedMod: 1.0, fatigueMod: 0.8, chaosMod: 3.0, panicMod: 3.0}
+		return weatherMods{speedMod: 1.0, fatigueMod: 1.15, chaosMod: 3.0, panicMod: 3.0}
 	default: // WeatherClear and any unknown
 		return weatherMods{speedMod: 1.0, fatigueMod: 1.0, chaosMod: 1.0, panicMod: 1.0}
 	}
@@ -181,6 +162,8 @@ func CalcBaseSpeed(horse *models.Horse, trackType models.TrackType) float64 {
 	if fitness > 1.0 {
 		fitness = 1.0
 	}
+	// Floor: a horse with zero fitness should still move (slowly).
+	fitness = max(fitness, 0.1)
 
 	return speedScale * fitness * geneticFactor
 }
@@ -391,12 +374,10 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			}
 
 			// ------ Apply fatigue_resist trait ------
-			// BUG FIX: fatigue_resist now provides a 50% fatigue reduction
-			// instead of complete immunity. The old logic compared fatigue
-			// (a tiny per-tick value) against 0.8 which was almost always
-			// true, granting permanent zero fatigue.
+			// fatigue_resist provides a 50% fatigue reduction in the first 80%
+			// of the race. In the final 20%, the horse's resistance fades.
 			for _, trait := range horse.Traits {
-				if trait.Effect == "fatigue_resist" && fatigue < 0.8*distance {
+				if trait.Effect == "fatigue_resist" && entry.Position < 0.8*distance {
 					fatigue *= 0.5 // 50% fatigue reduction, not full immunity
 					break
 				}
@@ -418,8 +399,10 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 				chaosSigma = 0.3 // N(0, 0.3)
 			}
 
-			// Apply weather chaos modifier.
-			chaosSigma *= wMods.chaosMod
+			// Apply weather chaos modifier (unless immune).
+			if !isWeatherImmune {
+				chaosSigma *= wMods.chaosMod
+			}
 
 			// ------ Apply chaos_multiplier trait ------
 			for _, trait := range horse.Traits {
@@ -459,7 +442,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			}
 
 			// ------ Event tracking ------
-			eventText := ""
+			var eventTexts []string
 
 			// ------ Event: PANIC (TMP-dependent, modified by weather) ------
 			panicChance := 0.0
@@ -481,8 +464,10 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 				}
 			}
 
-			// Apply weather panic modifier.
-			panicChance *= wMods.panicMod
+			// Apply weather panic modifier (unless immune).
+			if !isWeatherImmune {
+				panicChance *= wMods.panicMod
+			}
 
 			// Apply panic_resist traits.
 			for _, trait := range horse.Traits {
@@ -501,7 +486,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 
 			if panicChance > 0 && rng.Float64() < panicChance {
 				deltaP = 0
-				eventText = "PANIC"
+				eventTexts = append(eventTexts, "PANIC")
 			}
 
 			// ------ Event: E-008 ANOMALOUS ACCELERATION (LotNumber == 6) ------
@@ -512,18 +497,18 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			}
 			if horse.LotNumber == 6 && rng.Float64() < e008Chance {
 				deltaP *= 2
-				eventText = "ANOMALOUS ACCELERATION"
+				eventTexts = append(eventTexts, "ANOMALOUS ACCELERATION")
 			}
 
 			// ------ Hauntedussy special: GHOST SIGHTING (2% per tick) ------
 			if trackType == models.TrackHauntedussy && rng.Float64() < 0.02 {
 				deltaP *= 0.5 // horse loses 50% speed for this tick
-				eventText = "GHOST SIGHTING"
+				eventTexts = append(eventTexts, "GHOST SIGHTING")
 			}
 
 			// ------ Hauntedussy global: THE LIGHTS FLICKER (already applied above via chaos) ------
-			if lightsFlicker && eventText == "" {
-				eventText = "THE LIGHTS FLICKER"
+			if lightsFlicker {
+				eventTexts = append(eventTexts, "THE LIGHTS FLICKER")
 			}
 
 			// ------ Trait effects (applied after base deltaP calculation) ------
@@ -602,14 +587,14 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 					deltaP *= trait.Magnitude
 					// 1% chance of generating ANOMALOUS RESONANCE event.
 					if rng.Float64() < 0.01 {
-						eventText = "ANOMALOUS RESONANCE"
+						eventTexts = append(eventTexts, "ANOMALOUS RESONANCE")
 					}
 
 				case "anomalous_burst":
 					// 0.1% chance per tick of massive burst.
 					if rng.Float64() < 0.001 {
 						deltaP *= trait.Magnitude
-						eventText = "THE YOGURT ERUPTS"
+						eventTexts = append(eventTexts, "THE YOGURT ERUPTS")
 					}
 
 				case "reality_warp":
@@ -618,7 +603,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 						// Teleport to random position between current and finish.
 						newPos := entry.Position + rng.Float64()*(distance-entry.Position)
 						entry.Position = newPos
-						eventText = "REALITY FRACTURE"
+						eventTexts = append(eventTexts, "REALITY FRACTURE")
 					}
 
 				// elo_boost and earnings_boost are handled outside the race engine
@@ -642,9 +627,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			if entry.Position > 0.7*distance && deltaP < baseSpeed*0.5 {
 				if rng.Float64() < 0.01 {
 					deltaP *= 1.5
-					if eventText == "" {
-						eventText = "SECOND WIND"
-					}
+					eventTexts = append(eventTexts, "SECOND WIND")
 				}
 			}
 
@@ -653,9 +636,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// latte on the track. Dr. Mittens left it there. Allegedly.
 			if intExpr == "AA" && rng.Float64() < 0.005 {
 				deltaP *= 1.3
-				if eventText == "" {
-					eventText = "CAFFEINE KICK"
-				}
+				eventTexts = append(eventTexts, "CAFFEINE KICK")
 			}
 
 			// ------ Event: FROSTUSSY SLIP ------
@@ -664,9 +645,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			if trackType == models.TrackFrostussy && szeExpr == "BB" {
 				if rng.Float64() < 0.03 {
 					deltaP *= 0.3
-					if eventText == "" {
-						eventText = "FROSTUSSY SLIP"
-					}
+					eventTexts = append(eventTexts, "FROSTUSSY SLIP")
 				}
 			}
 
@@ -675,18 +654,14 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// deltaP *= 0.6 — the lightning terrifies everyone.
 			if thunderStrike {
 				deltaP *= 0.6
-				if eventText == "" {
-					eventText = "THUNDERUSSY LIGHTNING STRIKE"
-				}
+				eventTexts = append(eventTexts, "THUNDERUSSY LIGHTNING STRIKE")
 			}
 
 			// ------ Event: MUDUSSY SPLATTER ------
 			// Mudussy track, 2% per tick. Face full of mud. Glorious.
 			if trackType == models.TrackMudussy && rng.Float64() < 0.02 {
 				deltaP *= 0.7
-				if eventText == "" {
-					eventText = "MUDUSSY SPLATTER"
-				}
+				eventTexts = append(eventTexts, "MUDUSSY SPLATTER")
 			}
 
 			// ------ Event: CROWD SURGE ------
@@ -694,18 +669,18 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// The crowd's energy is PALPABLE. It propels the leader forward.
 			if entry.Position > 0.8*distance {
 				// Determine if this horse is currently in 1st (highest position).
+				// Include finished horses — a finished horse at position >= distance
+				// is still ahead and should not be ignored.
 				isLeader := true
 				for j := range race.Entries {
-					if j != i && !race.Entries[j].Finished && race.Entries[j].Position > entry.Position {
+					if j != i && race.Entries[j].Position > entry.Position {
 						isLeader = false
 						break
 					}
 				}
 				if isLeader && rng.Float64() < 0.005 {
 					deltaP *= 1.2
-					if eventText == "" {
-						eventText = "CROWD SURGE"
-					}
+					eventTexts = append(eventTexts, "CROWD SURGE")
 				}
 			}
 
@@ -714,9 +689,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// The horse STOPS. Dead. Just stares. He insists he's not here.
 			if rng.Float64() < 0.001 {
 				deltaP = 0
-				if eventText == "" {
-					eventText = "DERULO SIGHTING"
-				}
+				eventTexts = append(eventTexts, "DERULO SIGHTING")
 			}
 
 			// ------ Event: MITTENS NAP ------
@@ -724,9 +697,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// horse's back and fallen asleep. The horse dare not disturb her.
 			if rng.Float64() < 0.002 {
 				deltaP *= 0.4
-				if eventText == "" {
-					eventText = "MITTENS NAP"
-				}
+				eventTexts = append(eventTexts, "MITTENS NAP")
 			}
 
 			// ------ Event: DIVINE PACKET ------
@@ -734,9 +705,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// sends a divine network packet. The blessing finds its target.
 			if trackType == models.TrackThunderussy && rng.Float64() < 0.003 {
 				deltaP *= 1.4
-				if eventText == "" {
-					eventText = "DIVINE PACKET"
-				}
+				eventTexts = append(eventTexts, "DIVINE PACKET")
 			}
 
 			// ------ Event: GEOFFRUSSY OPTIMIZATION ------
@@ -745,9 +714,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			if (intExpr == "AA" || intExpr == "AB") && entry.Position > 0.8*distance {
 				if rng.Float64() < 0.003 {
 					deltaP *= 1.25
-					if eventText == "" {
-						eventText = "GEOFFRUSSY OPTIMIZATION"
-					}
+					eventTexts = append(eventTexts, "GEOFFRUSSY OPTIMIZATION")
 				}
 			}
 
@@ -760,6 +727,8 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			entry.Position += deltaP
 
 			// ------ Record tick snapshot ------
+			// Join multiple events with " | " so no events are silently lost.
+			eventText := strings.Join(eventTexts, " | ")
 			entry.TickLog = append(entry.TickLog, models.TickEvent{
 				Tick:     tick,
 				Position: entry.Position,
@@ -896,9 +865,19 @@ type NarrativeLine struct {
 
 // GenerateRaceNarrativeIndexed produces narrative lines tagged by tick,
 // enabling real-time interleaving with the tick-by-tick race replay.
-func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []NarrativeLine {
+// An optional seeded *rand.Rand can be provided for deterministic output;
+// if nil, a new random RNG is created.
+func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather, rng ...*rand.Rand) []NarrativeLine {
 	if len(race.Entries) == 0 {
 		return nil
+	}
+
+	// Use provided RNG or create a new random one.
+	var r *rand.Rand
+	if len(rng) > 0 && rng[0] != nil {
+		r = rng[0]
+	} else {
+		r = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	}
 
 	var lines []NarrativeLine
@@ -1162,149 +1141,156 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 				return true
 			}
 
-			switch ref.event {
-			case "PANIC":
-				if canReport("PANIC") {
-					msgs := []string{
-						fmt.Sprintf("😱 [%.1fs] %s: PANIC! They've completely lost it! Dead stop on the track!", ts, name),
-						fmt.Sprintf("🫣 [%.1fs] OH NO! %s has SPOOKED! They're frozen in place! The crowd gasps!", ts, name),
-						fmt.Sprintf("💥 [%.1fs] %s: TOTAL MELTDOWN! Legs locked, eyes wide — that horse is NOT moving!", ts, name),
-						fmt.Sprintf("😱 [%.1fs] %s just remembered its browser history isn't deleted! FULL STOP!", ts, name),
-						fmt.Sprintf("🫣 [%.1fs] Someone played a Derulo song near the track — %s has entered a catatonic state!", ts, name),
-						fmt.Sprintf("💥 [%.1fs] %s heard a B.U.R.P. siren and FROZE! Containment trauma is REAL!", ts, name),
+			// Split compound events (joined by " | ") and process each one.
+			var events []string
+			if ref.event != "" {
+				events = strings.Split(ref.event, " | ")
+			}
+			for _, evt := range events {
+				switch evt {
+				case "PANIC":
+					if canReport("PANIC") {
+						msgs := []string{
+							fmt.Sprintf("😱 [%.1fs] %s: PANIC! They've completely lost it! Dead stop on the track!", ts, name),
+							fmt.Sprintf("🫣 [%.1fs] OH NO! %s has SPOOKED! They're frozen in place! The crowd gasps!", ts, name),
+							fmt.Sprintf("💥 [%.1fs] %s: TOTAL MELTDOWN! Legs locked, eyes wide — that horse is NOT moving!", ts, name),
+							fmt.Sprintf("😱 [%.1fs] %s just remembered its browser history isn't deleted! FULL STOP!", ts, name),
+							fmt.Sprintf("🫣 [%.1fs] Someone played a Derulo song near the track — %s has entered a catatonic state!", ts, name),
+							fmt.Sprintf("💥 [%.1fs] %s heard a B.U.R.P. siren and FROZE! Containment trauma is REAL!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["PANIC"]%len(msgs)], "event-panic")
 					}
-					add(t, msgs[eventCounts[i]["PANIC"]%len(msgs)], "event-panic")
-				}
-			case "ANOMALOUS ACCELERATION":
-				if canReport("ANOMALOUS ACCELERATION") {
-					msgs := []string{
-						fmt.Sprintf("🧪 [%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION! The yogurt REMEMBERS! %s rockets forward with impossible speed!", ts, name),
-						fmt.Sprintf("🧪 [%.1fs] %s: The yogurt containment field FLUCTUATES! E-008 sends its REGARDS! B.U.R.P. sirens blare from the observation deck!", ts, name),
+				case "ANOMALOUS ACCELERATION":
+					if canReport("ANOMALOUS ACCELERATION") {
+						msgs := []string{
+							fmt.Sprintf("🧪 [%.1fs] E-008's Chosen: ANOMALOUS ACCELERATION! The yogurt REMEMBERS! %s rockets forward with impossible speed!", ts, name),
+							fmt.Sprintf("🧪 [%.1fs] %s: The yogurt containment field FLUCTUATES! E-008 sends its REGARDS! B.U.R.P. sirens blare from the observation deck!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["ANOMALOUS ACCELERATION"]%len(msgs)], "event-e008")
 					}
-					add(t, msgs[eventCounts[i]["ANOMALOUS ACCELERATION"]%len(msgs)], "event-e008")
-				}
-			case "GHOST SIGHTING":
-				if canReport("GHOST SIGHTING") {
-					msgs := []string{
-						fmt.Sprintf("👻 [%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track! The horse RECOILS in terror!", ts, name),
-						fmt.Sprintf("👻 [%.1fs] %s sees something that ISN'T THERE! Or IS it?! B.U.R.P. agents are taking notes from the stands!", ts, name),
-						fmt.Sprintf("👻 [%.1fs] The ghost of a Victorian-era jockey appears before %s! It offers unsolicited form advice! The horse is NOT having it!", ts, name),
+				case "GHOST SIGHTING":
+					if canReport("GHOST SIGHTING") {
+						msgs := []string{
+							fmt.Sprintf("👻 [%.1fs] %s: GHOST SIGHTING! A spectral figure drifts across the track! The horse RECOILS in terror!", ts, name),
+							fmt.Sprintf("👻 [%.1fs] %s sees something that ISN'T THERE! Or IS it?! B.U.R.P. agents are taking notes from the stands!", ts, name),
+							fmt.Sprintf("👻 [%.1fs] The ghost of a Victorian-era jockey appears before %s! It offers unsolicited form advice! The horse is NOT having it!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["GHOST SIGHTING"]%len(msgs)], "event-ghost")
 					}
-					add(t, msgs[eventCounts[i]["GHOST SIGHTING"]%len(msgs)], "event-ghost")
-				}
-			case "THE LIGHTS FLICKER":
-				if canReportGlobal("THE LIGHTS FLICKER") {
-					add(t, fmt.Sprintf("⚫ [%.1fs] THE LIGHTS FLICKER — darkness pulses through the arena! Every horse shudders! The crowd SCREAMS!", ts), "event-ghost")
-				}
-			case "ANOMALOUS RESONANCE":
-				if canReport("ANOMALOUS RESONANCE") {
-					add(t, fmt.Sprintf("🌀 [%.1fs] %s: ANOMALOUS RESONANCE! The air hums with forbidden frequency! Reality bends around the horse!", ts, name), "event-e008")
-				}
-			case "THE YOGURT ERUPTS":
-				if canReport("THE YOGURT ERUPTS") {
-					add(t, fmt.Sprintf("🥛 [%.1fs] %s: THE YOGURT ERUPTS!! A geyser of sentient dairy launches the horse forward! E-008 CONTAINMENT BREACH!!", ts, name), "event-e008")
-				}
-			case "REALITY FRACTURE":
-				if canReport("REALITY FRACTURE") {
-					add(t, fmt.Sprintf("🌌 [%.1fs] %s: REALITY FRACTURE!! Space FOLDS — the horse BLINKS forward through a rip in spacetime! WHAT DID WE JUST WITNESS?!", ts, name), "event-e008")
-				}
+				case "THE LIGHTS FLICKER":
+					if canReportGlobal("THE LIGHTS FLICKER") {
+						add(t, fmt.Sprintf("⚫ [%.1fs] THE LIGHTS FLICKER — darkness pulses through the arena! Every horse shudders! The crowd SCREAMS!", ts), "event-ghost")
+					}
+				case "ANOMALOUS RESONANCE":
+					if canReport("ANOMALOUS RESONANCE") {
+						add(t, fmt.Sprintf("🌀 [%.1fs] %s: ANOMALOUS RESONANCE! The air hums with forbidden frequency! Reality bends around the horse!", ts, name), "event-e008")
+					}
+				case "THE YOGURT ERUPTS":
+					if canReport("THE YOGURT ERUPTS") {
+						add(t, fmt.Sprintf("🥛 [%.1fs] %s: THE YOGURT ERUPTS!! A geyser of sentient dairy launches the horse forward! E-008 CONTAINMENT BREACH!!", ts, name), "event-e008")
+					}
+				case "REALITY FRACTURE":
+					if canReport("REALITY FRACTURE") {
+						add(t, fmt.Sprintf("🌌 [%.1fs] %s: REALITY FRACTURE!! Space FOLDS — the horse BLINKS forward through a rip in spacetime! WHAT DID WE JUST WITNESS?!", ts, name), "event-e008")
+					}
 
-			case "SECOND WIND":
-				if canReport("SECOND WIND") {
-					msgs := []string{
-						fmt.Sprintf("💨 [%.1fs] %s: SECOND WIND! From the depths of exhaustion — a SURGE! The crowd is on their FEET!", ts, name),
-						fmt.Sprintf("🔥 [%.1fs] %s REFUSES TO DIE! Somehow they've found another gear! Where was THIS energy hiding?!", ts, name),
-						fmt.Sprintf("💨 [%.1fs] This horse runs like it owes the yogurt money! %s EXPLODES from nowhere!", ts, name),
-						fmt.Sprintf("🔥 [%.1fs] %s just channeled pure Grindussy energy! The comeback is ON!", ts, name),
+				case "SECOND WIND":
+					if canReport("SECOND WIND") {
+						msgs := []string{
+							fmt.Sprintf("💨 [%.1fs] %s: SECOND WIND! From the depths of exhaustion — a SURGE! The crowd is on their FEET!", ts, name),
+							fmt.Sprintf("🔥 [%.1fs] %s REFUSES TO DIE! Somehow they've found another gear! Where was THIS energy hiding?!", ts, name),
+							fmt.Sprintf("💨 [%.1fs] This horse runs like it owes the yogurt money! %s EXPLODES from nowhere!", ts, name),
+							fmt.Sprintf("🔥 [%.1fs] %s just channeled pure Grindussy energy! The comeback is ON!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["SECOND WIND"]%len(msgs)], "event-burst")
 					}
-					add(t, msgs[eventCounts[i]["SECOND WIND"]%len(msgs)], "event-burst")
-				}
 
-			case "CAFFEINE KICK":
-				if canReport("CAFFEINE KICK") {
-					msgs := []string{
-						fmt.Sprintf("☕ [%.1fs] %s: CAFFEINE KICK! They found a discarded oat milk latte on the track! INSTANT ENERGY! Dr. Mittens left it there. Allegedly.", ts, name),
-						fmt.Sprintf("☕ [%.1fs] %s just inhaled someone's abandoned cold brew! Their eyes are ENORMOUS! They're VIBRATING!", ts, name),
-						fmt.Sprintf("☕ [%.1fs] %s found a triple-shot espresso from the Oat Milk Dispensary! They're running at 2x speed and TWITCHING!", ts, name),
+				case "CAFFEINE KICK":
+					if canReport("CAFFEINE KICK") {
+						msgs := []string{
+							fmt.Sprintf("☕ [%.1fs] %s: CAFFEINE KICK! They found a discarded oat milk latte on the track! INSTANT ENERGY! Dr. Mittens left it there. Allegedly.", ts, name),
+							fmt.Sprintf("☕ [%.1fs] %s just inhaled someone's abandoned cold brew! Their eyes are ENORMOUS! They're VIBRATING!", ts, name),
+							fmt.Sprintf("☕ [%.1fs] %s found a triple-shot espresso from the Oat Milk Dispensary! They're running at 2x speed and TWITCHING!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["CAFFEINE KICK"]%len(msgs)], "event-burst")
 					}
-					add(t, msgs[eventCounts[i]["CAFFEINE KICK"]%len(msgs)], "event-burst")
-				}
 
-			case "FROSTUSSY SLIP":
-				if canReport("FROSTUSSY SLIP") {
-					msgs := []string{
-						fmt.Sprintf("🧊 [%.1fs] %s: FROSTUSSY SLIP! All four hooves go out from under them! They're SKATING not racing!", ts, name),
-						fmt.Sprintf("❄️ [%.1fs] %s hits a patch of black ice and goes FULL BAMBI! Legs everywhere! The crowd winces!", ts, name),
-						fmt.Sprintf("🧊 [%.1fs] %s's hooves BETRAY them on the ice! That lean build has ZERO grip! They're pinwheeling!", ts, name),
+				case "FROSTUSSY SLIP":
+					if canReport("FROSTUSSY SLIP") {
+						msgs := []string{
+							fmt.Sprintf("🧊 [%.1fs] %s: FROSTUSSY SLIP! All four hooves go out from under them! They're SKATING not racing!", ts, name),
+							fmt.Sprintf("❄️ [%.1fs] %s hits a patch of black ice and goes FULL BAMBI! Legs everywhere! The crowd winces!", ts, name),
+							fmt.Sprintf("🧊 [%.1fs] %s's hooves BETRAY them on the ice! That lean build has ZERO grip! They're pinwheeling!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["FROSTUSSY SLIP"]%len(msgs)], "event-weather")
 					}
-					add(t, msgs[eventCounts[i]["FROSTUSSY SLIP"]%len(msgs)], "event-weather")
-				}
 
-			case "THUNDERUSSY LIGHTNING STRIKE":
-				if canReportGlobal("THUNDERUSSY LIGHTNING STRIKE") {
-					add(t, fmt.Sprintf("⚡ [%.1fs] THUNDERUSSY LIGHTNING STRIKE!! A bolt from the heavens SLAMS the track! Every horse RECOILS! Pastor Router's grid trembles! ALL horses lose speed!", ts), "event-weather")
-				}
-
-			case "MUDUSSY SPLATTER":
-				if canReport("MUDUSSY SPLATTER") {
-					msgs := []string{
-						fmt.Sprintf("🟤 [%.1fs] %s: MUDUSSY SPLATTER! A wall of mud EXPLODES into their face! They can't see! They can't BREATHE!", ts, name),
-						fmt.Sprintf("🟤 [%.1fs] %s just ate a TIDAL WAVE of Mudussy sludge! That horse is now 40%% mud by volume!", ts, name),
-						fmt.Sprintf("💩 [%.1fs] %s gets OBLITERATED by a mud geyser from the track! The crowd is ALSO covered! Nobody is happy!", ts, name),
+				case "THUNDERUSSY LIGHTNING STRIKE":
+					if canReportGlobal("THUNDERUSSY LIGHTNING STRIKE") {
+						add(t, fmt.Sprintf("⚡ [%.1fs] THUNDERUSSY LIGHTNING STRIKE!! A bolt from the heavens SLAMS the track! Every horse RECOILS! Pastor Router's grid trembles! ALL horses lose speed!", ts), "event-weather")
 					}
-					add(t, msgs[eventCounts[i]["MUDUSSY SPLATTER"]%len(msgs)], "event-weather")
-				}
 
-			case "CROWD SURGE":
-				if canReport("CROWD SURGE") {
-					msgs := []string{
-						fmt.Sprintf("📣 [%.1fs] %s: CROWD SURGE! The fans ROAR! The energy is ELECTRIC! The leader feeds off the adulation!", ts, name),
-						fmt.Sprintf("🎉 [%.1fs] The crowd is going ABSOLUTELY FERAL for %s! The noise is DEAFENING! It's propelling them forward!", ts, name),
-						fmt.Sprintf("📣 [%.1fs] Dr. Mittens would approve — a purrfect run! %s is riding the crowd's energy to GLORY!", ts, name),
+				case "MUDUSSY SPLATTER":
+					if canReport("MUDUSSY SPLATTER") {
+						msgs := []string{
+							fmt.Sprintf("🟤 [%.1fs] %s: MUDUSSY SPLATTER! A wall of mud EXPLODES into their face! They can't see! They can't BREATHE!", ts, name),
+							fmt.Sprintf("🟤 [%.1fs] %s just ate a TIDAL WAVE of Mudussy sludge! That horse is now 40%% mud by volume!", ts, name),
+							fmt.Sprintf("💩 [%.1fs] %s gets OBLITERATED by a mud geyser from the track! The crowd is ALSO covered! Nobody is happy!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["MUDUSSY SPLATTER"]%len(msgs)], "event-weather")
 					}
-					add(t, msgs[eventCounts[i]["CROWD SURGE"]%len(msgs)], "event-burst")
-				}
 
-			case "DERULO SIGHTING":
-				if canReport("DERULO SIGHTING") {
-					msgs := []string{
-						fmt.Sprintf("🎤 [%.1fs] %s: DERULO SIGHTING! Jason Derulo is in the crowd! The horse STOPS DEAD to stare! He insists he's not here! \"Jason Derulo!\" he whispers, unable to help himself.", ts, name),
-						fmt.Sprintf("🎤 [%.1fs] %s has FROZEN! Is that... JASON DERULO?! In the VIP box?! He's wearing a disguise but it's CLEARLY him! The horse is MESMERIZED!", ts, name),
-						fmt.Sprintf("🎤 [%.1fs] %s: Jason Derulo just dropped his phone from the stands! The horse STOPS to return it! Derulo is MORTIFIED! 'I'm not even supposed to BE here!'", ts, name),
-						fmt.Sprintf("🎤 [%.1fs] DERULO ALERT! %s hears 'Whatcha Say' from the PA system and LOCKS UP! Someone in the sound booth is getting fired!", ts, name),
+				case "CROWD SURGE":
+					if canReport("CROWD SURGE") {
+						msgs := []string{
+							fmt.Sprintf("📣 [%.1fs] %s: CROWD SURGE! The fans ROAR! The energy is ELECTRIC! The leader feeds off the adulation!", ts, name),
+							fmt.Sprintf("🎉 [%.1fs] The crowd is going ABSOLUTELY FERAL for %s! The noise is DEAFENING! It's propelling them forward!", ts, name),
+							fmt.Sprintf("📣 [%.1fs] Dr. Mittens would approve — a purrfect run! %s is riding the crowd's energy to GLORY!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["CROWD SURGE"]%len(msgs)], "event-burst")
 					}
-					add(t, msgs[eventCounts[i]["DERULO SIGHTING"]%len(msgs)], "event-panic")
-				}
 
-			case "MITTENS NAP":
-				if canReport("MITTENS NAP") {
-					msgs := []string{
-						fmt.Sprintf("😺 [%.1fs] %s: MITTENS NAP! Dr. Mittens has materialized on the horse's back and FALLEN ASLEEP! The horse dare not disturb her! Speed PLUMMETS out of respect!", ts, name),
-						fmt.Sprintf("🐱 [%.1fs] A soft *poof* and Dr. Mittens APPEARS on %s's hindquarters, curling into a perfect circle! The horse slows to a reverent tippy-tap! You do NOT wake the doctor!", ts, name),
-						fmt.Sprintf("😺 [%.1fs] Dr. Mittens would approve — a purrfect nap spot! She's chosen %s as her bed and that is now LEGALLY BINDING! The horse creeps forward at minimum speed!", ts, name),
+				case "DERULO SIGHTING":
+					if canReport("DERULO SIGHTING") {
+						msgs := []string{
+							fmt.Sprintf("🎤 [%.1fs] %s: DERULO SIGHTING! Jason Derulo is in the crowd! The horse STOPS DEAD to stare! He insists he's not here! \"Jason Derulo!\" he whispers, unable to help himself.", ts, name),
+							fmt.Sprintf("🎤 [%.1fs] %s has FROZEN! Is that... JASON DERULO?! In the VIP box?! He's wearing a disguise but it's CLEARLY him! The horse is MESMERIZED!", ts, name),
+							fmt.Sprintf("🎤 [%.1fs] %s: Jason Derulo just dropped his phone from the stands! The horse STOPS to return it! Derulo is MORTIFIED! 'I'm not even supposed to BE here!'", ts, name),
+							fmt.Sprintf("🎤 [%.1fs] DERULO ALERT! %s hears 'Whatcha Say' from the PA system and LOCKS UP! Someone in the sound booth is getting fired!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["DERULO SIGHTING"]%len(msgs)], "event-panic")
 					}
-					add(t, msgs[eventCounts[i]["MITTENS NAP"]%len(msgs)], "event-ghost")
-				}
 
-			case "DIVINE PACKET":
-				if canReport("DIVINE PACKET") {
-					msgs := []string{
-						fmt.Sprintf("📡 [%.1fs] %s: DIVINE PACKET! A golden beam of pure 802.11ax descends from the clouds! Pastor Router McEthernet III has sent his BLESSING! Speed BOOST!", ts, name),
-						fmt.Sprintf("🙏 [%.1fs] %s receives a DIVINE PACKET from Pastor Router! The horse's latency drops to ZERO! They're running on GOD'S OWN BANDWIDTH!", ts, name),
-						fmt.Sprintf("📡 [%.1fs] Pastor Router blesses this performance from the commentary booth! %s's TCP handshake with victory is COMPLETE! Zero packet loss!", ts, name),
+				case "MITTENS NAP":
+					if canReport("MITTENS NAP") {
+						msgs := []string{
+							fmt.Sprintf("😺 [%.1fs] %s: MITTENS NAP! Dr. Mittens has materialized on the horse's back and FALLEN ASLEEP! The horse dare not disturb her! Speed PLUMMETS out of respect!", ts, name),
+							fmt.Sprintf("🐱 [%.1fs] A soft *poof* and Dr. Mittens APPEARS on %s's hindquarters, curling into a perfect circle! The horse slows to a reverent tippy-tap! You do NOT wake the doctor!", ts, name),
+							fmt.Sprintf("😺 [%.1fs] Dr. Mittens would approve — a purrfect nap spot! She's chosen %s as her bed and that is now LEGALLY BINDING! The horse creeps forward at minimum speed!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["MITTENS NAP"]%len(msgs)], "event-ghost")
 					}
-					add(t, msgs[eventCounts[i]["DIVINE PACKET"]%len(msgs)], "event-burst")
-				}
 
-			case "GEOFFRUSSY OPTIMIZATION":
-				if canReport("GEOFFRUSSY OPTIMIZATION") {
-					msgs := []string{
-						fmt.Sprintf("⚙️ [%.1fs] %s: GEOFFRUSSY OPTIMIZATION! The Go orchestrator has optimized their race line! Goroutines DEPLOYED! The path to the finish is CALCULATED!", ts, name),
-						fmt.Sprintf("🔧 [%.1fs] Geoffrussy's pipeline kicks in for %s! runtime.GOMAXPROCS set to MAXIMUM! The horse's route is now O(1) to the finish line!", ts, name),
-						fmt.Sprintf("⚙️ [%.1fs] Geoffrussy's pipeline just deployed a hotfix mid-race! %s's legs have been RECOMPILED with optimizations! -O3 galloping engaged!", ts, name),
-						fmt.Sprintf("🔧 [%.1fs] B.U.R.P. agents are monitoring %s closely... but Geoffrussy already pushed a patch! The horse's CI/CD pipeline is PRISTINE!", ts, name),
+				case "DIVINE PACKET":
+					if canReport("DIVINE PACKET") {
+						msgs := []string{
+							fmt.Sprintf("📡 [%.1fs] %s: DIVINE PACKET! A golden beam of pure 802.11ax descends from the clouds! Pastor Router McEthernet III has sent his BLESSING! Speed BOOST!", ts, name),
+							fmt.Sprintf("🙏 [%.1fs] %s receives a DIVINE PACKET from Pastor Router! The horse's latency drops to ZERO! They're running on GOD'S OWN BANDWIDTH!", ts, name),
+							fmt.Sprintf("📡 [%.1fs] Pastor Router blesses this performance from the commentary booth! %s's TCP handshake with victory is COMPLETE! Zero packet loss!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["DIVINE PACKET"]%len(msgs)], "event-burst")
 					}
-					add(t, msgs[eventCounts[i]["GEOFFRUSSY OPTIMIZATION"]%len(msgs)], "event-burst")
+
+				case "GEOFFRUSSY OPTIMIZATION":
+					if canReport("GEOFFRUSSY OPTIMIZATION") {
+						msgs := []string{
+							fmt.Sprintf("⚙️ [%.1fs] %s: GEOFFRUSSY OPTIMIZATION! The Go orchestrator has optimized their race line! Goroutines DEPLOYED! The path to the finish is CALCULATED!", ts, name),
+							fmt.Sprintf("🔧 [%.1fs] Geoffrussy's pipeline kicks in for %s! runtime.GOMAXPROCS set to MAXIMUM! The horse's route is now O(1) to the finish line!", ts, name),
+							fmt.Sprintf("⚙️ [%.1fs] Geoffrussy's pipeline just deployed a hotfix mid-race! %s's legs have been RECOMPILED with optimizations! -O3 galloping engaged!", ts, name),
+							fmt.Sprintf("🔧 [%.1fs] B.U.R.P. agents are monitoring %s closely... but Geoffrussy already pushed a patch! The horse's CI/CD pipeline is PRISTINE!", ts, name),
+						}
+						add(t, msgs[eventCounts[i]["GEOFFRUSSY OPTIMIZATION"]%len(msgs)], "event-burst")
+					}
 				}
 			}
 
@@ -1392,21 +1378,21 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 				" — 🏆 CHAMPION! The Ussyverse BOWS before this horse!",
 				" — 🏆 Pastor Router blesses this performance! Amen!",
 			}
-			flair = flairs[rand.IntN(len(flairs))]
+			flair = flairs[r.IntN(len(flairs))]
 		case 2:
 			flairs := []string{
 				" — 🥈 So close. The crowd weeps.",
 				" — 🥈 Almost had it. Jason Derulo sends sympathies (unwillingly).",
 				" — 🥈 Silver is just gold with commitment issues.",
 			}
-			flair = flairs[rand.IntN(len(flairs))]
+			flair = flairs[r.IntN(len(flairs))]
 		case 3:
 			flairs := []string{
 				" — 🥉 Podium secured. Respectable.",
 				" — 🥉 Bronze! B.U.R.P. has no complaints (for once).",
 				" — 🥉 Third place! The yogurt acknowledges your effort.",
 			}
-			flair = flairs[rand.IntN(len(flairs))]
+			flair = flairs[r.IntN(len(flairs))]
 		default:
 			flairs := []string{
 				" — Ran their heart out.",
@@ -1414,7 +1400,7 @@ func GenerateRaceNarrativeIndexed(race *models.Race, weather models.Weather) []N
 				" — Finished upright. That's more than some can say.",
 				" — The Sappho Scale rates this run: 'participated.'",
 			}
-			flair = flairs[rand.IntN(len(flairs))]
+			flair = flairs[r.IntN(len(flairs))]
 		}
 
 		add(maxTick+2, fmt.Sprintf("  %s: %s (%s)%s", placeStr, e.HorseName, timeStr, flair), "event-announcer")

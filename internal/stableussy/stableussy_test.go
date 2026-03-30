@@ -302,8 +302,11 @@ func TestListHorses(t *testing.T) {
 func TestListHorses_StableNotFound(t *testing.T) {
 	sm := NewStableManager()
 	horses := sm.ListHorses("nonexistent")
-	if horses != nil {
-		t.Errorf("expected nil for missing stable, got %v", horses)
+	if horses == nil {
+		t.Errorf("expected non-nil empty slice for missing stable, got nil")
+	}
+	if len(horses) != 0 {
+		t.Errorf("expected 0 horses for missing stable, got %d", len(horses))
 	}
 }
 

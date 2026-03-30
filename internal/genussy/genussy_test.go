@@ -1,6 +1,7 @@
 package genussy
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -47,10 +48,14 @@ func allAB() models.Genome {
 	return makeGenome(spec)
 }
 
+// testHorseCounter provides unique IDs for test horses.
+var testHorseCounter int
+
 // makeHorse wraps a genome in a minimal Horse struct suitable for Breed().
 func makeHorse(genome models.Genome, gen int) *models.Horse {
+	testHorseCounter++
 	return &models.Horse{
-		ID:         "test-horse",
+		ID:         fmt.Sprintf("test-horse-%d", testHorseCounter),
 		Name:       "Test Horse",
 		Genome:     genome,
 		Generation: gen,
@@ -694,11 +699,15 @@ func TestSortedGeneTypes_EmptyGenome(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBreed_IdenticalParents(t *testing.T) {
-	// Breed two identical all-AA parents.
+	// Breed two separate horses with identical all-AA genomes.
 	// Foal should always be all-AA (no mutation possible since MUT will be AA).
-	parent := makeHorse(allAA(), 0)
+	sire := makeHorse(allAA(), 0)
+	mare := makeHorse(allAA(), 0) // Different ID from sire due to counter
 	for i := 0; i < 100; i++ {
-		foal := Breed(parent, parent)
+		foal := Breed(sire, mare)
+		if foal == nil {
+			t.Fatal("Breed returned nil for valid parents")
+		}
 		for _, gt := range allGeneTypes {
 			gene := foal.Genome[gt]
 			if gene.AlleleA != models.AlleleA || gene.AlleleB != models.AlleleA {
@@ -710,15 +719,19 @@ func TestBreed_IdenticalParents(t *testing.T) {
 }
 
 func TestBreed_IdenticalBBParents(t *testing.T) {
-	// Breed two identical all-BB parents.
+	// Breed two separate horses with identical all-BB genomes.
 	// Foal should always be all-BB.
 	// Note: MUT will be BB so mutation can trigger (1% chance),
 	// but we accept that rare mutation might flip one allele.
-	parent := makeHorse(allBB(), 0)
+	sire := makeHorse(allBB(), 0)
+	mare := makeHorse(allBB(), 0) // Different ID from sire due to counter
 
 	mutationSeen := false
 	for i := 0; i < 500; i++ {
-		foal := Breed(parent, parent)
+		foal := Breed(sire, mare)
+		if foal == nil {
+			t.Fatal("Breed returned nil for valid parents")
+		}
 		for _, gt := range allGeneTypes {
 			gene := foal.Genome[gt]
 			if gene.AlleleA != models.AlleleB || gene.AlleleB != models.AlleleB {

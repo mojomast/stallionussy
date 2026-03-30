@@ -7,6 +7,7 @@ package pedigreussy
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"math/rand/v2"
 	"strings"
@@ -25,12 +26,10 @@ import (
 // It links to the sire (father) and mare (mother) recursively and tracks
 // the generation depth relative to the root horse.
 type PedigreeNode struct {
-	Horse      *models.Horse   `json:"horse"`
-	Sire       *PedigreeNode   `json:"sire,omitempty"`
-	Mare       *PedigreeNode   `json:"mare,omitempty"`
-	Children   []*PedigreeNode `json:"children,omitempty"`
-	Generation int             `json:"generation"`
-	Inbreeding float64         `json:"inbreeding_coefficient"`
+	Horse      *models.Horse `json:"horse"`
+	Sire       *PedigreeNode `json:"sire,omitempty"`
+	Mare       *PedigreeNode `json:"mare,omitempty"`
+	Generation int           `json:"generation"`
 }
 
 // PedigreeEngine provides pedigree construction and analysis. It uses a
@@ -86,12 +85,18 @@ func (pe *PedigreeEngine) buildNode(horseID string, gen, maxDepth int) (*Pedigre
 	if gen < maxDepth {
 		// Sire branch (father)
 		if horse.SireID != "" {
-			sireNode, _ := pe.buildNode(horse.SireID, gen+1, maxDepth)
+			sireNode, err := pe.buildNode(horse.SireID, gen+1, maxDepth)
+			if err != nil {
+				log.Printf("pedigreussy: ancestor lookup failed for %s: %v", horse.SireID, err)
+			}
 			node.Sire = sireNode
 		}
 		// Mare branch (mother)
 		if horse.MareID != "" {
-			mareNode, _ := pe.buildNode(horse.MareID, gen+1, maxDepth)
+			mareNode, err := pe.buildNode(horse.MareID, gen+1, maxDepth)
+			if err != nil {
+				log.Printf("pedigreussy: ancestor lookup failed for %s: %v", horse.MareID, err)
+			}
 			node.Mare = mareNode
 		}
 	}
@@ -430,6 +435,10 @@ func NewTradeManager() *TradeManager {
 
 // CreateOffer creates a new pending trade offer from one stable to another.
 // Returns the newly created offer with a unique ID and "Pending" status.
+//
+// IMPORTANT: The caller MUST validate that the horse belongs to fromStable
+// before calling this function. The PedigreeEngine/TradeManager does not
+// have direct access to stable data and cannot verify horse ownership.
 func (tm *TradeManager) CreateOffer(horseID, horseName, fromStable, toStable string, price int64) *TradeOffer {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
@@ -468,6 +477,7 @@ func (tm *TradeManager) AcceptOffer(offerID string) (*TradeOffer, error) {
 	}
 
 	offer.Status = "Accepted"
+	offer.UpdatedAt = time.Now()
 	return offer, nil
 }
 
@@ -487,6 +497,7 @@ func (tm *TradeManager) RejectOffer(offerID string) error {
 	}
 
 	offer.Status = "Rejected"
+	offer.UpdatedAt = time.Now()
 	return nil
 }
 
@@ -506,6 +517,7 @@ func (tm *TradeManager) CancelOffer(offerID string) error {
 	}
 
 	offer.Status = "Cancelled"
+	offer.UpdatedAt = time.Now()
 	return nil
 }
 

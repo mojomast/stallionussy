@@ -39,26 +39,26 @@ func NewRaceHistory() *RaceHistory {
 	}
 }
 
-// RecordResult stores a race result, prepending it (most recent first) to
-// the global list and both indexes.
+// RecordResult stores a race result, appending it to the global list and
+// both indexes. Results are stored in chronological order (oldest first,
+// newest last). Use sort or reverse when newest-first ordering is needed.
 func (rh *RaceHistory) RecordResult(result *models.RaceResult) {
 	rh.mu.Lock()
 	defer rh.mu.Unlock()
 
-	// Prepend to global list — newest first.
-	rh.results = append([]*models.RaceResult{result}, rh.results...)
+	// Append to global list — chronological order (oldest first).
+	rh.results = append(rh.results, result)
 
-	// Index by horse — also prepend for newest-first ordering.
+	// Index by horse — also append for chronological ordering.
 	rh.byHorse[result.HorseID] = append(
-		[]*models.RaceResult{result},
-		rh.byHorse[result.HorseID]...,
+		rh.byHorse[result.HorseID],
+		result,
 	)
 
-	// Index by race — order doesn't matter much here (all from same race),
-	// but we prepend for consistency.
+	// Index by race — order doesn't matter much here (all from same race).
 	rh.byRace[result.RaceID] = append(
-		[]*models.RaceResult{result},
-		rh.byRace[result.RaceID]...,
+		rh.byRace[result.RaceID],
+		result,
 	)
 }
 
@@ -89,9 +89,11 @@ func (rh *RaceHistory) GetHorseHistory(horseID string) []*models.RaceResult {
 		return nil
 	}
 
-	// Return a copy to prevent external mutation.
+	// Return a reversed copy so callers see newest-first ordering.
 	out := make([]*models.RaceResult, len(results))
-	copy(out, results)
+	for i, r := range results {
+		out[len(results)-1-i] = r
+	}
 	return out
 }
 
@@ -113,6 +115,7 @@ func (rh *RaceHistory) GetRaceResults(raceID string) []*models.RaceResult {
 
 // GetRecentResults returns the N most recent results across all horses.
 // If limit exceeds the total count, all results are returned.
+// Results are returned newest-first.
 func (rh *RaceHistory) GetRecentResults(limit int) []*models.RaceResult {
 	rh.mu.RLock()
 	defer rh.mu.RUnlock()
@@ -124,8 +127,13 @@ func (rh *RaceHistory) GetRecentResults(limit int) []*models.RaceResult {
 		limit = len(rh.results)
 	}
 
+	// Internal list is chronological (oldest first). Take the last N and
+	// reverse so callers get newest-first.
+	start := len(rh.results) - limit
 	out := make([]*models.RaceResult, limit)
-	copy(out, rh.results[:limit])
+	for i := 0; i < limit; i++ {
+		out[i] = rh.results[start+limit-1-i]
+	}
 	return out
 }
 
@@ -166,19 +174,12 @@ func (rh *RaceHistory) GetHorseStats(horseID string) HorseStats {
 	var totalPlace int
 	trackWins := make(map[models.TrackType]int)
 
-	// Track streaks. Results are newest-first, so we iterate in reverse
-	// (chronological order) for streak calculation.
-	streakCalcResults := make([]*models.RaceResult, len(results))
-	copy(streakCalcResults, results)
-	// Reverse to chronological order.
-	for i, j := 0, len(streakCalcResults)-1; i < j; i, j = i+1, j-1 {
-		streakCalcResults[i], streakCalcResults[j] = streakCalcResults[j], streakCalcResults[i]
-	}
-
+	// Results are stored in chronological order (oldest first) — iterate
+	// directly for streak calculation.
 	currentStreak := 0
 	bestStreak := 0
 
-	for i, r := range streakCalcResults {
+	for i, r := range results {
 		// Win/place counts
 		if r.FinishPlace == 1 {
 			trackWins[r.TrackType]++
@@ -219,12 +220,11 @@ func (rh *RaceHistory) GetHorseStats(horseID string) HorseStats {
 		}
 	}
 
-	stats.Wins = trackWins[models.TrackSprintussy] +
-		trackWins[models.TrackGrindussy] +
-		trackWins[models.TrackMudussy] +
-		trackWins[models.TrackThunderussy] +
-		trackWins[models.TrackFrostussy] +
-		trackWins[models.TrackHauntedussy]
+	// Count total wins from the per-track map. This avoids hardcoding
+	// track types and automatically handles any new tracks added later.
+	for _, w := range trackWins {
+		stats.Wins += w
+	}
 
 	if stats.TotalRaces > 0 {
 		stats.WinRate = float64(stats.Wins) / float64(stats.TotalRaces)
@@ -436,7 +436,7 @@ var tournamentNouns = []string{
 	"Inquisition", "Symposium", "Referendum", "Exorcism",
 	"Cummification", "Rebuke",
 	// ---- Batch 2: Even more nouns (Ussyverse deep cuts) ----
-	"Baptism", "Rollback", "Stampede", "Confessional",
+	"Baptism", "Rollback", "Confessional",
 	"Calibration", "Recklessness", "Tribunal", "Defragmentation",
 	"Transfiguration", "Benchmark", "Purification", "Shakedown",
 	"Overflow", "Reconciliation", "Bloodmoon", "Pilgrimage",
@@ -580,7 +580,18 @@ func (tm *TournamentManager) RegisterHorse(tournamentID string, horse *models.Ho
 		BestPlace: 0,
 	})
 
+	// Collect entry fee into the prize pool.
+	t.PrizePool += t.EntryFee
+
 	return nil
+}
+
+// PrizeDistribution holds the computed prize shares for the top finishers
+// of a finished tournament (50% / 30% / 20% of the total pool).
+type PrizeDistribution struct {
+	First  int64 `json:"first"`  // 50% of PrizePool
+	Second int64 `json:"second"` // 30% of PrizePool
+	Third  int64 `json:"third"`  // 20% of PrizePool
 }
 
 // RunNextRound creates a race for the next round of a tournament.
@@ -604,6 +615,11 @@ func (tm *TournamentManager) RunNextRound(tournamentID string, horses []*models.
 	// Auto-start on first round.
 	if t.Status == "Open" {
 		t.Status = "InProgress"
+	}
+
+	// Need at least 2 horses for a race.
+	if len(t.Standings) < 2 {
+		return nil, fmt.Errorf("need at least 2 horses")
 	}
 
 	// Check if all rounds are done.
@@ -646,13 +662,15 @@ func pointsForPlace(place int) int {
 // RecordRoundResults updates a tournament's standings based on a completed race.
 // Points are awarded per finish place: 1st=10, 2nd=7, 3rd=5, 4th=3, 5th=2, others=1.
 // The race ID is appended to the tournament's Races slice.
-func (tm *TournamentManager) RecordRoundResults(tournamentID string, race *models.Race) error {
+// When the tournament finishes (all rounds complete), returns the prize distribution
+// for the top 3 standings (50%/30%/20%). Returns nil distribution if still in progress.
+func (tm *TournamentManager) RecordRoundResults(tournamentID string, race *models.Race) (*PrizeDistribution, error) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	t, ok := tm.tournaments[tournamentID]
 	if !ok {
-		return fmt.Errorf("tournament %s not found", tournamentID)
+		return nil, fmt.Errorf("tournament %s not found", tournamentID)
 	}
 
 	// Append race ID to tournament's race list.
@@ -684,9 +702,42 @@ func (tm *TournamentManager) RecordRoundResults(tournamentID string, race *model
 	// Check if tournament is now finished.
 	if t.CurrentRound >= t.Rounds {
 		t.Status = "Finished"
+
+		// Distribute prizes: 50% / 30% / 20% to top 3 standings.
+		standings := make([]models.TournamentEntry, len(t.Standings))
+		copy(standings, t.Standings)
+		sort.Slice(standings, func(i, j int) bool {
+			if standings[i].Points != standings[j].Points {
+				return standings[i].Points > standings[j].Points
+			}
+			if standings[i].BestPlace != standings[j].BestPlace {
+				if standings[i].BestPlace == 0 {
+					return false
+				}
+				if standings[j].BestPlace == 0 {
+					return true
+				}
+				return standings[i].BestPlace < standings[j].BestPlace
+			}
+			return standings[i].RacesRun > standings[j].RacesRun
+		})
+
+		dist := &PrizeDistribution{}
+		pool := t.PrizePool
+		if len(standings) >= 1 {
+			dist.First = pool * 50 / 100
+		}
+		if len(standings) >= 2 {
+			dist.Second = pool * 30 / 100
+		}
+		if len(standings) >= 3 {
+			dist.Third = pool * 20 / 100
+		}
+
+		return dist, nil
 	}
 
-	return nil
+	return nil, nil
 }
 
 // GetStandings returns the tournament standings sorted by points descending.
@@ -843,7 +894,7 @@ var AllAchievements = map[string]models.Achievement{
 	"the_yogurt_sees": {
 		ID:          "the_yogurt_sees",
 		Name:        "The Yogurt Sees All",
-		Description: "Race against E-008's Chosen and survive",
+		Description: "Finish a race on Hauntedussy. The Yogurt has observed your passage through the spectral dimension. It does not forget.",
 		Icon:        "\U0001F300", // 🌀
 		Rarity:      "legendary",
 	},
@@ -1013,7 +1064,7 @@ var AllAchievements = map[string]models.Achievement{
 	"derulo_moment": {
 		ID:          "derulo_moment",
 		Name:        "Jason Derulo Moment",
-		Description: "Horse panics 3+ times in a single race and still finishes. Jason Derulo (unwilling affiliate) knows this feeling. You stumble, you fall, you keep going. He is not endorsing this.",
+		Description: "Complete a race with a highly volatile (TMP BB) horse. They stumble, they panic, but they keep going. Jason Derulo (unwilling affiliate) is not endorsing this.",
 		Icon:        "\U0001F635", // 😵
 		Rarity:      "rare",
 	},
@@ -1402,13 +1453,12 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 		}
 	}
 
-	// the_yogurt_sees — Race against E-008's Chosen and survive
-	// Check if any race the horse participated in also had an E-008 horse (LotNumber 6).
-	// We can't determine LotNumber from RaceResult alone, so we check if the horse
-	// has completed any race — and the caller should check this after E-008 races.
-	// For a more robust check, we look at the race weather for Haunted or the
-	// horse name patterns. Since we can't be perfect, we flag this if the horse
-	// has raced on Hauntedussy and finished (survived).
+	// the_yogurt_sees — Finish a race on Hauntedussy.
+	// NOTE: The original spec says "race against E-008's Chosen and survive",
+	// but we cannot determine if E-008's Chosen was in the same race from
+	// RaceResult alone (no LotNumber field). As an approximation, we award
+	// this achievement for finishing any Hauntedussy race. A future improvement
+	// could store competitor LotNumbers in RaceResult to check properly.
 	if !hasAchievement(existing, "the_yogurt_sees") {
 		for _, r := range horseResults {
 			if r.TrackType == models.TrackHauntedussy && r.FinishPlace > 0 {
@@ -1582,10 +1632,12 @@ func CheckAchievements(horse *models.Horse, history *RaceHistory, stable *models
 		}
 	}
 
-	// derulo_moment — Horse panics 3+ times in a single race and still finishes.
-	// Approximation: horse has TMP BB (highly volatile / panic-prone) and has
-	// finished at least one race. TMP BB horses have maximum panic chance, so
-	// surviving a race with multiple panics is expected for them.
+	// derulo_moment — Complete a race with a highly volatile (TMP BB) horse.
+	// NOTE: The original spec says "Horse panics 3+ times in a single race
+	// and still finishes", but we don't have a panic count in RaceResult.
+	// As an approximation, we check if the horse has TMP BB gene (maximum
+	// panic chance) and has finished at least one race. A future improvement
+	// could track panic events per race in RaceResult to check properly.
 	if !hasAchievement(existing, "derulo_moment") && len(horseResults) > 0 {
 		if gene, ok := horse.Genome[models.GeneTMP]; ok && gene.Express() == "BB" {
 			unlocked = append(unlocked, unlockAchievement("derulo_moment"))

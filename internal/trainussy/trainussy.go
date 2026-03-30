@@ -153,7 +153,15 @@ var retirementMessages = []string{
 // It calculates XP, applies fitness gains with diminishing returns, updates
 // fatigue, and rolls for injuries. The horse is mutated in place. Returns
 // the session record.
-func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) *models.TrainingSession {
+func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*models.TrainingSession, error) {
+	// BUG FIX: Guard against training retired or injured horses.
+	if horse.Retired {
+		return nil, fmt.Errorf("cannot train a retired horse")
+	}
+	if horse.Injury != nil {
+		return nil, fmt.Errorf("cannot train an injured horse")
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -200,6 +208,20 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) *models
 	// ---- Injury check ----
 	injured, injuryNote := rollInjury(horse)
 
+	// BUG FIX: When an injury occurs, create and assign an Injury struct so
+	// the injury system is actually connected to the horse model. Previously
+	// rollInjury only set fatigue to 100 and returned a string, but never
+	// populated horse.Injury, leaving the injury system disconnected.
+	if injured {
+		horse.Injury = &models.Injury{
+			Type:        models.InjuryMuscleStrain,
+			Severity:    models.SeverityMinor,
+			RacesLeft:   2,
+			Description: injuryNote,
+			OccurredAt:  time.Now(),
+		}
+	}
+
 	session := &models.TrainingSession{
 		ID:            uuid.New().String(),
 		HorseID:       horse.ID,
@@ -216,7 +238,7 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) *models
 	// Store session history
 	t.sessions[horse.ID] = append(t.sessions[horse.ID], session)
 
-	return session
+	return session, nil
 }
 
 // calcXP computes XP gained for a workout, factoring in INT gene and fatigue.
@@ -357,6 +379,11 @@ func (t *Trainer) GetTrainingHistory(horseID string) []*models.TrainingSession {
 
 // RecoverFatigue reduces a horse's fatigue by the given amount (min 0).
 func (t *Trainer) RecoverFatigue(horse *models.Horse, amount float64) {
+	// BUG FIX: Prevent negative recovery amounts from increasing fatigue.
+	if amount < 0 {
+		amount = 0
+	}
+
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -1010,11 +1037,20 @@ func (t *Trainer) AssignTraitsAtBirth(horse *models.Horse, sire, mare *models.Ho
 			// 5% dud — no trait this slot
 			continue
 
-		case roll < 0.15 && legendaryEligible:
-			// 10% legendary (only if eligible)
-			if trait := pickUnassigned(legendary, assigned); trait != nil {
-				horse.Traits = append(horse.Traits, *trait)
-				assigned[trait.Name] = true
+		case roll < 0.15:
+			// 10% legendary (only if eligible), otherwise falls to common
+			if legendaryEligible {
+				if trait := pickUnassigned(legendary, assigned); trait != nil {
+					horse.Traits = append(horse.Traits, *trait)
+					assigned[trait.Name] = true
+				}
+			} else {
+				// BUG FIX: When legendary is ineligible, fall to common instead
+				// of letting this band inflate the rare probability by 10%.
+				if trait := pickUnassigned(common, assigned); trait != nil {
+					horse.Traits = append(horse.Traits, *trait)
+					assigned[trait.Name] = true
+				}
 			}
 
 		case roll < 0.40:
@@ -1040,6 +1076,12 @@ func (t *Trainer) AssignTraitsAtBirth(horse *models.Horse, sire, mare *models.Ho
 func (t *Trainer) AssignTraitOnMilestone(horse *models.Horse, milestone string) *models.Trait {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	// BUG FIX: Cap total traits at 6 to prevent trait inflation from
+	// repeated milestone events.
+	if len(horse.Traits) >= 6 {
+		return nil
+	}
 
 	// 30% chance of gaining a trait
 	if rand.Float64() >= 0.30 {
@@ -1252,6 +1294,10 @@ func AgeHorse(horse *models.Horse) {
 	case horse.Age <= 3:
 		// Youth: ceiling grows +2% per season
 		horse.FitnessCeiling *= 1.02
+		// BUG FIX: Cap ceiling at 1.0 to prevent unbounded growth during Youth.
+		if horse.FitnessCeiling > 1.0 {
+			horse.FitnessCeiling = 1.0
+		}
 
 	case horse.Age <= 8:
 		// Prime: no change — peak performance years
@@ -1571,10 +1617,15 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		return ""
 
 	case "sappho_boost":
-		if has, _ := hasTraitEffect(horse, "panic_resist"); has {
-			horse.FitnessCeiling *= 1.05
-			clampCeiling()
-			return fmt.Sprintf("%s gained +5%% ceiling from Sappho Poetry Festival inspiration", horse.Name)
+		// BUG FIX: Check trait name directly instead of "panic_resist" effect,
+		// which matches many traits (Stubborn, Cottagecore Energy, etc.) and
+		// not just "Sapphic Power".
+		for _, t := range horse.Traits {
+			if t.Name == "Sapphic Power" {
+				horse.FitnessCeiling *= 1.05
+				clampCeiling()
+				return fmt.Sprintf("%s gained +5%% ceiling from Sappho Poetry Festival inspiration", horse.Name)
+			}
 		}
 		return ""
 
@@ -1606,7 +1657,11 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		return ""
 
 	case "lot11_boost":
-		if horse.Generation > 0 {
+		// BUG FIX: Previously checked only horse.Generation > 0, which matched ALL
+		// bred horses, not just Lot 11 descendants. Now limited to generations 1-3
+		// as an approximation of Lot 11 lineage proximity. A full lineage trace
+		// would require ancestor graph traversal which isn't available here.
+		if horse.Generation > 0 && horse.Generation <= 3 {
 			horse.FitnessCeiling *= 1.05
 			clampCeiling()
 			return fmt.Sprintf("%s gained +5%% ceiling from STARDUSTUSSY transmission", horse.Name)

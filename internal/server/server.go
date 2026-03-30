@@ -872,7 +872,11 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := s.trainer.Train(horse, req.WorkoutType)
+	session, err := s.trainer.Train(horse, req.WorkoutType)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Apply prestige training bonus: multiply the fitness gain by the owner's TrainingBonus.
 	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
@@ -956,7 +960,11 @@ func (s *Server) handleRestHorse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run a RestDay workout which reduces fatigue by 30.
-	session := s.trainer.Train(horse, models.WorkoutRecovery)
+	session, err := s.trainer.Train(horse, models.WorkoutRecovery)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	s.syncHorseToStable(horse)
 
 	// Write-through: persist rested horse and training session to DB.
@@ -2538,7 +2546,7 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the purchase (economic side).
-	tx, err := s.market.PurchaseBreeding(listingID, buyerStable.OwnerID)
+	tx, err := s.market.PurchaseBreeding(listingID, buyerStable.OwnerID, buyerStable.Cummies)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -2974,7 +2982,7 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Record round results in tournament standings.
-	if err := s.tournaments.RecordRoundResults(tournamentID, race); err != nil {
+	if _, err := s.tournaments.RecordRoundResults(tournamentID, race); err != nil {
 		log.Printf("server: failed to record tournament round results: %v", err)
 	}
 

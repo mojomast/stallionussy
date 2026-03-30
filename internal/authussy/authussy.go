@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -299,6 +300,9 @@ func (h *AuthHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Limit request body size to 1MB to prevent abuse.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body")
@@ -324,7 +328,11 @@ func (h *AuthHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if username is already taken.
-	existing, _ := h.users.GetUserByUsername(r.Context(), req.Username)
+	existing, err := h.users.GetUserByUsername(r.Context(), req.Username)
+	if err != nil && existing == nil {
+		// Database error during lookup — log but continue cautiously.
+		log.Printf("authussy: user lookup failed for %q: %v", req.Username, err)
+	}
 	if existing != nil {
 		writeJSONError(w, http.StatusConflict, "username already taken")
 		return
@@ -379,6 +387,9 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+
+	// Limit request body size to 1MB to prevent abuse.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

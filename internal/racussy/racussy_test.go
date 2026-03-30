@@ -713,25 +713,6 @@ func TestCalcPostRaceFatigue(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Additional: DefaultConfig
-// ---------------------------------------------------------------------------
-
-func TestDefaultConfig(t *testing.T) {
-	for _, tt := range allTrackTypes() {
-		cfg := DefaultConfig(tt)
-		if cfg.TrackType != tt {
-			t.Errorf("DefaultConfig(%s).TrackType = %s", tt, cfg.TrackType)
-		}
-		if cfg.Distance != models.TrackDistance(tt) {
-			t.Errorf("DefaultConfig(%s).Distance = %d, want %d", tt, cfg.Distance, models.TrackDistance(tt))
-		}
-		if cfg.TickInterval <= 0 {
-			t.Errorf("DefaultConfig(%s).TickInterval = %v, expected positive", tt, cfg.TickInterval)
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Additional: Hauntedussy-specific events
 // ---------------------------------------------------------------------------
 

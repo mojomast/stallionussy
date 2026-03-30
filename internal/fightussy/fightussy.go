@@ -56,6 +56,7 @@ type FightConfig struct {
 	MaxRounds int    // default 10
 	Purse     int64  // winner's purse
 	IsToDeath bool   // true = loser dies permanently. false = loser just gets injured
+	Seed      uint64 // BUG 7 FIX: if non-zero, use as deterministic RNG seed for fight replay
 }
 
 // defaultMaxRounds is used when MaxRounds is zero.
@@ -139,6 +140,7 @@ func buildEntry(horse *models.Horse, rng *rand.Rand) FightEntry {
 	stm := geneScore(horse.Genome, models.GeneSTM)
 	sze := geneScore(horse.Genome, models.GeneSZE)
 	spd := geneScore(horse.Genome, models.GeneSPD)
+	tmp := geneScore(horse.Genome, models.GeneTMP) // BUG 10 FIX: use TMP gene
 	fit := horse.CurrentFitness
 	if fit < 0.1 {
 		fit = 0.1 // minimum floor so horses aren't literally dead on arrival
@@ -151,6 +153,9 @@ func buildEntry(horse *models.Horse, rng *rand.Rand) FightEntry {
 
 	mace := allMaceTypes[rng.IntN(len(allMaceTypes))]
 
+	// BUG 10 FIX: TMP gene influences starting rage — hot-tempered horses start angrier
+	startingRage := tmp * 30.0
+
 	return FightEntry{
 		HorseID:   horse.ID,
 		HorseName: horse.Name,
@@ -159,7 +164,7 @@ func buildEntry(horse *models.Horse, rng *rand.Rand) FightEntry {
 		Attack:    atk,
 		Defense:   def,
 		Speed:     speed,
-		Rage:      0,
+		Rage:      startingRage,
 		Morale:    100,
 		MaceType:  mace,
 	}
@@ -263,13 +268,14 @@ var criticalNarratives = []string{
 	"CRITICAL HIT! %s channels the spirit of every retired horse and ANNIHILATES %s with the %s! %.0f DAMAGE! THE CROWD LOSES ITS COLLECTIVE MIND!",
 }
 
+// BUG 3 FIX: All templates standardized to 3 args: (defenderName, maceType, attackerName)
 var dodgeNarratives = []string{
-	"%s DODGES with the grace of a caffeinated gazelle! %s stumbles face-first into the arena wall!",
-	"%s sidesteps like a GHOST! %s swings at nothing but air and regret!",
+	"%s DODGES the %s with the grace of a caffeinated gazelle! %s stumbles face-first into the arena wall!",
+	"%s sidesteps the %s like a GHOST! %s swings at nothing but air and regret!",
 	"MISSED! %s ducks under the %s with impossible timing! %s overcommits and eats dirt!",
-	"%s performs a MATRIX-LEVEL dodge! The %s whistles past their ear! %s can't believe it!",
-	"DODGED! %s weaves like a drunken ballerina! %s's %s hits nothing but hopes and dreams!",
-	"%s saw that coming from a MILE away! They leap sideways as %s's %s crashes into the ground!",
+	"%s performs a MATRIX-LEVEL dodge of the %s! It whistles past their ear! %s can't believe it!",
+	"DODGED! %s weaves past the %s like a drunken ballerina! %s hits nothing but hopes and dreams!",
+	"%s saw that %s coming from a MILE away! They leap sideways as %s's swing crashes into the ground!",
 }
 
 var maceMalfunctionNarratives = []string{
@@ -284,10 +290,11 @@ var rageExplosionNarratives = []string{
 	"%s HAS LOST ALL CONTROL! Pure RAGE fuels a devastating strike! %.0f damage to %s! %s takes %.0f recoil! THE CROWD IS TERRIFIED AND DELIGHTED!",
 }
 
+// BUG 2 FIX: All templates standardized to 4 args: (attackerName, maceType, damage, defenderName)
 var desperateLungeHitNarratives = []string{
-	"DESPERATE LUNGE! %s is nearly dead but REFUSES TO QUIT! A wild swing connects! %.0f MASSIVE DAMAGE to %s!",
-	"WITH NOTHING LEFT TO LOSE, %s makes one final DESPERATE charge! THE %s CONNECTS! %.0f DAMAGE! WHAT A MOMENT!",
-	"LAST STAND! %s summons every remaining ounce of energy for a LEGENDARY lunge! %.0f to %s! THE ARENA ERUPTS!",
+	"DESPERATE LUNGE! %s swings the %s wildly — nearly dead but REFUSES TO QUIT! %.0f MASSIVE DAMAGE to %s!",
+	"WITH NOTHING LEFT TO LOSE, %s makes one final DESPERATE charge with the %s! IT CONNECTS! %.0f DAMAGE to %s! WHAT A MOMENT!",
+	"LAST STAND! %s summons every remaining ounce of energy and hurls the %s for a LEGENDARY lunge! %.0f to %s! THE ARENA ERUPTS!",
 }
 
 var desperateLungeMissNarratives = []string{
@@ -320,8 +327,8 @@ var e008SentienceNarratives = []string{
 }
 
 var hauntedMaceNarratives = []string{
-	"HAUNTED MACE! %s's %s begins GLOWING with spectral energy! It starts swinging ON ITS OWN! 150%% damage for the next 5 ticks! THE HORSE ISN'T EVEN TRYING!",
-	"%s's %s is POSSESSED! A ghostly hoof grips the handle from beyond the grave! Auto-attacks at 150%% for 5 ticks! This is technically a 2v1 now!",
+	"HAUNTED MACE! %s's %s begins GLOWING with spectral energy! It starts swinging ON ITS OWN! 1.5x damage for 5 ticks! THE HORSE ISN'T EVEN TRYING!",
+	"%s's %s is POSSESSED! A ghostly hoof grips the handle from beyond the grave! 1.5x damage for 5 ticks! This is technically a 2v1 now!",
 }
 
 var mutualRespectNarratives = []string{
@@ -376,8 +383,13 @@ var yogurtMutationNarratives = []string{
 // SimulateFight runs a complete gladiatorial combat between two horses and
 // returns the full fight result with blow-by-blow narrative.
 func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResult {
-	// Set up RNG
-	rng := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	// BUG 7 FIX: Use deterministic seed if provided, otherwise random
+	var rng *rand.Rand
+	if config.Seed != 0 {
+		rng = rand.New(rand.NewPCG(config.Seed, config.Seed))
+	} else {
+		rng = rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	}
 
 	if config.MaxRounds <= 0 {
 		config.MaxRounds = defaultMaxRounds
@@ -555,8 +567,9 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 
 			// "JASON DERULO FALLS INTO ARENA" (0.5%)
 			if rng.Float64() < 0.005 {
-				e[0].Rage = 50
-				e[1].Rage = 50
+				// BUG 4 FIX: Cap rage at 50 instead of setting to 50 (only reduces, never increases)
+				e[0].Rage = math.Min(e[0].Rage, 50)
+				e[1].Rage = math.Min(e[1].Rage, 50)
 				narr := fmt.Sprintf(derulNarratives[rng.IntN(len(derulNarratives))], e[0].HorseName, e[1].HorseName)
 				fightRound.Events = append(fightRound.Events, FightEvent{
 					Tick: tick, AttackerID: "", Event: "derulo", Damage: 0, Text: narr,
@@ -582,24 +595,36 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 
 			// "E-008 SENTIENCE SURGE" (1%) — stat swap for 3 ticks
 			if rng.Float64() < 0.01 {
-				// Save current stats as originals before swap
-				origAttack = [2]float64{e[0].Attack, e[1].Attack}
-				origDefense = [2]float64{e[0].Defense, e[1].Defense}
-				origSpeed = [2]float64{e[0].Speed, e[1].Speed}
+				// BUG 6 FIX: Skip if a stat_swap is already active to prevent corruption
+				alreadySwapped := false
+				for _, eff := range activeEffects {
+					if eff.effectType == "stat_swap" {
+						alreadySwapped = true
+						break
+					}
+				}
+				if alreadySwapped {
+					// Skip — stat swap already in progress
+				} else {
+					// Save current stats as originals before swap
+					origAttack = [2]float64{e[0].Attack, e[1].Attack}
+					origDefense = [2]float64{e[0].Defense, e[1].Defense}
+					origSpeed = [2]float64{e[0].Speed, e[1].Speed}
 
-				// Swap
-				e[0].Attack, e[1].Attack = e[1].Attack, e[0].Attack
-				e[0].Defense, e[1].Defense = e[1].Defense, e[0].Defense
-				e[0].Speed, e[1].Speed = e[1].Speed, e[0].Speed
+					// Swap
+					e[0].Attack, e[1].Attack = e[1].Attack, e[0].Attack
+					e[0].Defense, e[1].Defense = e[1].Defense, e[0].Defense
+					e[0].Speed, e[1].Speed = e[1].Speed, e[0].Speed
 
-				activeEffects = append(activeEffects, tempEffect{
-					ticksLeft: 3, effectType: "stat_swap",
-				})
-				narr := fmt.Sprintf(e008SentienceNarratives[rng.IntN(len(e008SentienceNarratives))], e[0].HorseName, e[1].HorseName)
-				fightRound.Events = append(fightRound.Events, FightEvent{
-					Tick: tick, AttackerID: "", Event: "e008_sentience", Damage: 0, Text: narr,
-				})
-				result.Narrative = append(result.Narrative, narr)
+					activeEffects = append(activeEffects, tempEffect{
+						ticksLeft: 3, effectType: "stat_swap",
+					})
+					narr := fmt.Sprintf(e008SentienceNarratives[rng.IntN(len(e008SentienceNarratives))], e[0].HorseName, e[1].HorseName)
+					fightRound.Events = append(fightRound.Events, FightEvent{
+						Tick: tick, AttackerID: "", Event: "e008_sentience", Damage: 0, Text: narr,
+					})
+					result.Narrative = append(result.Narrative, narr)
+				}
 				continue
 			}
 
@@ -711,30 +736,41 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 				dodgeChance := 0.15 + (def.Speed-atk.Speed)*0.05
 				dodgeChance = math.Max(0.05, math.Min(0.40, dodgeChance))
 
+				// BUG 1 FIX: Clamp combined thresholds so dodge+hit doesn't exceed 1.0
+				if dodgeChance+hitChance > 1.0 {
+					hitChance = 1.0 - dodgeChance
+				}
+
 				// CRITICAL HIT (5%)
 				isCrit := rng.Float64() < 0.05
 
-				if rng.Float64() < dodgeChance {
+				// BUG 8 FIX: chaosMode adds per-tick +-10% random variance to attack and defense
+				atkAttack := atk.Attack
+				defDefense := def.Defense
+				if arenaMods.chaosMode {
+					atkAttack *= (0.9 + rng.Float64()*0.2)  // +-10%
+					defDefense *= (0.9 + rng.Float64()*0.2) // +-10%
+				}
+
+				// BUG 1 FIX: Single roll with combined thresholds
+				roll := rng.Float64()
+
+				if roll < dodgeChance {
 					// DODGE!
+					// BUG 3 FIX: All dodge templates now take 3 args: (defenderName, maceType, attackerName)
 					narr := fmt.Sprintf(dodgeNarratives[rng.IntN(len(dodgeNarratives))],
-						def.HorseName, atk.HorseName, atk.MaceType, atk.HorseName, atk.MaceType)
-					// Some templates have different arg counts, use simpler one
-					narr = fmt.Sprintf("%s DODGES! %s swings the %s at nothing but air and shame!",
-						def.HorseName, atk.HorseName, atk.MaceType)
-					if dodgeIdx := rng.IntN(len(dodgeNarratives)); dodgeIdx < 2 {
-						narr = fmt.Sprintf(dodgeNarratives[dodgeIdx], def.HorseName, atk.HorseName)
-					}
+						def.HorseName, atk.MaceType, atk.HorseName)
 					fightRound.Events = append(fightRound.Events, FightEvent{
 						Tick: tick, AttackerID: atk.HorseID, Event: "dodge", Damage: 0, Text: narr,
 					})
 					result.Narrative = append(result.Narrative, narr)
 					def.Morale += 2 // confidence boost from dodging
 					atk.Rage += 3   // frustration from missing
-				} else if rng.Float64() < hitChance {
-					// Calculate damage
+				} else if roll < dodgeChance+hitChance {
+					// Calculate damage (use chaosMode-modified values)
 					atkMaceMods := getMaceModifiers(atk.MaceType)
 					rageBonus := 1.0 + atk.Rage/200.0
-					dmg := atk.Attack * rageBonus * atkMaceMods.damageMultiplier
+					dmg := atkAttack * rageBonus * atkMaceMods.damageMultiplier
 
 					// Apply arena damage modifier
 					dmg *= arenaMods.damageMultiplier
@@ -768,8 +804,8 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 						dmg *= 2.5
 					}
 
-					// Subtract defense
-					effectiveDef := def.Defense * 0.5
+					// Subtract defense (use chaosMode-modified defDefense)
+					effectiveDef := defDefense * 0.5
 					if atk.Rage >= 100 {
 						// Berserk mode: ignore defense, but defender also has 0 def
 						effectiveDef = 0
@@ -842,12 +878,23 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 					}
 
 					// Rage and morale adjustments
-					atk.Rage += 3 // rage from hitting
-					def.Rage += 5 // rage from being hit
+					// BUG 10 FIX: Scale rage gain by TMP gene (hot-tempered horses gain rage faster)
+					var atkTMP, defTMP float64
+					if attackerIdx == 0 {
+						atkTMP = geneScore(horse1.Genome, models.GeneTMP)
+						defTMP = geneScore(horse2.Genome, models.GeneTMP)
+					} else {
+						atkTMP = geneScore(horse2.Genome, models.GeneTMP)
+						defTMP = geneScore(horse1.Genome, models.GeneTMP)
+					}
+					atkRageMul := 1.0 + atkTMP*0.5
+					defRageMul := 1.0 + defTMP*0.5
+					atk.Rage += 3 * atkRageMul // rage from hitting
+					def.Rage += 5 * defRageMul // rage from being hit
 
-					// Morale drop on big hits
+					// BUG 5 FIX: Use actual computed dmg for morale calculation instead of recalculating
 					if def.MaxHP > 0 {
-						dmgPct := (atk.Attack * (1.0 + atk.Rage/200.0)) / def.MaxHP
+						dmgPct := dmg / def.MaxHP
 						if dmgPct > 0.30 {
 							def.Morale -= 10
 						} else {

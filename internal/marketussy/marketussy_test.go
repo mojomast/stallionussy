@@ -251,7 +251,7 @@ func TestPurchaseBreeding_Success(t *testing.T) {
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
 
-	tx, err := m.PurchaseBreeding(listing.ID, "buyer1")
+	tx, err := m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 	if err != nil {
 		t.Fatalf("PurchaseBreeding failed: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestPurchaseBreeding_BurnAmount(t *testing.T) {
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
 
-	tx, _ := m.PurchaseBreeding(listing.ID, "buyer1")
+	tx, _ := m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 
 	// 2% of 1000 = 20
 	expectedBurn := int64(20)
@@ -297,7 +297,7 @@ func TestPurchaseBreeding_BurnAmountSmallPrice(t *testing.T) {
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 50)
 
-	tx, _ := m.PurchaseBreeding(listing.ID, "buyer1")
+	tx, _ := m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 
 	// 2% of 50 = 1 (integer math: 50*2/100 = 1)
 	expectedBurn := int64(1)
@@ -306,22 +306,48 @@ func TestPurchaseBreeding_BurnAmountSmallPrice(t *testing.T) {
 	}
 }
 
-func TestPurchaseBreeding_DeactivatesListing(t *testing.T) {
+func TestPurchaseBreeding_ListingPersistsAfterPurchase(t *testing.T) {
 	m := NewMarket()
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
 
-	m.PurchaseBreeding(listing.ID, "buyer1")
+	m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 
 	got, _ := m.GetListing(listing.ID)
+	if !got.Active {
+		t.Error("listing should remain active after a single purchase (studs persist)")
+	}
+	if got.TimesUsed != 1 {
+		t.Errorf("TimesUsed = %d, want 1", got.TimesUsed)
+	}
+}
+
+func TestPurchaseBreeding_DeactivatesAfterMaxUses(t *testing.T) {
+	m := NewMarket()
+	horse := makeTestHorse("h1", "StudHorse", "seller1")
+	listing, _ := m.CreateListing(horse, "seller1", 1000)
+
+	// Manually set MaxUses to 2.
+	m.mu.Lock()
+	m.listings[listing.ID].MaxUses = 2
+	m.mu.Unlock()
+
+	m.PurchaseBreeding(listing.ID, "buyer1", 10000)
+	got, _ := m.GetListing(listing.ID)
+	if !got.Active {
+		t.Error("listing should still be active after 1 of 2 max uses")
+	}
+
+	m.PurchaseBreeding(listing.ID, "buyer2", 10000)
+	got, _ = m.GetListing(listing.ID)
 	if got.Active {
-		t.Error("listing should be deactivated after a successful purchase to prevent double-purchase")
+		t.Error("listing should be deactivated after reaching MaxUses")
 	}
 }
 
 func TestPurchaseBreeding_NotFound(t *testing.T) {
 	m := NewMarket()
-	_, err := m.PurchaseBreeding("nonexistent", "buyer1")
+	_, err := m.PurchaseBreeding("nonexistent", "buyer1", 10000)
 	if err == nil {
 		t.Fatal("expected error for nonexistent listing")
 	}
@@ -332,7 +358,7 @@ func TestPurchaseBreeding_EmptyBuyerID(t *testing.T) {
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
 
-	_, err := m.PurchaseBreeding(listing.ID, "")
+	_, err := m.PurchaseBreeding(listing.ID, "", 10000)
 	if err == nil {
 		t.Fatal("expected error for empty buyerID")
 	}
@@ -343,7 +369,7 @@ func TestPurchaseBreeding_CantBuyOwnListing(t *testing.T) {
 	horse := makeTestHorse("h1", "StudHorse", "owner1")
 	listing, _ := m.CreateListing(horse, "owner1", 1000)
 
-	_, err := m.PurchaseBreeding(listing.ID, "owner1")
+	_, err := m.PurchaseBreeding(listing.ID, "owner1", 10000)
 	if err == nil {
 		t.Fatal("expected error when buying own listing")
 	}
@@ -419,7 +445,7 @@ func TestGetTransactionHistory_RecordsTransactions(t *testing.T) {
 	m := NewMarket()
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
-	m.PurchaseBreeding(listing.ID, "buyer1")
+	m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 
 	history := m.GetTransactionHistory()
 	if len(history) != 1 {
@@ -434,7 +460,7 @@ func TestGetTransactionHistory_ReturnsCopy(t *testing.T) {
 	m := NewMarket()
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
-	m.PurchaseBreeding(listing.ID, "buyer1")
+	m.PurchaseBreeding(listing.ID, "buyer1", 10000)
 
 	h1 := m.GetTransactionHistory()
 	h2 := m.GetTransactionHistory()
@@ -455,11 +481,11 @@ func TestGetTotalBurned_AccumulatesBurns(t *testing.T) {
 
 	horse1 := makeTestHorse("h1", "Stud1", "seller1")
 	listing1, _ := m.CreateListing(horse1, "seller1", 1000) // burn = 20
-	m.PurchaseBreeding(listing1.ID, "buyer1")
+	m.PurchaseBreeding(listing1.ID, "buyer1", 10000)
 
 	horse2 := makeTestHorse("h2", "Stud2", "seller2")
 	listing2, _ := m.CreateListing(horse2, "seller2", 500) // burn = 10
-	m.PurchaseBreeding(listing2.ID, "buyer2")
+	m.PurchaseBreeding(listing2.ID, "buyer2", 10000)
 
 	expectedBurn := int64(20 + 10)
 	if m.GetTotalBurned() != expectedBurn {

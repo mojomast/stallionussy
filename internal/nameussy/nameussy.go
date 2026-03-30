@@ -31,7 +31,7 @@ var adjectives = []string{
 	// Comedy & vibes
 	"Unhinged", "Feral", "Cottagecore", "Gaslit", "Girlboss",
 	"Gatekept", "Chronically-Online", "Touch-Grass", "Main-Character", "Situationship",
-	"Delulu", "Rizzy", "Slay-Adjacent", "Unhinged", "Goblin-Mode",
+	"Delulu", "Rizzy", "Slay-Adjacent", "Goblin-Mode",
 	// Corporate buzzwords
 	"Synergistic", "Disruptive", "Scalable", "Leveraged", "Agile",
 	"Enterprise-Grade", "Mission-Critical", "Blockchain-Enabled", "AI-Powered", "Web3-Native",
@@ -233,8 +233,8 @@ func patternSir() string {
 func patternDoubleAdjective() string {
 	a1 := pick(adjectives)
 	a2 := pick(adjectives)
-	// Re-roll once if we got the same adjective twice — we have standards.
-	if a2 == a1 {
+	// Loop until we get a different adjective — we have standards.
+	for a2 == a1 {
 		a2 = pick(adjectives)
 	}
 	return fmt.Sprintf("%s %s %s", a1, a2, pick(nouns))
@@ -320,7 +320,8 @@ func stableFoodThemed() string {
 func stableDoubleNoun() string {
 	n1 := pick(nouns)
 	n2 := pick(nouns)
-	if n2 == n1 {
+	// Loop until we get a different noun to avoid "Daemon & Daemon Farms".
+	for n2 == n1 {
 		n2 = pick(nouns)
 	}
 	return fmt.Sprintf("%s & %s %s", n1, n2, pick(stableTypes))

@@ -59,6 +59,72 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Seasonal event bonuses clamp FitnessCeiling to 1.0 to prevent stat drift.
 - ELO updates operate on canonical horse pointers to prevent stale data from copy divergence.
 
+## v2 Comprehensive Overhaul
+
+### Racing Engine (8 fixes)
+- `fatigue_resist` trait condition fix: now correctly checks for the trait instead of always granting immunity.
+- Weather effects apply to all weather types (Haunted, Scorching, etc.) — no more silent immunity gaps.
+- Race events use append-slice instead of single-value overwriting, so multiple events per tick are preserved.
+- Crowd-surge bonus now verifies the horse is actually in the lead before applying the boost.
+- Race narrative RNG uses deterministic seeding per-race for reproducible results.
+- Removed dead/unused `RaceConfig` struct that was shadowed by the actual configuration.
+- Rebalanced Haunted and Scorching weather modifiers for fairer race outcomes.
+- Fitness floor prevents horses from going below 0.0 fitness during extreme fatigue.
+
+### Combat Engine (10 fixes)
+- Hit/dodge resolution uses separate RNG rolls instead of a single roll that made dodging overpowered.
+- Standardized format strings for `desperate_lunge` and dodge narrative messages.
+- Derulo rage mechanic now has a cap preventing infinite rage stacking.
+- Morale system uses actual damage dealt (not raw attack) for more accurate morale shifts.
+- Stat-swap stacking guard prevents repeated stat swaps from compounding beyond intended limits.
+- Combat RNG uses deterministic seeding per-fight for reproducible results.
+- `chaosMode` flag is now actually implemented and triggers enhanced randomness when active.
+- `haunted_mace` narrative text is correctly rendered during malfunction events.
+- TMP gene now influences rage generation rate as originally designed.
+
+### Training & Genetics (11 fixes)
+- Gene rarity distribution corrected: common/uncommon/rare/legendary odds match design spec.
+- Youth ceiling clamp prevents young horses from exceeding maximum stat thresholds during growth.
+- `sappho_boost` trait correctly checked before applying Sappho Score bonuses.
+- `lot11_boost` scope fix: bonus now applies only to the intended training context.
+- `Train()` rejects retired and injured horses with proper error messages instead of silently training them.
+- `RecoverFatigue()` guards against negative fatigue values from over-recovery.
+- Injury system properly connected: injuries from fights/races now affect training eligibility.
+- Trait cap enforced at 6 maximum traits per horse to prevent unbounded trait accumulation.
+- `Breed()` guards against nil parent and self-breed attempts.
+
+### Market & Tournaments (13 fixes)
+- Stud burn mechanic has a floor price preventing listings from being burned to zero value.
+- Stud listings now persist with `MaxUses` tracking instead of disappearing after one purchase.
+- Buyer balance check enforced before stud purchase to prevent negative-balance exploits.
+- Duplicate listing guard prevents the same horse from being listed twice simultaneously.
+- ELO floor prevents horses from dropping below a minimum rating.
+- Market listings use copy-on-read to prevent callers from mutating shared state.
+- Tournament bracket building uses append instead of O(n) slice prepend for better performance.
+- Tournament prize pools are now collected from entrants and distributed to winners correctly.
+- Minimum horse check prevents tournaments from starting with too few entries.
+- Dynamic track counting replaces hardcoded track count for future track additions.
+- Achievement description text fixes for accuracy.
+- Removed duplicate "Stampede" achievement entry.
+
+### Infrastructure Fixes
+- **stableussy**: `RemoveHorse` outer loop now breaks after finding the horse, preventing unnecessary iteration. `ListHorses` returns empty slice instead of nil. `SeedLegendaries` logs errors instead of silently discarding them.
+- **pedigreussy**: `AcceptOffer`, `RejectOffer`, `CancelOffer` now update `UpdatedAt` timestamps. Removed unused `Children` and `Inbreeding` fields from `PedigreeNode`. `buildNode` logs ancestor lookup errors instead of silently discarding them.
+- **commussy**: `WritePump` sends each queued message as its own WebSocket frame instead of concatenating multiple JSON objects (which broke `JSON.parse` on the client). Rate limiting extended to `chat_emote` and `whisper` message types. Self-whisper check uses `UserID` comparison instead of case-insensitive username match. Text truncation is UTF-8 safe (rune-based instead of byte-based).
+- **authussy**: `HandleRegister` and `HandleLogin` enforce 1MB request body size limits. Username lookup errors are logged instead of silently ignored.
+- **nameussy**: Removed duplicate "Unhinged" adjective. Double-adjective and double-noun dedup uses a loop instead of single re-roll to guarantee uniqueness.
+
+### Frontend Presentation Overhaul
+- **Racing**: Race cards with hover/active states, track-type color badges (Sprintussy red, Grindussy green, Frostussy blue, Mudussy brown, Thunderdome amber, Hauntedussy purple), position items with medal colors (gold/silver/bronze), progress bars with glow effects, weather badges, pulse animation for active races.
+- **Horse Detail**: Two-column profile grid, stat grid with color-coded values (low/mid/high), gene badges colored by zygosity (AA green, AB amber, BB red), trait list with rarity-colored left borders (common/rare/legendary/anomalous), fitness bars with condition-based coloring, Sappho Score pip meter visualization.
+- **Combat**: Fight result cards with fatality variant styling, versus display with HP bars, arena badges, round log with alternating row colors and critical-hit highlighting.
+- **Breeding**: Breeding pair display with connector line, gene compatibility matrix with colored cells, offspring preview cards with stat range bars, cooldown badge styling.
+- **Market**: Listing cards with price/ELO/Sappho display, stud listing grid, burn badge for depleted listings, uses remaining bar, buy/cancel action buttons with hover states.
+- **Tournaments**: Tournament cards with status badges (open/active/finished), bracket display styling, round headers, match cards with winner highlighting, prize pool display.
+- **Leaderboard**: Table styling with rank medal colors, stat columns with bar indicators, alternating row colors with hover highlighting, section headers for different ranking categories.
+- **Achievements**: Achievement cards with locked/unlocked states, rarity border colors, progress bars for incremental achievements, unlock animation with glow effect.
+- **Stable Overview**: Stable header with balance display, horse roster cards with inline stat bars, quick-action buttons, empty-state styling.
+
 ## Requirements
 
 - Go 1.25+

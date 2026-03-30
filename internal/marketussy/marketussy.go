@@ -86,8 +86,17 @@ func (m *Market) CreateListing(horse *models.Horse, ownerID string, price int64)
 	}
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check for duplicate active listings for the same horse (under lock
+	// to prevent TOCTOU race).
+	for _, existing := range m.listings {
+		if existing.Active && existing.HorseID == horse.ID {
+			return nil, fmt.Errorf("horse already has an active listing")
+		}
+	}
+
 	m.listings[listing.ID] = listing
-	m.mu.Unlock()
 
 	return listing, nil
 }
@@ -101,7 +110,8 @@ func buildPedigree(horse *models.Horse) string {
 	return fmt.Sprintf("Sire: %s | Mare: %s (Gen %d)", horse.SireID, horse.MareID, horse.Generation)
 }
 
-// GetListing returns a single listing by ID.
+// GetListing returns a single listing by ID. The returned pointer is a copy
+// of the internal listing, so callers cannot mutate marketplace state.
 func (m *Market) GetListing(id string) (*models.StudListing, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -110,7 +120,8 @@ func (m *Market) GetListing(id string) (*models.StudListing, error) {
 	if !ok {
 		return nil, fmt.Errorf("marketussy: listing %q not found", id)
 	}
-	return listing, nil
+	clone := *listing
+	return &clone, nil
 }
 
 // ListActiveListings returns all active stud listings sorted by SapphoScore
@@ -149,12 +160,13 @@ func (m *Market) ListActiveListings() []*models.StudListing {
 // ---------------------------------------------------------------------------
 
 // PurchaseBreeding processes a stud-market purchase. It validates the listing
-// is active, computes the 2% deflationary burn, and records a MarketTransaction.
+// is active, checks that the buyer can afford the price, computes the 2%
+// deflationary burn, and records a MarketTransaction.
 //
 // The actual breeding (foal creation via genussy.Breed) happens in the caller —
 // this function only handles the economic side. The returned transaction's
 // FoalID will be empty; the caller should fill it in after breeding.
-func (m *Market) PurchaseBreeding(listingID, buyerID string) (*models.MarketTransaction, error) {
+func (m *Market) PurchaseBreeding(listingID, buyerID string, buyerBalance int64) (*models.MarketTransaction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -171,26 +183,37 @@ func (m *Market) PurchaseBreeding(listingID, buyerID string) (*models.MarketTran
 	if buyerID == listing.OwnerID {
 		return nil, fmt.Errorf("marketussy: cannot purchase your own listing")
 	}
+	if buyerBalance < listing.Price {
+		return nil, fmt.Errorf("insufficient funds")
+	}
 
 	// 2% burn — the invisible hand of the Cummies economy.
-	burnAmount := listing.Price * 2 / 100
+	// Enforce minimum 1 burn so even cheap listings contribute to deflation.
+	burnAmount := max(int64(1), listing.Price*2/100)
+	sellerPayout := listing.Price - burnAmount
 
 	tx := &models.MarketTransaction{
-		ID:         uuid.New().String(),
-		ListingID:  listing.ID,
-		BuyerID:    buyerID,
-		SellerID:   listing.OwnerID,
-		Price:      listing.Price,
-		BurnAmount: burnAmount,
-		FoalID:     "", // filled by caller after breeding
-		CreatedAt:  time.Now(),
+		ID:           uuid.New().String(),
+		ListingID:    listing.ID,
+		BuyerID:      buyerID,
+		SellerID:     listing.OwnerID,
+		Price:        listing.Price,
+		BurnAmount:   burnAmount,
+		SellerPayout: sellerPayout,
+		FoalID:       "", // filled by caller after breeding
+		CreatedAt:    time.Now(),
 	}
 
 	m.transactions = append(m.transactions, tx)
 	m.totalBurned += burnAmount
 
-	// Deactivate the listing so it cannot be purchased again.
-	listing.Active = false
+	// Track usage. Stud listings persist across purchases so the same stud
+	// can be bred multiple times. The listing is only deactivated when
+	// MaxUses > 0 and the usage limit is reached.
+	listing.TimesUsed++
+	if listing.MaxUses > 0 && listing.TimesUsed >= listing.MaxUses {
+		listing.Active = false
+	}
 
 	return tx, nil
 }
@@ -327,6 +350,11 @@ func ELOUpdate(winner, loser *models.Horse) (float64, float64) {
 
 	newWinner := winner.ELO + k*(1.0-expWinner)
 	newLoser := loser.ELO + k*(0.0-expLoser)
+
+	// Enforce ELO floor — no horse drops below 100 ELO.
+	if newLoser < 100 {
+		newLoser = 100
+	}
 
 	return newWinner, newLoser
 }

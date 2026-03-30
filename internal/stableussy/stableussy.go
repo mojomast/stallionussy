@@ -6,6 +6,7 @@ package stableussy
 
 import (
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"sort"
 	"sync"
@@ -188,14 +189,14 @@ func (sm *StableManager) GetHorse(id string) (*models.Horse, error) {
 }
 
 // ListHorses returns all horses belonging to the specified stable.
-// Returns nil if the stable is not found.
+// Returns an empty slice if the stable is not found (never nil).
 func (sm *StableManager) ListHorses(stableID string) []*models.Horse {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	stable, ok := sm.stables[stableID]
 	if !ok {
-		return nil
+		return []*models.Horse{}
 	}
 
 	result := make([]*models.Horse, 0, len(stable.Horses))
@@ -319,7 +320,9 @@ func (sm *StableManager) SeedLegendaries(stableID string) {
 			continue
 		}
 		// AddHorseToStable acquires its own lock, so we call it directly.
-		_ = sm.AddHorseToStable(stableID, horse)
+		if err := sm.AddHorseToStable(stableID, horse); err != nil {
+			log.Printf("stableussy: failed to seed legendary %s: %v", horse.Name, err)
+		}
 	}
 }
 
@@ -409,6 +412,7 @@ func (sm *StableManager) RemoveHorse(horseID string) error {
 	}
 
 	// Remove from whichever stable contains it.
+	found := false
 	for _, stable := range sm.stables {
 		for i := range stable.Horses {
 			if stable.Horses[i].ID == horseID {
@@ -418,8 +422,12 @@ func (sm *StableManager) RemoveHorse(horseID string) error {
 				for j := range stable.Horses {
 					sm.horses[stable.Horses[j].ID] = &stable.Horses[j]
 				}
+				found = true
 				break
 			}
+		}
+		if found {
+			break
 		}
 	}
 

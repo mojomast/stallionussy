@@ -100,8 +100,9 @@ func TestBuildEntry_AAGenomeFullFitness(t *testing.T) {
 	if entry.Speed != 1.0 {
 		t.Errorf("Speed = %v, want 1.0", entry.Speed)
 	}
-	if entry.Rage != 0 {
-		t.Errorf("Rage = %v, want 0", entry.Rage)
+	// BUG 10 FIX: TMP gene now sets starting rage. AA TMP = 1.0, so Rage = 1.0 * 30 = 30
+	if entry.Rage != 30 {
+		t.Errorf("Rage = %v, want 30 (TMP AA = 1.0 * 30)", entry.Rage)
 	}
 	if entry.Morale != 100 {
 		t.Errorf("Morale = %v, want 100", entry.Morale)

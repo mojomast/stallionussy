@@ -1,57 +1,50 @@
 # Handoff
 
-## Completed: Texas Hold'em Poker Engine (Backend)
+## Completed: 13 Bug Fixes in Market + Tournament Systems (marketussy, tournussy)
 
 ## What Was Done
-Upgraded the casino poker system from basic 5-card draw only to support both 5-card draw AND full Texas Hold'em alongside each other. All existing draw functionality preserved with full backward compatibility.
+Fixed all 13 remaining bugs across `internal/marketussy/marketussy.go` and `internal/tournussy/tournussy.go`, updated tests in both packages, and ensured all three test suites pass.
 
-### Models Updated (`internal/models/casino.go`)
-- **PokerSeat**: Added `ChipStack`, `CurrentBet`, `Folded`, `AllIn`, `LastAction` fields
-- **PokerTable**: Added `GameType`, `CommunityCards`, `SmallBlind`, `BigBlind`, `CurrentBet`, `DealerSeat`, `ActionSeat`, `MinRaise`, `SidePots`, `Round`, `ActionDeadline` fields
-- **New type**: `SidePot` struct for side pot tracking
-- **New constants**: `PokerTablePreFlop`, `PokerTableFlop`, `PokerTableTurn`, `PokerTableRiver`, `PokerTableShowdown`, `PokerGameDraw`, `PokerGameHoldem`
+### Bug Fixes Summary
 
-### Game Engine (`internal/server/casino.go`)
-- **`startHoldemHand`**: Posts blinds, deals 2 hole cards, sets action seat
-- **`handleHoldemAction`**: HTTP handler for check/call/raise/fold/allin actions with timeout enforcement
-- **`holdemValidateAction`**: Validates action legality (check when no bet, call amount, min raise, etc.)
-- **`holdemApplyAction`**: Applies action to table state with fun log messages
-- **`advanceHoldemRound`**: Progresses preflop->flop->turn->river->showdown, dealing community cards
-- **`settleHoldemTable`**: Evaluates best 5-of-7 hands, distributes pots including side pots
-- **`settleHoldemSingleWinner`**: Awards pot when everyone folds
-- **`holdemCashOutPlayers`**: Returns chip stacks to player stables at settlement
-- **`holdemBuildPots`**: Builds main pot + side pots for all-in scenarios
-- **`evaluateBestHoldemHand`**: Tries all C(7,5)=21 combinations to find best 5-card hand
-- **`handKickers`**: Kicker-based tie breaking for all hand types
-- **`combinations`**: Generic C(n,k) combinatorial generator
-- **Timeout mechanism**: 60-second ActionDeadline per action, auto-fold on expiry
+**marketussy.go:**
+1. **BUG 1** - Burn amount floor: `max(int64(1), listing.Price*2/100)` so prices < 50 still burn at least 1.
+2. **BUG 2** - Stud listings persist: Added `TimesUsed`/`MaxUses` fields, listings only deactivate when `MaxUses > 0 && TimesUsed >= MaxUses`.
+3. **BUG 3** - Buyer balance validation: Added `buyerBalance int64` param, check `buyerBalance < listing.Price`, compute `SellerPayout`.
+4. **BUG 4** - Duplicate horse listing check: Iterates existing listings for same active HorseID before creating.
+5. **BUG 5** - ELO floor: Loser ELO can't go below 100.
+6. **BUG 6** - GetListing returns copy: Returns `clone := *listing; &clone` to prevent mutation.
 
-### Routes Updated (`internal/server/server.go`)
-- `POST /api/casino/poker/{id}/action` - New holdem action endpoint
-- `POST /api/casino/poker` - Now accepts `gameType` param ("draw" or "holdem", default "holdem")
-- All existing draw routes unchanged
+**tournussy.go:**
+7. **BUG 7** - RecordResult O(n) prepend: Now appends chronologically, GetHorseHistory/GetRecentResults reverse for newest-first.
+8. **BUG 8** - Prize pool: PrizePool starts at 0, grows from `RegisterHorse` entry fees. `RecordRoundResults` returns `(*PrizeDistribution, error)` with 50/30/20 split when tournament finishes.
+9. **BUG 9** - Min horses: `RunNextRound` rejects with `< 2` horses registered.
+10. **BUG 10** - Dynamic win counting: Loops over `trackWins` map instead of hardcoded track types.
+11. **BUG 11** - `the_yogurt_sees` description updated to reflect actual behavior (Hauntedussy race completion) with limitation comment.
+12. **BUG 12** - `derulo_moment` description updated to reflect actual behavior (TMP BB horse finishing race) with limitation comment.
+13. **BUG 13** - Removed duplicate "Stampede" from `tournamentNouns`.
 
-### Key Design Decisions
-- Hold'em uses per-player chip stacks (set to buy-in at table join)
-- Blinds: SmallBlind = buyIn/20, BigBlind = buyIn/10
-- Max 6 players for holdem (vs 4 for draw)
-- Side pots built from contribution levels when players go all-in
-- Settlement cashes out all remaining chip stacks to player stables
-- Draw tables still use the legacy flat pot/payout system
-
-### Additional Fixes
-- Fixed pre-existing build error: `slotSymbolPool` -> `slotWeightedPool` reference
-- Removed old stub implementations of `startHoldemHand` and `handleHoldemAction`
-
-## Files Modified
-- `internal/models/casino.go` - New fields on PokerSeat/PokerTable, SidePot type, Hold'em constants
-- `internal/server/casino.go` - Full Hold'em engine (~850 lines of new code)
-- `internal/server/server.go` - New route for `/api/casino/poker/{id}/action`
+### Test Updates
+- `marketussy_test.go`: All `PurchaseBreeding` calls updated to 3-arg signature (added `buyerBalance`). Replaced `TestPurchaseBreeding_DeactivatesListing` with `TestPurchaseBreeding_ListingPersistsAfterPurchase` and `TestPurchaseBreeding_DeactivatesAfterMaxUses`.
+- `tournussy_test.go`: All `RecordRoundResults` calls updated to handle `(*PrizeDistribution, error)` return type.
 
 ## Verification
-- `go build ./...` - passes
-- `go vet ./...` - passes
-- `go test -race ./internal/server/` - 61/61 PASS
-- `go test -race ./...` - all project tests pass
+- `go build ./...` — passes
+- `go test ./internal/marketussy/ -v` — 44/44 PASS
+- `go test ./internal/tournussy/ -v` — 75/75 PASS
+- `go test ./internal/server/ -v` — 55/55 PASS
 
-## Next Task: Check devplan.md for next pending task
+## Files Modified
+- `internal/marketussy/marketussy.go` — BUGs 1-6
+- `internal/marketussy/marketussy_test.go` — Updated signatures, new tests
+- `internal/tournussy/tournussy.go` — BUGs 7-13
+- `internal/tournussy/tournussy_test.go` — Updated return value handling
+- `internal/models/models.go` — Added `TimesUsed`, `MaxUses` to `StudListing`; `SellerPayout` to `MarketTransaction`
+- `internal/server/server.go` — Updated `PurchaseBreeding` call site
+- `cmd/stallionussy/main.go` — Updated `RecordRoundResults` return handling
+
+## Previous Work (by earlier Ralphs)
+- Fixed 10 bugs in `internal/fightussy/fightussy.go` (fight engine)
+- Fixed 8 bugs in `internal/racussy/racussy.go` (racing engine)
+
+## Next Task: Check devplan.md for next pending task (devplan.md not found — all known bugs fixed)

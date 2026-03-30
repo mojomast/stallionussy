@@ -1066,7 +1066,11 @@ func cmdTrain(state *cliState, args []string) {
 		fmt.Printf("*** WARNING: %s has %.0f fatigue! Injury risk is elevated. ***\n", h.Name, h.Fatigue)
 	}
 
-	session := state.trainer.Train(h, workout)
+	session, err := state.trainer.Train(h, workout)
+	if err != nil {
+		fmt.Printf("Cannot train %s: %s\n", h.Name, err)
+		return
+	}
 
 	fmt.Printf("=== TRAINING: %s ===\n", h.Name)
 	fmt.Printf("  Workout:    %s\n", session.WorkoutType)
@@ -1108,7 +1112,11 @@ func cmdRest(state *cliState, args []string) {
 		return
 	}
 
-	session := state.trainer.Train(h, models.WorkoutRecovery)
+	session, err := state.trainer.Train(h, models.WorkoutRecovery)
+	if err != nil {
+		fmt.Printf("Cannot rest %s: %s\n", h.Name, err)
+		return
+	}
 
 	fmt.Printf("=== REST DAY: %s ===\n", h.Name)
 	fmt.Printf("  XP Gained:  %.1f\n", session.XPGained)
@@ -1474,7 +1482,7 @@ func cmdTournamentRun(state *cliState, args []string) {
 	updatePostRaceStats(state, race, horses, weather)
 
 	// Record tournament results.
-	_ = state.tournaments.RecordRoundResults(tournID, race)
+	_, _ = state.tournaments.RecordRoundResults(tournID, race)
 
 	fmt.Println()
 	fmt.Printf("Tournament round complete.\n")

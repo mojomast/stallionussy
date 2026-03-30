@@ -166,6 +166,15 @@ func RandomGenome() models.Genome {
 //
 // The foal starts untrained: CurrentFitness = FitnessCeiling × 0.5.
 func Breed(sire, mare *models.Horse) *models.Horse {
+	// BUG FIX: Guard against nil parents to prevent nil pointer dereference.
+	if sire == nil || mare == nil {
+		return nil
+	}
+	// BUG FIX: Prevent self-breeding — sire and mare must be different horses.
+	if sire.ID == mare.ID {
+		return nil
+	}
+
 	foalGenome := make(models.Genome, len(allGeneTypes))
 
 	for _, gt := range allGeneTypes {
@@ -280,6 +289,12 @@ func Breed(sire, mare *models.Horse) *models.Horse {
 		Lore:           lore,
 		CreatedAt:      time.Now(),
 	}
+
+	// NOTE: Breed() intentionally does NOT assign traits to the foal.
+	// The caller must invoke trainussy.Trainer.AssignTraitsAtBirth() separately
+	// after breeding. This separation of concerns keeps the genetics engine
+	// independent of the trait system and allows the caller to control when
+	// and how traits are assigned (e.g. with access to both parent references).
 
 	return foal
 }

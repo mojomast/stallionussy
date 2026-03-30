@@ -84,7 +84,10 @@ func TestTrain_Sprint(t *testing.T) {
 	xpBefore := horse.TrainingXP
 	fatigueBefore := horse.Fatigue
 
-	session := tr.Train(horse, models.WorkoutSprint)
+	session, err := tr.Train(horse, models.WorkoutSprint)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutSprint)
 	assertXPGain(t, horse, xpBefore, "Sprint")
@@ -100,7 +103,10 @@ func TestTrain_Endurance(t *testing.T) {
 	xpBefore := horse.TrainingXP
 	fatigueBefore := horse.Fatigue
 
-	session := tr.Train(horse, models.WorkoutEndurance)
+	session, err := tr.Train(horse, models.WorkoutEndurance)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutEndurance)
 	assertXPGain(t, horse, xpBefore, "Endurance")
@@ -116,7 +122,10 @@ func TestTrain_MentalRep(t *testing.T) {
 	xpBefore := horse.TrainingXP
 	fatigueBefore := horse.Fatigue
 
-	session := tr.Train(horse, models.WorkoutMentalRep)
+	session, err := tr.Train(horse, models.WorkoutMentalRep)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutMentalRep)
 	assertXPGain(t, horse, xpBefore, "MentalRep")
@@ -132,7 +141,10 @@ func TestTrain_MudRun(t *testing.T) {
 	xpBefore := horse.TrainingXP
 	fatigueBefore := horse.Fatigue
 
-	session := tr.Train(horse, models.WorkoutMudRun)
+	session, err := tr.Train(horse, models.WorkoutMudRun)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutMudRun)
 	assertXPGain(t, horse, xpBefore, "MudRun")
@@ -148,7 +160,10 @@ func TestTrain_RestDay_ReducesFatigue(t *testing.T) {
 	fatigueBefore := horse.Fatigue
 	xpBefore := horse.TrainingXP
 
-	session := tr.Train(horse, models.WorkoutRecovery)
+	session, err := tr.Train(horse, models.WorkoutRecovery)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutRecovery)
 	assertXPGain(t, horse, xpBefore, "RestDay")
@@ -168,7 +183,7 @@ func TestTrain_RestDay_FatigueFloorAtZero(t *testing.T) {
 	horse := makeTestHorse()
 	horse.Fatigue = 10 // less than |fatigueDelta| = 30
 
-	tr.Train(horse, models.WorkoutRecovery)
+	tr.Train(horse, models.WorkoutRecovery) //nolint:errcheck
 
 	if horse.Fatigue != 0 {
 		t.Errorf("RestDay with low fatigue: expected 0, got %v", horse.Fatigue)
@@ -183,7 +198,10 @@ func TestTrain_General(t *testing.T) {
 	xpBefore := horse.TrainingXP
 	fatigueBefore := horse.Fatigue
 
-	session := tr.Train(horse, models.WorkoutGeneral)
+	session, err := tr.Train(horse, models.WorkoutGeneral)
+	if err != nil {
+		t.Fatalf("Train returned error: %v", err)
+	}
 
 	assertSession(t, session, horse.ID, models.WorkoutGeneral)
 	assertXPGain(t, horse, xpBefore, "General")
@@ -389,7 +407,7 @@ func TestTrain_FitnessCappedAtCeiling(t *testing.T) {
 	horse.CurrentFitness = 0.999
 	horse.FitnessCeiling = 1.0
 
-	tr.Train(horse, models.WorkoutSprint)
+	tr.Train(horse, models.WorkoutSprint) //nolint:errcheck
 
 	if horse.CurrentFitness > horse.FitnessCeiling {
 		t.Errorf("Fitness %v exceeded ceiling %v", horse.CurrentFitness, horse.FitnessCeiling)
@@ -405,7 +423,7 @@ func TestTrain_FatigueCappedAt100(t *testing.T) {
 	horse := makeTestHorse()
 	horse.Fatigue = 95
 
-	tr.Train(horse, models.WorkoutEndurance) // +20 fatigue
+	tr.Train(horse, models.WorkoutEndurance) //nolint:errcheck // +20 fatigue
 	if horse.Fatigue > 100 {
 		t.Errorf("Fatigue exceeded 100: got %v", horse.Fatigue)
 	}
@@ -437,9 +455,11 @@ func TestGetTrainingHistory_RecordsSessions(t *testing.T) {
 	tr := NewTrainer()
 	horse := makeTestHorse()
 
-	tr.Train(horse, models.WorkoutSprint)
-	tr.Train(horse, models.WorkoutEndurance)
-	tr.Train(horse, models.WorkoutGeneral)
+	tr.Train(horse, models.WorkoutSprint)    //nolint:errcheck
+	horse.Injury = nil                       // Clear any injury from previous training
+	tr.Train(horse, models.WorkoutEndurance) //nolint:errcheck
+	horse.Injury = nil                       // Clear any injury from previous training
+	tr.Train(horse, models.WorkoutGeneral)   //nolint:errcheck
 
 	history := tr.GetTrainingHistory(horse.ID)
 	if len(history) != 3 {
@@ -459,7 +479,7 @@ func TestGetTrainingHistory_RecordsSessions(t *testing.T) {
 func TestGetTrainingHistory_ReturnsCopy(t *testing.T) {
 	tr := NewTrainer()
 	horse := makeTestHorse()
-	tr.Train(horse, models.WorkoutSprint)
+	tr.Train(horse, models.WorkoutSprint) //nolint:errcheck
 
 	h1 := tr.GetTrainingHistory(horse.ID)
 	h2 := tr.GetTrainingHistory(horse.ID)
@@ -692,15 +712,15 @@ func TestIsLegendaryEligible(t *testing.T) {
 func TestAgeHorse_Youth(t *testing.T) {
 	horse := makeTestHorse()
 	horse.Age = 0
-	horse.FitnessCeiling = 1.0
+	horse.FitnessCeiling = 0.90 // Start below 1.0 so Youth growth is observable
 
 	AgeHorse(horse)
 
 	if horse.Age != 1 {
 		t.Errorf("age = %d, want 1", horse.Age)
 	}
-	// Youth: ceiling *= 1.02
-	expected := 1.0 * 1.02
+	// Youth: ceiling *= 1.02, capped at 1.0
+	expected := 0.90 * 1.02
 	if horse.FitnessCeiling != expected {
 		t.Errorf("ceiling = %v, want %v (Youth +2%%)", horse.FitnessCeiling, expected)
 	}

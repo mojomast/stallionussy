@@ -331,6 +331,8 @@ type StudListing struct {
 	Pedigree    string    `json:"pedigree"`     // Human-readable lineage summary
 	SapphoScore float64   `json:"sappho_score"` // Quality rating 0-12
 	Active      bool      `json:"active"`
+	TimesUsed   int       `json:"times_used"` // Number of times this stud has been bred via marketplace
+	MaxUses     int       `json:"max_uses"`   // 0 = unlimited; otherwise deactivate after this many uses
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -340,14 +342,15 @@ type StudListing struct {
 
 // MarketTransaction records a completed stud-market deal.
 type MarketTransaction struct {
-	ID         string    `json:"id"`
-	ListingID  string    `json:"listing_id"`
-	BuyerID    string    `json:"buyer_id"`
-	SellerID   string    `json:"seller_id"`
-	Price      int64     `json:"price"`       // Agreed price in cummies
-	BurnAmount int64     `json:"burn_amount"` // 2% burn deducted from the economy
-	FoalID     string    `json:"foal_id"`     // ID of the resulting baby horse
-	CreatedAt  time.Time `json:"created_at"`
+	ID           string    `json:"id"`
+	ListingID    string    `json:"listing_id"`
+	BuyerID      string    `json:"buyer_id"`
+	SellerID     string    `json:"seller_id"`
+	Price        int64     `json:"price"`         // Agreed price in cummies
+	BurnAmount   int64     `json:"burn_amount"`   // 2% burn deducted from the economy
+	SellerPayout int64     `json:"seller_payout"` // Price minus burn (what the seller receives)
+	FoalID       string    `json:"foal_id"`       // ID of the resulting baby horse
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // ---------------------------------------------------------------------------
