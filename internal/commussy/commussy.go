@@ -4,6 +4,7 @@
 package commussy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -54,14 +55,25 @@ func NewHub() *Hub {
 	}
 }
 
-// Run is the Hub's main event loop. It must be started as a goroutine before
-// any clients connect:
+// RunWithContext is the Hub's main event loop with context-based cancellation.
+// It returns when the context is cancelled, allowing graceful shutdown.
+// It must be started as a goroutine before any clients connect:
 //
 //	hub := commussy.NewHub()
-//	go hub.Run()
-func (h *Hub) Run() {
+//	go hub.RunWithContext(ctx)
+func (h *Hub) RunWithContext(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			// Shutdown: close all client connections gracefully.
+			h.mu.Lock()
+			for client := range h.clients {
+				close(client.send)
+				delete(h.clients, client)
+			}
+			h.mu.Unlock()
+			log.Println("commussy: hub shut down gracefully")
+			return
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -125,6 +137,13 @@ func (h *Hub) Run() {
 			}
 		}
 	}
+}
+
+// Run is a backward-compatible wrapper that runs the hub event loop
+// without context-based cancellation (blocks forever). Use RunWithContext
+// for graceful shutdown support.
+func (h *Hub) Run() {
+	h.RunWithContext(context.Background())
 }
 
 // ClientCount returns the number of currently connected clients.

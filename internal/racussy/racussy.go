@@ -174,7 +174,15 @@ func CalcBaseSpeed(horse *models.Horse, trackType models.TrackType) float64 {
 
 	geneticFactor := spdScore*w.SPD + stmScore*w.STM + tmpScore*w.TMP
 
-	return speedScale * horse.CurrentFitness * geneticFactor
+	// Defensive clamp: FitnessCeiling (and thus CurrentFitness) should never
+	// exceed 1.0, but clamp here to prevent any upstream drift from making
+	// a horse disproportionately fast.
+	fitness := horse.CurrentFitness
+	if fitness > 1.0 {
+		fitness = 1.0
+	}
+
+	return speedScale * fitness * geneticFactor
 }
 
 // ---------------------------------------------------------------------------
@@ -383,16 +391,15 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			}
 
 			// ------ Apply fatigue_resist trait ------
-			// If fatigue < 80% of distance, skip fatigue calculation entirely.
-			skipFatigue := false
+			// BUG FIX: fatigue_resist now provides a 50% fatigue reduction
+			// instead of complete immunity. The old logic compared fatigue
+			// (a tiny per-tick value) against 0.8 which was almost always
+			// true, granting permanent zero fatigue.
 			for _, trait := range horse.Traits {
 				if trait.Effect == "fatigue_resist" && fatigue < 0.8*distance {
-					skipFatigue = true
+					fatigue *= 0.5 // 50% fatigue reduction, not full immunity
 					break
 				}
-			}
-			if skipFatigue {
-				fatigue = 0
 			}
 
 			// Apply cursed_fatigue traits (increases fatigue).
@@ -442,7 +449,7 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// ------ Apply stamina_boost trait (reduces fatigue growth) ------
 			// This retroactively adjusts deltaP by modifying the fatigue component.
 			for _, trait := range horse.Traits {
-				if trait.Effect == "stamina_boost" && !skipFatigue {
+				if trait.Effect == "stamina_boost" {
 					// Recalculate: reduce fatigue by trait magnitude factor.
 					// fatigue *= (2 - magnitude), so we need to adjust deltaP.
 					oldFatigue := fatigue

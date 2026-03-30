@@ -33,6 +33,10 @@ COPY --from=builder /build/web ./web
 EXPOSE 8080
 
 ENV STALLIONUSSY_PORT=8080
+# NOTE: JWT_SECRET must be provided at runtime (via docker run -e, compose env,
+# or orchestrator secrets). Do NOT bake secrets into the image.
+# The app reads STALLIONUSSY_PORT from the environment automatically when
+# --port is not explicitly set on the command line.
 
 ENTRYPOINT ["./stallionussy"]
-CMD ["serve", "--port", "8080"]
+CMD ["serve"]

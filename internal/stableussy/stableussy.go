@@ -161,9 +161,15 @@ func (sm *StableManager) AddHorseToStable(stableID string, horse *models.Horse) 
 	// Append to the stable's horse roster.
 	stable.Horses = append(stable.Horses, *horse)
 
-	// Register in the global registry (pointer to the copy inside the stable's slice).
-	// We store a pointer to the horse separately so global lookups stay O(1).
-	sm.horses[horse.ID] = horse
+	// After append, the backing array may have been reallocated, which
+	// invalidates any pointers previously derived via ImportStable
+	// (which stores &stable.Horses[i]). Re-register ALL horses (including
+	// the newly added one) so the global registry always points into the
+	// stable's slice — this prevents pointer/copy divergence where ELO
+	// updates via the global pointer would not be reflected in stable.Horses.
+	for i := range stable.Horses {
+		sm.horses[stable.Horses[i].ID] = &stable.Horses[i]
+	}
 
 	return nil
 }
@@ -345,6 +351,11 @@ func (sm *StableManager) MoveHorse(horseID, fromStableID, toStableID string) err
 		return fmt.Errorf("horse not found: %s", horseID)
 	}
 
+	// Save a copy of the horse BEFORE removing from the source slice,
+	// because the global pointer points into the slice and will be
+	// invalidated by the removal.
+	horseCopy := *horse
+
 	// Remove from source stable's roster.
 	found := false
 	for i := range fromStable.Horses {
@@ -358,11 +369,24 @@ func (sm *StableManager) MoveHorse(horseID, fromStableID, toStableID string) err
 		return fmt.Errorf("horse %s not found in stable %s", horseID, fromStableID)
 	}
 
-	// Update ownership.
-	horse.OwnerID = toStable.OwnerID
+	// Update ownership on the saved copy.
+	horseCopy.OwnerID = toStable.OwnerID
 
 	// Add to destination stable's roster.
-	toStable.Horses = append(toStable.Horses, *horse)
+	toStable.Horses = append(toStable.Horses, horseCopy)
+
+	// Re-register ALL horses in the destination stable (including the moved
+	// horse) so the global registry points into the slice, preventing
+	// pointer/copy divergence that causes stale ELO data.
+	for i := range toStable.Horses {
+		sm.horses[toStable.Horses[i].ID] = &toStable.Horses[i]
+	}
+
+	// Re-register the source stable's horses since the removal via
+	// append([:i], [i+1:]...) shifts elements, invalidating old pointers.
+	for i := range fromStable.Horses {
+		sm.horses[fromStable.Horses[i].ID] = &fromStable.Horses[i]
+	}
 
 	return nil
 }
@@ -389,6 +413,11 @@ func (sm *StableManager) RemoveHorse(horseID string) error {
 		for i := range stable.Horses {
 			if stable.Horses[i].ID == horseID {
 				stable.Horses = append(stable.Horses[:i], stable.Horses[i+1:]...)
+				// Re-register remaining horses — the slice shift
+				// invalidates pointers from ImportStable.
+				for j := range stable.Horses {
+					sm.horses[stable.Horses[j].ID] = &stable.Horses[j]
+				}
 				break
 			}
 		}

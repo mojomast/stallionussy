@@ -431,8 +431,9 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 	// Track temporary effects
 	type tempEffect struct {
 		ticksLeft  int
-		effectType string // "stat_swap", "haunted_mace"
-		targetIdx  int    // 0 or 1
+		effectType string  // "stat_swap", "haunted_mace", "mace_malfunction"
+		targetIdx  int     // 0 or 1
+		savedValue float64 // original stat value for restoration (mace_malfunction)
 	}
 	var activeEffects []tempEffect
 
@@ -512,6 +513,10 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 						e[1].Attack = origAttack[1]
 						e[1].Defense = origDefense[1]
 						e[1].Speed = origSpeed[1]
+					}
+					// BUG FIX: Restore attack after mace malfunction expires.
+					if eff.effectType == "mace_malfunction" {
+						e[eff.targetIdx].Attack = eff.savedValue
 					}
 					activeEffects = append(activeEffects[:i], activeEffects[i+1:]...)
 				}
@@ -633,8 +638,13 @@ func SimulateFight(horse1, horse2 *models.Horse, config FightConfig) *FightResul
 					Tick: tick, AttackerID: atk.HorseID, Event: "mace_malfunction", Damage: 0, Text: narr,
 				})
 				result.Narrative = append(result.Narrative, narr)
-				// Reduce attack for next tick (temporary)
+				// BUG FIX: Store original attack and schedule restoration after 3 ticks
+				// instead of permanently reducing the base stat.
+				savedAtk := atk.Attack
 				atk.Attack *= 0.80
+				activeEffects = append(activeEffects, tempEffect{
+					ticksLeft: 3, effectType: "mace_malfunction", targetIdx: attackerIdx, savedValue: savedAtk,
+				})
 				continue
 			}
 

@@ -604,6 +604,12 @@ func CreateLegendary(lotNumber int) *models.Horse {
 	if def.FitnessCeilingOverride != nil {
 		ceiling = *def.FitnessCeilingOverride
 	}
+	// BUG FIX: Clamp FitnessCeiling to 1.0 — legendary overrides (e.g. 9.99)
+	// would otherwise make horses ~10x faster in race simulation since
+	// CurrentFitness is used as a multiplier in CalcBaseSpeed.
+	if ceiling > 1.0 {
+		ceiling = 1.0
+	}
 
 	return &models.Horse{
 		ID:             uuid.New().String(),

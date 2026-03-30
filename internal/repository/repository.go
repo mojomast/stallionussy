@@ -29,6 +29,14 @@ type UserRepository interface {
 
 	// UpdateUser saves changes to an existing user record.
 	UpdateUser(ctx context.Context, user *models.User) error
+
+	// GetTokenVersion returns the current token_version for a user.
+	// Used by auth middleware to reject JWTs issued before a password change.
+	GetTokenVersion(ctx context.Context, userID string) (int, error)
+
+	// IncrementTokenVersion bumps the user's token_version by 1, invalidating
+	// all previously issued JWTs. Call this on password change.
+	IncrementTokenVersion(ctx context.Context, userID string) error
 }
 
 // ---------------------------------------------------------------------------

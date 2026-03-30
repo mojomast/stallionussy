@@ -601,9 +601,10 @@ func TestCreateLegendary_E008Genome(t *testing.T) {
 			}
 		}
 	}
-	// Fitness ceiling override: 9.99
-	if math.Abs(horse.FitnessCeiling-9.99) > 1e-9 {
-		t.Errorf("E-008 FitnessCeiling = %f, want 9.99", horse.FitnessCeiling)
+	// Fitness ceiling override: originally 9.99 but clamped to 1.0 to prevent
+	// legendary horses from being disproportionately fast in race simulation.
+	if math.Abs(horse.FitnessCeiling-1.0) > 1e-9 {
+		t.Errorf("E-008 FitnessCeiling = %f, want 1.0 (clamped from 9.99)", horse.FitnessCeiling)
 	}
 	// Starts at full fitness
 	if horse.CurrentFitness != horse.FitnessCeiling {

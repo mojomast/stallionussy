@@ -1,139 +1,57 @@
 # Handoff
 
-## Current State
+## Completed: Texas Hold'em Poker Engine (Backend)
 
-This repo was re-audited and tightened around the main product-breakers.
+## What Was Done
+Upgraded the casino poker system from basic 5-card draw only to support both 5-card draw AND full Texas Hold'em alongside each other. All existing draw functionality preserved with full backward compatibility.
 
-## Fixed In This Pass
+### Models Updated (`internal/models/casino.go`)
+- **PokerSeat**: Added `ChipStack`, `CurrentBet`, `Folded`, `AllIn`, `LastAction` fields
+- **PokerTable**: Added `GameType`, `CommunityCards`, `SmallBlind`, `BigBlind`, `CurrentBet`, `DealerSeat`, `ActionSeat`, `MinRaise`, `SidePots`, `Round`, `ActionDeadline` fields
+- **New type**: `SidePot` struct for side pot tracking
+- **New constants**: `PokerTablePreFlop`, `PokerTableFlop`, `PokerTableTurn`, `PokerTableRiver`, `PokerTableShowdown`, `PokerGameDraw`, `PokerGameHoldem`
 
-- New authenticated users now get a stable with 2 starter horses.
-- Existing empty authenticated stables are backfilled with starter horses on boot.
-- Authenticated users with an empty stable can now claim a one-time emergency starter recovery grant from the stable page.
-- Authenticated users are restricted to a single stable, matching current server ownership assumptions.
-- First-time authenticated players now get a skippable interactive tutorial in the SPA covering stable, horse detail, training, racing, breeding, market, advanced competition, and replay/share.
-- The tutorial has since been expanded into a broader branch-aware walkthrough that now covers recovery, training/recovery logic, quick race, custom race, breeding, market, challenges, fights, glue/departed systems, studs, progression, replay/share, and help surfaces.
-- Tutorial can be replayed from the in-app help button and persists completion/skip state in browser local storage.
-- Race history/replay/share flow was repaired:
-  - removed broken `apiFetch` usage
-  - fixed replay visualizer tick wiring
-  - reduced duplicate local-vs-WS race playback for the initiating client
-- Challenge and betting flows were tightened further:
-  - challenge list endpoint now returns history states instead of only pending challenges
-  - challenge completion broadcasts now include winner name for the SPA
-  - challenge acceptance can auto-pick a horse server-side and now surfaces the returned race in the SPA
-  - betting resolution payload now matches the SPA expectation
-  - SPA betting now sends `horseID` correctly
-- Added a first-pass lore/help system to the SPA:
-  - new `#lore` codex page in `web/index.html`
-  - lore/help data centralized in `LORE_HELP` and `LORE_CODEX`
-  - bottom-right help area now links to both tutorial replay and lore codex
-  - inline lore tooltips added on race, horse detail, prestige, market, achievements, challenges, and betting surfaces
-  - routing/export wiring added for `openLore()` and `loadLorePage()`
-- Added a persistent page-help panel alongside the tutorial/codex buttons:
-  - gives per-screen operator guidance outside onboarding
-  - includes short checklists and recovery-oriented guidance for dead-end states
-  - updates on navigation so users can get help without replaying the tutorial
-- Lore terminology was normalized to reduce drift:
-  - `Sappho Score` = numeric bloodline quality signal shown in UI
-  - `Sappho Scale` = broader social/institutional ideology around elite bloodstock
-  - `Geoffrussy` = platform governance/compliance authority, not a random one-off joke label
-  - `B.U.R.P.` = Bureau of Unexplained Racing Phenomena, responsible for anomaly incident framing
-- Progression and pacing were reworked to make solo play viable from onboarding through mid-game:
-  - authenticated players now consume real daily train and race actions instead of dead placeholder counters
-  - `/api/progress` and `/api/prestige` now return SPA-usable progression fields
-  - daily login rewards were flattened into a predictable 7-day loop instead of compounding exponentially
-  - prestige thresholds were pulled forward for earlier account growth and horse-cap expansion
-  - race prestige XP was normalized around placement instead of only win-heavy spikes
-- Async fallback opponents were added without a new subsystem:
-  - authenticated quick races now auto-fill with matched synthetic CPU entrants
-  - underfilled authenticated custom races are padded with CPU entrants to keep progression moving
-  - challenge creation now supports a `CPU Arena` opponent for immediate 1v1 resolution when concurrency is low
-  - synthetic opponents are simulation-only and do not persist, earn cummies, gain prestige, or pollute race history/leaderboards
-- Breeding progression guardrails were unified:
-  - stud-market breeding now enforces prestige stable-cap and breeding cooldown rules
-  - breeder-stallion breeding now enforces the same cap/cooldown checks before charging fees
-- Player progression and season state now persist server-side:
-  - `PlayerProgress` daily limits, login streaks, prestige XP, and related counters are written through to Postgres
-  - seasons are loaded from Postgres on boot and season rollover now updates the archived and active season records
-- The SPA shell and chat layout were tightened:
-  - desktop now uses a fixed-height two-pane layout with a persistent left chat rail and a dedicated scrolling main-content pane
-  - mobile chat now opens as a clearer drawer with close/backdrop handling instead of relying on page scroll behavior
-- Gameplay balance and QoL were tightened in a follow-up pass:
-  - active horse slots now exclude retired horses, reducing cap pressure on breeding, retirement, and breeder assignments
-  - quick race auto-picks the best active owned horse rather than the first one in roster order
-  - race purse distribution is flatter and streak multipliers are less top-heavy, so deeper placements still move a roster forward
-  - training fatigue penalties start earlier and rest recovery is less extreme, which pushes healthier horse rotation
-  - destructive loops like glue now protect the last active horse from irreversible account-bricking mistakes
-- Added a first-pass casino subsystem designed around async-safe social gambling rather than a real-time minigame stack:
-  - stables now track `casino_chips` separately from cummies
-  - players can exchange cummies into chips with a protected cummies floor to avoid hard-bricking core progression
-  - a new `#casino` SPA page exposes chip exchange, slots, and async draw poker
-  - poker is simplified to persistent five-card draw tables with one buy-in, one draw phase, and server-side showdown resolution
-  - slots use server-authoritative outcomes and persist recent spin history
-- Added a departed-horse / rare return system tied directly to destructive outcomes:
-  - horses lost in fatal arena fights or the glue factory are now written to a departed-horse ledger
-  - ledger records persist in Postgres as horse snapshots plus omen state
-  - rare omens can surface later and be claimed from the glue/ledger UI
-  - returned horses come back as altered roster members with reduced efficiency, changed lore, and permanent anomalous traits instead of a full undo
-- Stud-market breeding now requires an explicit owned mare on both client and server.
-- Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
-- Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
-- Guest quick race now works under auth middleware, matching the SPA guidance.
-- Auth-backed users with auto-created stables no longer see an actionable create-stable dead end in the stable page UI.
-- Added backend tests for starter-horse seeding and one-stable-per-user behavior.
+### Game Engine (`internal/server/casino.go`)
+- **`startHoldemHand`**: Posts blinds, deals 2 hole cards, sets action seat
+- **`handleHoldemAction`**: HTTP handler for check/call/raise/fold/allin actions with timeout enforcement
+- **`holdemValidateAction`**: Validates action legality (check when no bet, call amount, min raise, etc.)
+- **`holdemApplyAction`**: Applies action to table state with fun log messages
+- **`advanceHoldemRound`**: Progresses preflop->flop->turn->river->showdown, dealing community cards
+- **`settleHoldemTable`**: Evaluates best 5-of-7 hands, distributes pots including side pots
+- **`settleHoldemSingleWinner`**: Awards pot when everyone folds
+- **`holdemCashOutPlayers`**: Returns chip stacks to player stables at settlement
+- **`holdemBuildPots`**: Builds main pot + side pots for all-in scenarios
+- **`evaluateBestHoldemHand`**: Tries all C(7,5)=21 combinations to find best 5-card hand
+- **`handKickers`**: Kicker-based tie breaking for all hand types
+- **`combinations`**: Generic C(n,k) combinatorial generator
+- **Timeout mechanism**: 60-second ActionDeadline per action, auto-fold on expiry
 
-## Validation
+### Routes Updated (`internal/server/server.go`)
+- `POST /api/casino/poker/{id}/action` - New holdem action endpoint
+- `POST /api/casino/poker` - Now accepts `gameType` param ("draw" or "holdem", default "holdem")
+- All existing draw routes unchanged
 
-- `go test ./...`
-- `go vet ./...`
-- `go build ./...`
+### Key Design Decisions
+- Hold'em uses per-player chip stacks (set to buy-in at table join)
+- Blinds: SmallBlind = buyIn/20, BigBlind = buyIn/10
+- Max 6 players for holdem (vs 4 for draw)
+- Side pots built from contribution levels when players go all-in
+- Settlement cashes out all remaining chip stacks to player stables
+- Draw tables still use the legacy flat pot/payout system
 
-All passed after the fixes in this pass.
+### Additional Fixes
+- Fixed pre-existing build error: `slotSymbolPool` -> `slotWeightedPool` reference
+- Removed old stub implementations of `startHoldemHand` and `handleHoldemAction`
 
-## Important Product Rules
+## Files Modified
+- `internal/models/casino.go` - New fields on PokerSeat/PokerTable, SidePot type, Hold'em constants
+- `internal/server/casino.go` - Full Hold'em engine (~850 lines of new code)
+- `internal/server/server.go` - New route for `/api/casino/poker/{id}/action`
 
-- Authenticated user: one stable only.
-- New stable: seeded with 2 starter horses.
-- Empty owned stable: may claim one emergency replacement starter pair.
-- Retired horses do not count against active prestige horse-slot limits.
-- Casino chips are the preferred gambling currency; cummies can be staked only through the explicit casino exchange / table rules.
-- Rare return events are exceptions, not a reusable revive economy: they come from the departed ledger and permanently change the horse.
-- First-time authenticated session: tutorial is offered once by default, can be skipped, and can be replayed later.
-- Replay share links: `#replay/{raceID}`.
-- Guest quick race is allowed.
-- Server startup requires Postgres.
+## Verification
+- `go build ./...` - passes
+- `go vet ./...` - passes
+- `go test -race ./internal/server/` - 61/61 PASS
+- `go test -race ./...` - all project tests pass
 
-## Remaining Caveats
-
-- Frontend still has no automated browser/API integration coverage.
-- Tutorial persistence is client-side only; it is not yet stored server-side per account.
-- Lore/codex content is currently SPA-local data, not server-backed content.
-- Challenges and betting pools are still in-memory and do not yet survive server restart.
-- The poker implementation is intentionally shallow: no hold'em, no side pots, no per-action timers, and no collusion detection beyond the ring-fenced economy design.
-- `docker-compose.yml` still does not provide Postgres.
-- `devplan.md` is now historical, not an accurate live delivery tracker.
-
-## Follow-up Fix
-
-- The post-casino SPA regression that caused a black screen was fixed by removing a stale `window.SU.claimStarterRecovery` export that no longer had a matching function implementation.
-- Routing now falls back to `#home` on unknown hashes instead of leaving the app with no active page.
-- Stable detail is now route-addressable as `#stable/{id}`, which lets the owned empty-stable recovery panel survive refresh/navigation.
-- Owned empty stables once again surface the emergency starter recovery CTA instead of incorrectly pushing players toward breeding with zero horses.
-- Slot spins now support the normal `POST` path plus a compatibility `GET` variant on the same route, reducing 405 dead ends while keeping auth intact.
-- Added `GET /api/capabilities` so the SPA can gate newer systems against older server builds instead of hard-failing on 404/405.
-- The SPA now degrades gracefully when `casino` or `departed_horses` are unavailable on the live server version.
-- Additional runtime fixes landed in the same pass:
-  - race share links now work again because `copyRaceLink` is globally reachable and clipboard fallback is hardened
-  - the studs page now defines its owned-horse lists correctly and only offers retired horses for breeder assignment
-  - custom race creation now validates “at least one owned horse” client-side and shows inline status instead of raw alerts where possible
-- Tutorial target highlighting now honors selector fallback instead of always using only the first selector, which fixes several spotlighting failures in onboarding.
-- Capability payload was tightened to match what the SPA actually gates today, instead of advertising unused subfeature flags.
-- Added request-level server tests for `GET /api/capabilities` and `POST /api/stables/{id}/claim-starters` so these routes are not only helper-tested.
-- Local container wiring was completed:
-  - `docker-compose.yml` now includes a Postgres service plus `DATABASE_URL` for the app container
-  - compose health now checks `/api/capabilities` instead of an old shallow `/api/stables` probe
-  - `make smoke` now verifies the local stack exposes the capability endpoint expected by the SPA
-- Casino/departed follow-ups were tightened during the repair:
-  - daily casino chip grants are now applied consistently from the casino overview path
-  - poker table payloads now redact opponent hands until settlement
-  - departed-horse omens now expire and returned horses respect active-capacity limits before re-entry
+## Next Task: Check devplan.md for next pending task

@@ -30,6 +30,11 @@ services:
       - STALLIONUSSY_PORT=8080
       - STALLIONUSSY_TICK_DELAY_MS=50
       - DATABASE_URL=postgres://stallionussy:h0rs3ussy420@postgres:5432/stallionussy?sslmode=disable
+      # JWT_SECRET must be set before deployment — provide via host env or .env file.
+      - JWT_SECRET=${JWT_SECRET:-}
+      # CORS_ORIGIN restricts cross-origin requests. Set to the frontend URL in
+      # production (e.g. https://horse.ussyco.de). Defaults to "*" for local dev.
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
     depends_on:
       postgres:
         condition: service_healthy

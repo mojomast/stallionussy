@@ -42,6 +42,7 @@
   --glow-gold: 0 0 10px rgba(255,215,0,0.4);
   --glow-purple: 0 0 10px rgba(191,64,255,0.4);
   --glow-cyan: 0 0 10px rgba(0,191,255,0.3);
+  --green: #00ff41;
 }
 
 html, body {
@@ -1968,6 +1969,359 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     padding-top: 4px;
   }
 }
+
+/* ═══ CASINO STYLES ═══════════════════════════════════════════════════════ */
+.casino-header {
+  text-align: center;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--amber);
+  background: rgba(255, 176, 0, 0.05);
+}
+.casino-header h2 {
+  color: var(--amber);
+  font-size: 18px;
+  letter-spacing: 4px;
+  margin: 0 0 4px 0;
+  text-shadow: 0 0 10px rgba(255, 176, 0, 0.3);
+}
+.casino-header .casino-subtitle {
+  color: var(--fg-dim);
+  font-size: 10px;
+  letter-spacing: 2px;
+}
+.casino-wallet-bar {
+  display: flex;
+  justify-content: center;
+  gap: 24px;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+.casino-wallet-bar .wallet-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.casino-wallet-bar .wallet-value {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+/* Slot Machine */
+.slot-machine {
+  border: 2px solid var(--amber);
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.4);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.slot-machine::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  animation: slot-glow 2s ease-in-out infinite;
+}
+@keyframes slot-glow {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+.slot-machine h3 {
+  color: var(--amber);
+  letter-spacing: 3px;
+  margin: 0 0 12px 0;
+  font-size: 14px;
+}
+.slot-reels {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin: 16px 0;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--border);
+}
+.slot-reel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 80px;
+}
+.slot-cell {
+  padding: 8px 4px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: bold;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.5);
+  transition: all 0.3s ease;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.slot-cell.winner {
+  border-color: var(--amber);
+  background: rgba(255, 176, 0, 0.15);
+  color: var(--amber);
+  text-shadow: 0 0 8px rgba(255, 176, 0, 0.5);
+  animation: cell-pulse 0.5s ease-in-out 3;
+}
+@keyframes cell-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+.slot-cell.scatter {
+  border-color: var(--purple);
+  background: rgba(128, 0, 255, 0.15);
+  color: var(--purple);
+}
+.slot-cell.wild {
+  border-color: #ff4444;
+  background: rgba(255, 0, 0, 0.1);
+  color: #ff6666;
+}
+.slot-paylines {
+  font-size: 10px;
+  color: var(--fg-dim);
+  margin-top: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.slot-payline-win {
+  color: var(--amber);
+  padding: 2px 0;
+}
+.slot-jackpot-bar {
+  text-align: center;
+  padding: 8px;
+  margin-top: 8px;
+  border: 1px solid var(--purple);
+  background: rgba(128, 0, 255, 0.05);
+  font-size: 11px;
+}
+.slot-jackpot-bar .jackpot-amount {
+  color: var(--purple);
+  font-size: 16px;
+  font-weight: bold;
+  text-shadow: 0 0 10px rgba(128, 0, 255, 0.5);
+}
+.slot-jackpot-win {
+  animation: jackpot-flash 0.3s ease-in-out 10;
+  border-color: gold !important;
+}
+@keyframes jackpot-flash {
+  0%, 100% { background: rgba(128, 0, 255, 0.05); }
+  50% { background: rgba(255, 215, 0, 0.3); }
+}
+.slot-bonus-msg {
+  color: var(--purple);
+  font-size: 12px;
+  font-weight: bold;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px dashed var(--purple);
+  animation: bonus-pulse 1s ease-in-out 3;
+}
+@keyframes bonus-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.spin-animation .slot-cell {
+  animation: spin-blur 0.4s linear;
+}
+@keyframes spin-blur {
+  0% { opacity: 0.3; transform: translateY(-20px); }
+  50% { opacity: 0.5; }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Poker Table */
+.poker-section {
+  border: 2px solid var(--green);
+  padding: 16px;
+  background: rgba(0, 80, 0, 0.08);
+}
+.poker-section h3 {
+  color: var(--green);
+  letter-spacing: 3px;
+  margin: 0 0 12px 0;
+  font-size: 14px;
+}
+.poker-table-card {
+  border: 1px solid var(--border);
+  padding: 12px;
+  margin-bottom: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  transition: border-color 0.3s ease;
+}
+.poker-table-card:hover {
+  border-color: var(--green);
+}
+.poker-table-card.status-open {
+  border-left: 3px solid var(--green);
+}
+.poker-table-card.status-drawing,
+.poker-table-card.status-preflop,
+.poker-table-card.status-flop,
+.poker-table-card.status-turn,
+.poker-table-card.status-river {
+  border-left: 3px solid var(--amber);
+}
+.poker-table-card.status-settled,
+.poker-table-card.status-showdown {
+  border-left: 3px solid var(--fg-dim);
+}
+.poker-hand {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0;
+  flex-wrap: wrap;
+}
+.poker-card {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 58px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+  font-weight: bold;
+  cursor: default;
+  transition: all 0.2s ease;
+  position: relative;
+}
+.poker-card.red { color: #ff4444; }
+.poker-card.black { color: var(--fg); }
+.poker-card.selected {
+  border-color: var(--amber);
+  transform: translateY(-6px);
+  box-shadow: 0 4px 8px rgba(255, 176, 0, 0.3);
+}
+.poker-card.facedown {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(0, 80, 0, 0.3),
+    rgba(0, 80, 0, 0.3) 4px,
+    rgba(0, 60, 0, 0.2) 4px,
+    rgba(0, 60, 0, 0.2) 8px
+  );
+  color: transparent;
+}
+.poker-card .card-rank {
+  font-size: 14px;
+}
+.poker-card .card-suit {
+  font-size: 10px;
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+}
+.community-cards {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 12px;
+  margin: 8px 0;
+  background: rgba(0, 80, 0, 0.15);
+  border: 1px solid var(--green);
+  min-height: 70px;
+  align-items: center;
+}
+.community-cards .poker-card {
+  width: 48px;
+  height: 64px;
+  font-size: 14px;
+}
+.poker-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.poker-pot {
+  text-align: center;
+  padding: 6px;
+  color: var(--amber);
+  font-weight: bold;
+  font-size: 13px;
+}
+.poker-seat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 11px;
+}
+.poker-seat-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-left: 2px solid var(--border);
+}
+.poker-seat-item.active {
+  border-left-color: var(--amber);
+  background: rgba(255, 176, 0, 0.05);
+}
+.poker-seat-item.folded {
+  opacity: 0.4;
+  text-decoration: line-through;
+}
+.poker-seat-item.winner {
+  border-left-color: var(--green);
+  color: var(--green);
+}
+
+/* Exchange Section */
+.casino-exchange {
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  margin-bottom: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.casino-exchange .exchange-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.casino-exchange label {
+  font-size: 9px;
+  color: var(--fg-dim);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* Spin history */
+.spin-history {
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.spin-history-item {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: space-between;
+}
+.spin-history-item.win { color: var(--amber); }
+.spin-history-item.loss { color: var(--fg-dim); }
+.spin-history-item.jackpot { color: var(--purple); font-weight: bold; }
+
 </style>
 </head>
 <body>
@@ -2844,55 +3198,164 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <!-- ═══ CASINO PAGE ═══════════════════════════════════════════════════════ -->
 <div class="page" id="page-casino">
-  <div class="section-hdr">// CASINOUSSY — draw poker, slots, and suspicious financial decisions</div>
-  <div class="two-col">
-    <div>
-      <h3>CHIP EXCHANGE</h3>
-      <div class="form-row">
-        <label>BUY CHIPS:</label>
-        <input class="term-input" id="casino-buy-amount" type="number" value="50" min="1" style="max-width:120px;">
+  <!-- Casino Header Banner -->
+  <div class="casino-header">
+    <h2>╔══ CASINOUSSY ══╗</h2>
+    <div class="casino-subtitle">DRAW POKER · HOLD'EM · SLOTS · SUSPICIOUS FINANCIAL DECISIONS</div>
+  </div>
+
+  <!-- Wallet Bar -->
+  <div class="casino-wallet-bar" id="casino-wallet-bar">
+    <div class="wallet-item">
+      <span class="text-dim">CUMMIES:</span>
+      <span class="wallet-value text-amber" id="casino-cummies">—</span>
+    </div>
+    <div class="wallet-item">
+      <span class="text-dim">CHIPS:</span>
+      <span class="wallet-value" style="color:var(--purple);" id="casino-chips">—</span>
+    </div>
+    <div class="wallet-item">
+      <span class="text-dim">DAILY GRANT:</span>
+      <span class="wallet-value" style="color:var(--fg-dim);" id="casino-daily-grant">—</span>
+    </div>
+  </div>
+
+  <!-- Chip Exchange -->
+  <div class="casino-exchange">
+    <div class="exchange-group">
+      <label>BUY CHIPS</label>
+      <div style="display:flex; gap:4px;">
+        <input class="term-input" id="casino-buy-amount" type="number" value="50" min="1" style="max-width:100px;">
         <button class="term-btn amber" id="btn-buy-chips">BUY</button>
       </div>
-      <div class="form-row">
-        <label>CASH OUT:</label>
-        <input class="term-input" id="casino-cashout-amount" type="number" value="20" min="1" style="max-width:120px;">
+    </div>
+    <div class="exchange-group">
+      <label>CASH OUT</label>
+      <div style="display:flex; gap:4px;">
+        <input class="term-input" id="casino-cashout-amount" type="number" value="20" min="1" style="max-width:100px;">
         <button class="term-btn" id="btn-cashout-chips">CASH OUT</button>
       </div>
-      <div id="casino-wallet-msg" class="text-dim" style="font-size:11px;"></div>
-
-      <h3 style="margin-top:16px;">SLOT MACHINE</h3>
-      <div class="form-row">
-        <label>WAGER:</label>
-        <input class="term-input" id="slot-wager" type="number" value="10" min="1" style="max-width:120px;">
-        <button class="term-btn danger" id="btn-spin-slots">SPIN</button>
-      </div>
-      <div id="slot-result" class="text-dim" style="font-size:11px;"></div>
-      <div id="slot-history" class="mt-8 text-dim" style="font-size:11px;">No spins logged.</div>
     </div>
+    <div id="casino-wallet-msg" class="text-dim" style="font-size:11px; align-self:center;"></div>
+  </div>
+
+  <div class="two-col">
+    <!-- LEFT COLUMN: Slot Machine -->
     <div>
-      <h3>ASYNC DRAW POKER</h3>
-      <div class="form-row">
-        <label>TABLE:</label>
-        <input class="term-input" id="poker-table-name" maxlength="40" placeholder="The Yogurt Room">
+      <div class="slot-machine" id="slot-machine-container">
+        <h3>╠═ SLOT MACHINE ═╣</h3>
+
+        <!-- Jackpot Display -->
+        <div class="slot-jackpot-bar" id="slot-jackpot-bar">
+          <div class="text-dim" style="font-size:9px; letter-spacing:2px;">PROGRESSIVE JACKPOT</div>
+          <div class="jackpot-amount" id="slot-jackpot-amount">—</div>
+        </div>
+
+        <!-- Reel Grid (3 rows x 5 columns) -->
+        <div class="slot-reels" id="slot-reels">
+          <div class="slot-reel">
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+          </div>
+          <div class="slot-reel">
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+          </div>
+          <div class="slot-reel">
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+          </div>
+          <div class="slot-reel">
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+          </div>
+          <div class="slot-reel">
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+            <div class="slot-cell">—</div>
+          </div>
+        </div>
+
+        <!-- Wager Controls -->
+        <div style="display:flex; justify-content:center; gap:12px; align-items:center; margin-top:8px;">
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="text-dim" style="font-size:10px;">WAGER:</span>
+            <input class="term-input" id="slot-wager" type="number" value="10" min="1" style="max-width:80px; text-align:center;">
+          </div>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="text-dim" style="font-size:10px;">LINES:</span>
+            <select class="term-input" id="slot-lines" style="max-width:60px;">
+              <option value="1">1</option>
+              <option value="3">3</option>
+              <option value="5" selected>5</option>
+              <option value="7">7</option>
+              <option value="9">9</option>
+            </select>
+          </div>
+          <button class="term-btn danger" id="btn-spin-slots" style="padding:6px 24px; letter-spacing:3px;">▶ SPIN</button>
+        </div>
+
+        <!-- Payline Results -->
+        <div class="slot-paylines" id="slot-paylines"></div>
+
+        <!-- Bonus / Result Message -->
+        <div id="slot-result"></div>
       </div>
-      <div class="form-row">
-        <label>BUY-IN:</label>
-        <input class="term-input" id="poker-buyin" type="number" value="50" min="10" style="max-width:120px;">
+
+      <!-- Spin History -->
+      <div style="margin-top:12px;">
+        <div class="text-dim" style="font-size:10px; letter-spacing:2px; margin-bottom:4px;">SPIN HISTORY</div>
+        <div class="spin-history" id="slot-history">
+          <span class="text-dim">No spins logged.</span>
+        </div>
       </div>
-      <div class="form-row">
-        <label>CURRENCY:</label>
-        <select class="term-input" id="poker-currency" style="max-width:180px;">
-          <option value="casino_chips">Casino Chips</option>
-          <option value="cummies">Cummies</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <label></label>
-        <button class="term-btn purple" id="btn-create-poker-table">OPEN TABLE</button>
-      </div>
-      <div id="poker-create-msg" class="text-dim" style="font-size:11px;"></div>
-      <div id="poker-tables" class="mt-8">
-        <span class="loading cursor-blink">Loading poker tables...</span>
+    </div>
+
+    <!-- RIGHT COLUMN: Poker -->
+    <div>
+      <div class="poker-section">
+        <h3>╠═ POKER TABLES ═╣</h3>
+
+        <!-- Create Table Form -->
+        <div style="border:1px solid var(--border); padding:12px; margin-bottom:12px; background:rgba(0,0,0,0.2);">
+          <div class="text-dim" style="font-size:10px; letter-spacing:2px; margin-bottom:8px;">OPEN NEW TABLE</div>
+          <div class="form-row">
+            <label style="min-width:70px;">NAME:</label>
+            <input class="term-input" id="poker-table-name" maxlength="40" placeholder="The Yogurt Room" style="flex:1;">
+          </div>
+          <div class="form-row">
+            <label style="min-width:70px;">GAME:</label>
+            <select class="term-input" id="poker-game-type" style="max-width:180px;">
+              <option value="draw">Draw Poker</option>
+              <option value="holdem">Texas Hold'em</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label style="min-width:70px;">BUY-IN:</label>
+            <input class="term-input" id="poker-buyin" type="number" value="50" min="10" style="max-width:120px;">
+          </div>
+          <div class="form-row">
+            <label style="min-width:70px;">CURRENCY:</label>
+            <select class="term-input" id="poker-currency" style="max-width:180px;">
+              <option value="casino_chips">Casino Chips</option>
+              <option value="cummies">Cummies</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label style="min-width:70px;"></label>
+            <button class="term-btn purple" id="btn-create-poker-table">OPEN TABLE</button>
+          </div>
+          <div id="poker-create-msg" class="text-dim" style="font-size:11px;"></div>
+        </div>
+
+        <!-- Poker Tables List -->
+        <div id="poker-tables">
+          <span class="loading cursor-blink">Loading poker tables...</span>
+        </div>
       </div>
     </div>
   </div>
@@ -7136,7 +7599,7 @@ async function quickRace() {
   $('#race-results').classList.add('hidden');
 
 	try {
-		const race = await api('/races/quick');
+		const race = await api('/races/quick', { method: 'POST' });
 		await checkDailyRewardStatus();
 		await loadPrestige();
 		if (race) {
@@ -9630,62 +10093,312 @@ async function loadGluePage() {
   }
 }
 
+// ─── CASINO HELPER: Card suit symbols ────────────────────────────────────
+function suitSymbol(suit) {
+  const map = { S: '♠', H: '♥', D: '♦', C: '♣', s: '♠', h: '♥', d: '♦', c: '♣' };
+  return map[suit] || suit || '?';
+}
+function isRedSuit(suit) {
+  return suit === 'H' || suit === 'h' || suit === 'D' || suit === 'd';
+}
+
+// ─── CASINO: Render slot reels (3 rows x 5 columns) ─────────────────────
+function renderSlotReels(spin) {
+  const reelsEl = $('#slot-reels');
+  if (!reelsEl) return;
+
+  // The server may return symbols as a flat array or a 2D grid.
+  // We support both: flat array of 15 (row-major 3x5) or grid[row][col]
+  const grid = spin.grid || spin.reelGrid || null;
+  const flatSymbols = spin.symbols || [];
+  const winCells = new Set(); // Set of "row,col" strings for winner highlighting
+  const scatterCells = new Set();
+  const wildCells = new Set();
+
+  // Build a 3x5 grid from whatever data we have
+  const rows = 3, cols = 5;
+  const cellData = [];
+  for (let r = 0; r < rows; r++) {
+    cellData[r] = [];
+    for (let c = 0; c < cols; c++) {
+      if (grid && grid[r] && grid[r][c] !== undefined) {
+        cellData[r][c] = String(grid[r][c]);
+      } else if (flatSymbols.length >= rows * cols) {
+        cellData[r][c] = String(flatSymbols[r * cols + c]);
+      } else if (flatSymbols.length === cols && r === 1) {
+        // Single-row result: center row only
+        cellData[r][c] = String(flatSymbols[c]);
+      } else {
+        cellData[r][c] = '—';
+      }
+    }
+  }
+
+  // Mark winner cells from payline details
+  const paylines = spin.paylines || spin.paylineResults || [];
+  paylines.forEach(pl => {
+    if (pl.win || pl.payout > 0) {
+      (pl.positions || pl.cells || []).forEach(pos => {
+        if (Array.isArray(pos)) winCells.add(`${pos[0]},${pos[1]}`);
+        else if (pos.row !== undefined) winCells.add(`${pos.row},${pos.col}`);
+      });
+    }
+  });
+
+  // Mark scatter/wild cells
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const sym = cellData[r][c].toLowerCase();
+      if (sym === 'scatter' || sym === '⭐' || sym.includes('scatter')) scatterCells.add(`${r},${c}`);
+      if (sym === 'wild' || sym === '🃏' || sym.includes('wild')) wildCells.add(`${r},${c}`);
+    }
+  }
+
+  // Render columns (each reel is a column)
+  let html = '';
+  for (let c = 0; c < cols; c++) {
+    html += '<div class="slot-reel">';
+    for (let r = 0; r < rows; r++) {
+      const key = `${r},${c}`;
+      let cls = 'slot-cell';
+      if (winCells.has(key)) cls += ' winner';
+      if (scatterCells.has(key)) cls += ' scatter';
+      if (wildCells.has(key)) cls += ' wild';
+      html += `<div class="${cls}">${escHtml(cellData[r][c])}</div>`;
+    }
+    html += '</div>';
+  }
+  reelsEl.innerHTML = html;
+}
+
 async function loadCasinoPage() {
   const tableEl = $('#poker-tables');
   const slotHistEl = $('#slot-history');
   const walletMsg = $('#casino-wallet-msg');
+  const cummiesEl = $('#casino-cummies');
+  const chipsEl = $('#casino-chips');
+  const dailyEl = $('#casino-daily-grant');
+  const jackpotEl = $('#slot-jackpot-amount');
+
   await loadServerCapabilities();
   if (!hasCapability('casino')) {
     if (walletMsg) walletMsg.textContent = 'Casino systems are not available on this server build yet.';
-    tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
+    if (tableEl) tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
     if (slotHistEl) slotHistEl.innerHTML = 'No spins logged.';
     return;
   }
   try {
+    // Fetch casino overview
     const data = await api('/casino');
-    if (walletMsg) {
-      walletMsg.innerHTML = `Wallet: <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | Chips: <span class="text-purple">${(data.casinoChips || 0).toLocaleString()}</span> | Daily grant: ${data.dailyChipGrant || 0} chips`;
+
+    // Update wallet bar
+    const cummies = data.cummies || 0;
+    const chips = data.casinoChips || 0;
+    const dailyGrant = data.dailyChipGrant || 0;
+    if (cummiesEl) cummiesEl.textContent = cummies.toLocaleString() + '₵';
+    if (chipsEl) chipsEl.textContent = chips.toLocaleString();
+    if (dailyEl) dailyEl.textContent = dailyGrant + ' chips';
+    if (walletMsg) walletMsg.innerHTML = '';
+
+    // Try to fetch jackpot info
+    try {
+      const jpData = await api('/casino/slots/jackpot');
+      if (jackpotEl) {
+        const jpAmount = jpData.jackpot || jpData.jackpotAmount || jpData.amount || 0;
+        jackpotEl.textContent = jpAmount.toLocaleString() + ' CHIPS';
+      }
+    } catch (_jpErr) {
+      // Jackpot endpoint may not exist; show placeholder
+      if (jackpotEl) jackpotEl.textContent = '??? CHIPS';
     }
+
+    // Render spin history
     const spins = Array.isArray(data.recentSpins) ? data.recentSpins : [];
     if (slotHistEl) {
-      slotHistEl.innerHTML = spins.length ? spins.map(spin => `<div>${escHtml((spin.symbols || []).join(' | '))} -> ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span></div>`).join('') : 'No spins logged.';
+      if (!spins.length) {
+        slotHistEl.innerHTML = '<span class="text-dim">No spins logged.</span>';
+      } else {
+        slotHistEl.innerHTML = spins.map(spin => {
+          const payout = spin.payoutAmount || 0;
+          const cls = spin.jackpotWin ? 'jackpot' : (payout > 0 ? 'win' : 'loss');
+          const symbols = (spin.symbols || []).join(' | ');
+          return `<div class="spin-history-item ${cls}">
+            <span>${escHtml(symbols)}</span>
+            <span>${payout > 0 ? '+' : ''}${payout} chips${spin.jackpotWin ? ' 🎰 JACKPOT!' : ''}</span>
+          </div>`;
+        }).join('');
+      }
     }
+
+    // Render poker tables
     const tables = Array.isArray(data.pokerTables) ? data.pokerTables : [];
     if (!tables.length) {
-      tableEl.innerHTML = '<span class="text-dim">No tables yet. Open one and wait for another stable to sit down.</span>';
-      return;
+      if (tableEl) tableEl.innerHTML = '<span class="text-dim">No tables yet. Open one and wait for another stable to sit down.</span>';
+    } else {
+      if (tableEl) tableEl.innerHTML = tables.map(t => renderPokerTable(t, getOwnerID())).join('');
     }
-    tableEl.innerHTML = tables.map(t => {
-      const seated = (t.seats || []).length;
-      const mySeat = (t.seats || []).find(seat => seat.userID === getOwnerID());
-      const canJoin = !mySeat && t.status === 'open';
-      const drawUI = mySeat && t.status === 'drawing' && !mySeat.hasDrawn
-        ? `<button class="term-btn sm amber" onclick="window.SU.drawPoker('${escHtml(t.id)}')">DRAW / STAND</button>`
-        : '';
-      const joinUI = canJoin
-        ? `<button class="term-btn sm" onclick="window.SU.joinPokerTable('${escHtml(t.id)}')">JOIN TABLE</button>`
-        : '';
-      const handText = mySeat && Array.isArray(mySeat.hand) ? mySeat.hand.map(card => `${card.rank}${card.suit}`).join(' ') : '';
-      return `<div class="fight-card ${escHtml(t.status || 'open')}">
-        <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
-          <strong>${escHtml(t.name || 'Draw Table')}</strong>
-          <span class="text-amber">${t.buyIn || 0} ${t.stakeCurrency === 'cummies' ? '₵' : 'chips'}</span>
-        </div>
-        <div class="fight-meta">${seated}/${t.maxPlayers || 4} seated | status: ${escHtml(t.status || 'open')}</div>
-        ${handText ? `<div class="text-purple" style="margin-top:6px;">Your hand: ${escHtml(handText)}${mySeat.handRank ? ` | ${escHtml(mySeat.handRank)}` : ''}</div>` : ''}
-        <div class="text-dim" style="font-size:10px; margin-top:6px;">${escHtml(((t.log || []).slice(-2)).join(' | '))}</div>
-        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">${joinUI}${drawUI}</div>
-      </div>`;
-    }).join('');
   } catch (e) {
     if (isFeatureUnavailableError(e)) {
       if (walletMsg) walletMsg.textContent = 'Casino systems are unavailable on this server version.';
-      tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
+      if (tableEl) tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
       if (slotHistEl) slotHistEl.innerHTML = 'No spins logged.';
       return;
     }
-    tableEl.innerHTML = `<span class="text-dim">Error loading casino: ${escHtml(e.message)}</span>`;
+    if (tableEl) tableEl.innerHTML = `<span class="text-dim">Error loading casino: ${escHtml(e.message)}</span>`;
   }
+}
+
+// ─── CASINO: Render a single poker table card ───────────────────────────
+function renderPokerTable(t, ownerID) {
+  const seated = (t.seats || []).length;
+  const mySeat = (t.seats || []).find(seat => seat.userID === ownerID);
+  const canJoin = !mySeat && t.status === 'open';
+  const gameType = (t.gameType || t.game_type || 'draw').toLowerCase();
+  const isHoldem = gameType === 'holdem' || gameType === "hold'em" || gameType === 'texas_holdem';
+  const statusClass = 'status-' + escHtml(t.status || 'open');
+  const gameLabel = isHoldem ? "HOLD'EM" : 'DRAW';
+  const gameLabelColor = isHoldem ? 'var(--cyan)' : 'var(--purple)';
+
+  // Build seat list
+  let seatsHTML = '<div class="poker-seat-list">';
+  (t.seats || []).forEach((seat, idx) => {
+    let seatCls = 'poker-seat-item';
+    if (seat.folded) seatCls += ' folded';
+    if (seat.isActive || seat.isTurn) seatCls += ' active';
+    if (seat.isWinner) seatCls += ' winner';
+    const label = seat.userName || seat.stableName || `Seat ${idx + 1}`;
+    const chipCount = seat.chips !== undefined ? seat.chips : '';
+    const betAmount = seat.currentBet || seat.bet || 0;
+    seatsHTML += `<div class="${seatCls}">
+      <span>${escHtml(label)}${seat.isDealer ? ' [D]' : ''}${(seat.isActive || seat.isTurn) ? ' ◀' : ''}</span>
+      <span>${chipCount !== '' ? chipCount + ' chips' : ''}${betAmount > 0 ? ' (bet: ' + betAmount + ')' : ''}</span>
+    </div>`;
+  });
+  seatsHTML += '</div>';
+
+  // Pot display
+  const pot = t.pot || 0;
+  const sidePots = t.sidePots || [];
+  let potHTML = '';
+  if (pot > 0 || sidePots.length > 0) {
+    potHTML = `<div class="poker-pot">POT: ${pot.toLocaleString()} ${t.stakeCurrency === 'cummies' ? '₵' : 'chips'}`;
+    sidePots.forEach((sp, i) => {
+      potHTML += ` | Side ${i + 1}: ${(sp.amount || 0).toLocaleString()}`;
+    });
+    potHTML += '</div>';
+  }
+
+  // Community cards (Hold'em)
+  let communityHTML = '';
+  if (isHoldem) {
+    const communityCards = t.communityCards || t.community || [];
+    communityHTML = '<div class="community-cards">';
+    if (communityCards.length === 0) {
+      communityHTML += '<span class="text-dim" style="font-size:10px;">Waiting for cards...</span>';
+    } else {
+      communityCards.forEach(card => {
+        const red = isRedSuit(card.suit);
+        communityHTML += `<div class="poker-card ${red ? 'red' : 'black'}">
+          <span class="card-rank">${escHtml(card.rank || '?')}</span>
+          <span class="card-suit">${suitSymbol(card.suit)}</span>
+        </div>`;
+      });
+      // Fill remaining spots with facedown
+      for (let i = communityCards.length; i < 5; i++) {
+        communityHTML += '<div class="poker-card facedown"><span class="card-rank">?</span></div>';
+      }
+    }
+    communityHTML += '</div>';
+  }
+
+  // Player's hand as visual cards
+  let handHTML = '';
+  if (mySeat && Array.isArray(mySeat.hand) && mySeat.hand.length > 0) {
+    const isDraw = !isHoldem && t.status === 'drawing' && !mySeat.hasDrawn;
+    const tableId = escHtml(t.id);
+    handHTML = `<div style="margin-top:8px;">
+      <div class="text-dim" style="font-size:10px; margin-bottom:4px;">YOUR HAND${mySeat.handRank ? ' — ' + escHtml(mySeat.handRank) : ''}</div>
+      <div class="poker-hand" id="poker-hand-${tableId}">`;
+    mySeat.hand.forEach((card, idx) => {
+      const red = isRedSuit(card.suit);
+      const clickAttr = isDraw ? ` onclick="window.SU.toggleDrawCard('${tableId}', ${idx}, this)" style="cursor:pointer;"` : '';
+      handHTML += `<div class="poker-card ${red ? 'red' : 'black'}" data-idx="${idx}"${clickAttr}>
+        <span class="card-rank">${escHtml(card.rank || '?')}</span>
+        <span class="card-suit">${suitSymbol(card.suit)}</span>
+      </div>`;
+    });
+    handHTML += '</div>';
+    if (isDraw) {
+      handHTML += `<div style="margin-top:6px; font-size:10px; color:var(--fg-dim);">Click cards to select for discard, then:</div>
+        <div class="poker-actions">
+          <button class="term-btn sm amber" onclick="window.SU.submitDrawPoker('${tableId}')">DRAW SELECTED</button>
+          <button class="term-btn sm" onclick="window.SU.submitDrawPoker('${tableId}', true)">STAND PAT</button>
+        </div>`;
+    }
+    handHTML += '</div>';
+  }
+
+  // Action buttons for Hold'em
+  let actionsHTML = '';
+  if (isHoldem && mySeat && (mySeat.isActive || mySeat.isTurn) && !mySeat.folded) {
+    const tableId = escHtml(t.id);
+    actionsHTML = `<div class="poker-actions">
+      <button class="term-btn sm" onclick="window.SU.holdemAction('${tableId}', 'check')">CHECK</button>
+      <button class="term-btn sm amber" onclick="window.SU.holdemAction('${tableId}', 'call')">CALL</button>
+      <button class="term-btn sm purple" onclick="document.getElementById('raise-input-${tableId}').style.display='flex'">RAISE</button>
+      <button class="term-btn sm danger" onclick="window.SU.holdemAction('${tableId}', 'fold')">FOLD</button>
+      <button class="term-btn sm" style="border-color:var(--gold);color:var(--gold);" onclick="window.SU.holdemAction('${tableId}', 'allin')">ALL-IN</button>
+    </div>
+    <div id="raise-input-${tableId}" style="display:none; gap:4px; margin-top:6px; align-items:center;">
+      <input class="term-input" id="raise-amount-${tableId}" type="number" min="1" value="${t.minRaise || t.bigBlind || 10}" style="max-width:100px;">
+      <button class="term-btn sm amber" onclick="window.SU.holdemAction('${tableId}', 'raise', parseInt(document.getElementById('raise-amount-${tableId}').value,10))">CONFIRM RAISE</button>
+    </div>`;
+  }
+
+  // Join button
+  let joinHTML = '';
+  if (canJoin) {
+    joinHTML = `<div style="margin-top:8px;">
+      <button class="term-btn sm" onclick="window.SU.joinPokerTable('${escHtml(t.id)}')">JOIN TABLE</button>
+    </div>`;
+  }
+
+  // Winner display
+  let winnerHTML = '';
+  const winners = t.winners || [];
+  if (winners.length > 0 || t.status === 'settled' || t.status === 'showdown') {
+    const winList = winners.map(w => escHtml(w.userName || w.stableName || 'Unknown')).join(', ');
+    if (winList) {
+      winnerHTML = `<div style="text-align:center; padding:8px; margin-top:8px; border:1px solid var(--green); color:var(--green); background:rgba(0,255,65,0.05);">
+        🏆 WINNER: ${winList}
+      </div>`;
+    }
+  }
+
+  // Log tail
+  const logEntries = (t.log || []).slice(-3);
+  const logHTML = logEntries.length > 0
+    ? `<div class="text-dim" style="font-size:10px; margin-top:6px;">${logEntries.map(l => escHtml(l)).join('<br>')}</div>`
+    : '';
+
+  return `<div class="poker-table-card ${statusClass}">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+      <div>
+        <strong>${escHtml(t.name || 'Poker Table')}</strong>
+        <span style="font-size:10px; padding:2px 6px; border:1px solid ${gameLabelColor}; color:${gameLabelColor}; margin-left:6px;">${gameLabel}</span>
+      </div>
+      <span class="text-amber">${t.buyIn || 0} ${t.stakeCurrency === 'cummies' ? '₵' : 'chips'}</span>
+    </div>
+    <div class="text-dim" style="font-size:11px; margin-top:4px;">${seated}/${t.maxPlayers || 4} seated · ${escHtml(t.status || 'open').toUpperCase()}</div>
+    ${seatsHTML}
+    ${potHTML}
+    ${communityHTML}
+    ${handHTML}
+    ${actionsHTML}
+    ${joinHTML}
+    ${winnerHTML}
+    ${logHTML}
+  </div>`;
 }
 
 async function exchangeCasinoChips(direction) {
@@ -9694,7 +10407,8 @@ async function exchangeCasinoChips(direction) {
   const msgEl = $('#casino-wallet-msg');
   try {
     const data = await api('/casino/chips/exchange', { method: 'POST', body: { direction, amount } });
-    msgEl.innerHTML = `Wallet updated: <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | Chips: <span class="text-purple">${(data.casinoChips || 0).toLocaleString()}</span>`;
+    msgEl.innerHTML = `<span style="color:var(--fg);">Updated:</span> <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | <span style="color:var(--purple);">${(data.casinoChips || 0).toLocaleString()} chips</span>`;
+    msgEl.style.color = '';
     loadCasinoPage();
   } catch (e) {
     if (isFeatureUnavailableError(e)) {
@@ -9709,36 +10423,116 @@ async function exchangeCasinoChips(direction) {
 
 async function spinSlots() {
   const wager = parseInt($('#slot-wager').value, 10) || 0;
+  const linesEl = $('#slot-lines');
+  const lines = linesEl ? parseInt(linesEl.value, 10) || 5 : 5;
   const msgEl = $('#slot-result');
+  const reelsEl = $('#slot-reels');
+  const paylinesEl = $('#slot-paylines');
+  const jackpotBarEl = $('#slot-jackpot-bar');
+  const machineEl = $('#slot-machine-container');
+
+  // --- Spinning animation: show random symbols cycling ---
+  if (reelsEl) {
+    const randSymbols = ['🐴', '🏇', '⭐', '🎰', '💰', '🃏', '♠', '♥', '♦', '♣', '🐎', '🏆', '💎', '🔥'];
+    const rows = 3, cols = 5;
+    let animFrames = 6;
+    const animInterval = setInterval(() => {
+      let html = '';
+      for (let c = 0; c < cols; c++) {
+        html += '<div class="slot-reel">';
+        for (let r = 0; r < rows; r++) {
+          html += `<div class="slot-cell" style="opacity:0.4;">${randSymbols[Math.floor(Math.random() * randSymbols.length)]}</div>`;
+        }
+        html += '</div>';
+      }
+      reelsEl.innerHTML = html;
+      animFrames--;
+      if (animFrames <= 0) clearInterval(animInterval);
+    }, 120);
+
+    // Clear after animation
+    await new Promise(resolve => setTimeout(resolve, 750));
+    clearInterval(animInterval);
+  }
+
   try {
-    const spin = await api('/casino/slots/spin', { method: 'POST', body: { wager } });
-    msgEl.innerHTML = `<span class="text-purple">${escHtml((spin.symbols || []).join(' | '))}</span> -> payout ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span>`;
+    const spin = await api('/casino/slots/spin', { method: 'POST', body: { wager, lines } });
+
+    // Render the reel grid with win highlighting
+    if (machineEl) machineEl.classList.add('spin-animation');
+    renderSlotReels(spin);
+    setTimeout(() => { if (machineEl) machineEl.classList.remove('spin-animation'); }, 500);
+
+    // Payline results
+    const paylines = spin.paylines || spin.paylineResults || [];
+    if (paylinesEl) {
+      if (paylines.length > 0) {
+        paylinesEl.innerHTML = paylines.map(pl => {
+          if (pl.payout > 0 || pl.win) {
+            return `<div class="slot-payline-win">Line ${pl.line || '?'}: ${escHtml(pl.symbol || pl.description || '???')} × ${pl.count || '?'} → +${pl.payout || 0} chips</div>`;
+          }
+          return '';
+        }).filter(Boolean).join('');
+      } else {
+        paylinesEl.innerHTML = '';
+      }
+    }
+
+    // Payout / summary message
+    const payout = spin.payoutAmount || spin.payout || 0;
+    if (payout > 0) {
+      msgEl.innerHTML = `<div style="color:var(--amber); font-size:13px; font-weight:bold; margin-top:8px;">💰 WIN: +${payout.toLocaleString()} CHIPS</div>`;
+    } else {
+      msgEl.innerHTML = `<div class="text-dim" style="font-size:11px; margin-top:8px;">No win. ${escHtml(spin.summary || 'Try again!')}</div>`;
+    }
+
+    // Bonus trigger
+    if (spin.bonus || spin.bonusTriggered) {
+      const bonusMsg = spin.bonusMessage || spin.bonus || 'BONUS ROUND TRIGGERED!';
+      msgEl.innerHTML += `<div class="slot-bonus-msg">⭐ ${escHtml(String(bonusMsg))}</div>`;
+    }
+
+    // Jackpot win celebration
+    if (spin.jackpotWin || spin.jackpot) {
+      const jpAmount = spin.jackpotAmount || spin.jackpotWin || 0;
+      msgEl.innerHTML += `<div style="color:var(--gold); font-size:16px; font-weight:bold; margin-top:8px; text-shadow:0 0 15px rgba(255,215,0,0.6);">🎰🎰🎰 JACKPOT!!! +${Number(jpAmount).toLocaleString()} CHIPS 🎰🎰🎰</div>`;
+      if (jackpotBarEl) jackpotBarEl.classList.add('slot-jackpot-win');
+      setTimeout(() => { if (jackpotBarEl) jackpotBarEl.classList.remove('slot-jackpot-win'); }, 5000);
+    }
+
+    // Update jackpot display
+    const jackpotEl2 = $('#slot-jackpot-amount');
+    if (jackpotEl2 && spin.currentJackpot !== undefined) {
+      jackpotEl2.textContent = Number(spin.currentJackpot).toLocaleString() + ' CHIPS';
+    }
+
+    // Reload casino data (wallet, history)
     loadCasinoPage();
   } catch (e) {
     if ((e.message || '').includes('HTTP 405')) {
       try {
-        const spin = await api(`/casino/slots/spin?wager=${encodeURIComponent(String(wager))}`);
-        msgEl.innerHTML = `<span class="text-purple">${escHtml((spin.symbols || []).join(' | '))}</span> -> payout ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span>`;
+        const spin = await api(`/casino/slots/spin?wager=${encodeURIComponent(String(wager))}&lines=${encodeURIComponent(String(lines))}`);
+        renderSlotReels(spin);
+        const payout = spin.payoutAmount || spin.payout || 0;
+        msgEl.innerHTML = payout > 0
+          ? `<div style="color:var(--amber); font-size:13px; font-weight:bold; margin-top:8px;">💰 WIN: +${payout.toLocaleString()} CHIPS</div>`
+          : `<div class="text-dim" style="font-size:11px; margin-top:8px;">No win. ${escHtml(spin.summary || 'Try again!')}</div>`;
         loadCasinoPage();
         return;
       } catch (fallbackErr) {
         if (isFeatureUnavailableError(fallbackErr)) {
-          msgEl.textContent = 'Slot machine is unavailable on this server version.';
-          msgEl.style.color = 'var(--red)';
+          msgEl.innerHTML = '<span style="color:var(--red);">Slot machine is unavailable on this server version.</span>';
           return;
         }
-        msgEl.textContent = `Error: ${fallbackErr.message}`;
-        msgEl.style.color = 'var(--red)';
+        msgEl.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(fallbackErr.message)}</span>`;
         return;
       }
     }
     if (isFeatureUnavailableError(e)) {
-      msgEl.textContent = 'Slot machine is unavailable on this server version.';
-      msgEl.style.color = 'var(--red)';
+      msgEl.innerHTML = '<span style="color:var(--red);">Slot machine is unavailable on this server version.</span>';
       return;
     }
-    msgEl.textContent = `Error: ${e.message}`;
-    msgEl.style.color = 'var(--red)';
+    msgEl.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(e.message)}</span>`;
   }
 }
 
@@ -9764,10 +10558,12 @@ async function createPokerTable() {
   const name = $('#poker-table-name').value.trim();
   const buyIn = parseInt($('#poker-buyin').value, 10) || 0;
   const currency = $('#poker-currency').value;
+  const gameTypeEl = $('#poker-game-type');
+  const gameType = gameTypeEl ? gameTypeEl.value : 'draw';
   const msgEl = $('#poker-create-msg');
   try {
-    const table = await api('/casino/poker', { method: 'POST', body: { name, buyIn, currency } });
-    msgEl.textContent = `Opened ${table.name || 'table'} successfully.`;
+    const table = await api('/casino/poker', { method: 'POST', body: { name, buyIn, currency, gameType } });
+    msgEl.textContent = `Opened "${table.name || 'table'}" (${gameType === 'holdem' ? "Hold'em" : 'Draw'}) successfully.`;
     msgEl.style.color = 'var(--fg)';
     loadCasinoPage();
   } catch (e) {
@@ -9790,14 +10586,45 @@ async function joinPokerTable(tableID) {
   }
 }
 
-async function drawPoker(tableID) {
-  const raw = prompt('Enter card indexes to discard, comma-separated from 0-4. Leave blank to stand pat.');
-  const discard = !raw ? [] : raw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n >= 0 && n <= 4);
+// ─── CASINO: Toggle card selection for draw poker (no prompt!) ───────────
+function toggleDrawCard(tableID, cardIdx, el) {
+  if (!el) return;
+  el.classList.toggle('selected');
+}
+
+// ─── CASINO: Submit draw poker with selected cards ───────────────────────
+async function submitDrawPoker(tableID, standPat) {
+  const handEl = document.getElementById('poker-hand-' + tableID);
+  let discard = [];
+  if (!standPat && handEl) {
+    handEl.querySelectorAll('.poker-card.selected').forEach(card => {
+      const idx = parseInt(card.dataset.idx, 10);
+      if (Number.isInteger(idx)) discard.push(idx);
+    });
+  }
   try {
     await api(`/casino/poker/${encodeURIComponent(tableID)}/draw`, { method: 'POST', body: { discard } });
     loadCasinoPage();
   } catch (e) {
     showToast(`Draw error: ${e.message}`, 'danger');
+  }
+}
+
+// ─── CASINO: Legacy drawPoker (for backwards compat with old onclick) ────
+async function drawPoker(tableID) {
+  // Legacy fallback: the new UI uses toggleDrawCard + submitDrawPoker instead
+  loadCasinoPage();
+}
+
+// ─── CASINO: Hold'em betting actions ─────────────────────────────────────
+async function holdemAction(tableID, action, amount) {
+  try {
+    const body = { action };
+    if (amount !== undefined && amount !== null) body.amount = amount;
+    await api(`/casino/poker/${encodeURIComponent(tableID)}/action`, { method: 'POST', body });
+    loadCasinoPage();
+  } catch (e) {
+    showToast(`Poker error: ${e.message}`, 'danger');
   }
 }
 
@@ -10158,6 +10985,9 @@ window.SU = {
   retireBreeder,
   joinPokerTable,
   drawPoker,
+  toggleDrawCard,
+  submitDrawPoker,
+  holdemAction,
   claimDepartureReturn,
 };
 

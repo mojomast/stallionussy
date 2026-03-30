@@ -119,7 +119,7 @@ func (r *DepartureRepo) UpdateDeparture(ctx context.Context, record *models.Depa
 	if err != nil {
 		return fmt.Errorf("marshal departure snapshot: %w", err)
 	}
-	_, err = r.db.db.ExecContext(ctx, `
+	result, err := r.db.db.ExecContext(ctx, `
 		UPDATE departed_horses
 		SET horse_id = $2, horse_name = $3, owner_id = $4, stable_id = $5,
 			cause = $6, state = $7, horse_snapshot = $8, omen_text = $9,
@@ -131,6 +131,13 @@ func (r *DepartureRepo) UpdateDeparture(ctx context.Context, record *models.Depa
 		record.ReturnedHorse, record.LastRollDate, nullableTime(record.OmenExpiresAt), nullableTime(record.ReturnedAt))
 	if err != nil {
 		return fmt.Errorf("update departure: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update departure rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("departure not found: %s", record.ID)
 	}
 	return nil
 }

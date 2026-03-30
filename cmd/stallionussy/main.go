@@ -94,25 +94,47 @@ const helpText = `
   exit                              Quit StallionUSSY
 `
 
+// defaultPort is the default HTTP listen port. It can be overridden by:
+//  1. The --port CLI flag (highest priority)
+//  2. The STALLIONUSSY_PORT environment variable (fallback when --port is at default)
+//
+// This allows both CLI usage (--port 4200) and environment-based configuration
+// (systemd EnvironmentFile, docker-compose env) to set the port without
+// conflicting with each other.
+const defaultPort = "8080"
+
+// resolvePort returns the effective port. If the CLI flag is still at the
+// default value, the STALLIONUSSY_PORT env var takes precedence.
+func resolvePort(flagValue string) string {
+	if flagValue != defaultPort {
+		// Explicit --port flag wins.
+		return flagValue
+	}
+	if envPort := os.Getenv("STALLIONUSSY_PORT"); envPort != "" {
+		return envPort
+	}
+	return defaultPort
+}
+
 func main() {
 	// -----------------------------------------------------------------------
 	// Subcommand parsing
 	// -----------------------------------------------------------------------
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
-	servePort := serveCmd.String("port", "8080", "HTTP server port")
+	servePort := serveCmd.String("port", defaultPort, "HTTP server port (env: STALLIONUSSY_PORT)")
 
 	cliCmd := flag.NewFlagSet("cli", flag.ExitOnError)
 
 	// If no subcommand is given, default to "serve".
 	if len(os.Args) < 2 {
-		runServe(*servePort)
+		runServe(resolvePort(*servePort))
 		return
 	}
 
 	switch os.Args[1] {
 	case "serve":
 		serveCmd.Parse(os.Args[2:])
-		runServe(*servePort)
+		runServe(resolvePort(*servePort))
 	case "cli":
 		cliCmd.Parse(os.Args[2:])
 		runCLI()
@@ -167,14 +189,24 @@ func runServe(port string) {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
 	log.Println("Database connected and migrations applied.")
 
 	// Create server with DB — the server package will be updated to accept it.
 	srv := server.NewServer(db)
+
+	// srv.Start blocks until shutdown signal is received and graceful drain
+	// completes. After it returns, we can safely close the DB connection.
 	if err := srv.Start(addr); err != nil {
+		// Close DB before exiting on fatal error.
+		db.Close()
 		log.Fatalf("Server failed: %v", err)
 	}
+
+	// Clean shutdown: close the database connection now that all in-flight
+	// requests have drained and background goroutines have stopped.
+	log.Println("Closing database connection...")
+	db.Close()
+	log.Println("StallionUSSY shut down cleanly. The yogurt rests.")
 }
 
 // ---------------------------------------------------------------------------

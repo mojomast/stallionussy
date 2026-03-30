@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 
 -- ===========================================================================
 -- Stables
@@ -447,6 +448,11 @@ CREATE TABLE IF NOT EXISTS breeding_stallions (
 
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (owner_id);
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
+
+-- ===========================================================================
+-- Token Version (for JWT revocation on password change)
+-- ===========================================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
 `
 
 // RunMigrations executes the schema DDL against the provided database

@@ -48,9 +48,10 @@ func CheckPassword(hash, password string) bool {
 
 // Claims represents the JWT payload for authenticated users.
 type Claims struct {
-	UserID      string `json:"user_id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"display_name"`
+	TokenVersion int    `json:"token_version"`
 	jwt.RegisteredClaims
 }
 
@@ -62,13 +63,17 @@ type Claims struct {
 type AuthService struct {
 	secret     []byte
 	expiration time.Duration
+	// GetTokenVersion is an optional callback that retrieves the current
+	// token_version from the DB for a given user ID. When set, the auth
+	// middleware will reject tokens whose version doesn't match.
+	GetTokenVersion func(ctx context.Context, userID string) (int, error)
 }
 
 // NewAuthService creates a new AuthService. If expiration is 0, it defaults
-// to 72 hours.
+// to 1 hour.
 func NewAuthService(secret string, expiration time.Duration) *AuthService {
 	if expiration <= 0 {
-		expiration = 72 * time.Hour
+		expiration = 1 * time.Hour
 	}
 	return &AuthService{
 		secret:     []byte(secret),
@@ -80,9 +85,10 @@ func NewAuthService(secret string, expiration time.Duration) *AuthService {
 func (a *AuthService) GenerateToken(user *models.User) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID:      user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
+		UserID:       user.ID,
+		Username:     user.Username,
+		DisplayName:  user.DisplayName,
+		TokenVersion: user.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.expiration)),
 			IssuedAt:  jwt.NewNumericDate(now),
@@ -163,8 +169,27 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Skip auth for shareable/read-only race endpoints, including quick race.
+		// Skip auth for shareable/read-only race endpoints (GET) and the
+		// quick-race endpoint (POST) which supports both guest and
+		// authenticated callers.  When a valid Bearer token is present we
+		// still decode it and store claims in context so that handlers can
+		// differentiate authenticated users from guests.
+		optionalAuth := false
 		if strings.HasPrefix(path, "/api/races/") && r.Method == "GET" {
+			optionalAuth = true
+		}
+		if path == "/api/races/quick" && r.Method == "POST" {
+			optionalAuth = true
+		}
+		if optionalAuth {
+			if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+				if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+					if claims, err := a.ValidateToken(parts[1]); err == nil {
+						ctx := context.WithValue(r.Context(), UserContextKey, claims)
+						r = r.WithContext(ctx)
+					}
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -193,6 +218,20 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 		if err != nil {
 			writeJSONError(w, http.StatusUnauthorized, "invalid or expired token")
 			return
+		}
+
+		// Check token_version against the DB to reject revoked tokens
+		// (e.g. after a password change).
+		if a.GetTokenVersion != nil {
+			dbVersion, verr := a.GetTokenVersion(r.Context(), claims.UserID)
+			if verr != nil {
+				writeJSONError(w, http.StatusUnauthorized, "failed to verify token version")
+				return
+			}
+			if claims.TokenVersion != dbVersion {
+				writeJSONError(w, http.StatusUnauthorized, "token has been revoked")
+				return
+			}
 		}
 
 		// Store claims in request context and continue.
@@ -395,6 +434,49 @@ func (h *AuthHandler) HandleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, user)
+}
+
+// HandleRefresh handles POST /api/auth/refresh.
+//
+// It requires a valid (non-expired) JWT, verifies the token_version against
+// the DB, and issues a new token with a fresh expiry. This lets clients stay
+// logged in without needing long-lived tokens.
+func (h *AuthHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	claims, ok := GetUserFromContext(r.Context())
+	if !ok {
+		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	// Fetch the user from DB to verify token_version and get current state.
+	user, err := h.users.GetUserByID(r.Context(), claims.UserID)
+	if err != nil || user == nil {
+		writeJSONError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+
+	// Verify the token's version matches the DB — reject if password was changed.
+	if claims.TokenVersion != user.TokenVersion {
+		writeJSONError(w, http.StatusUnauthorized, "token has been revoked (password was changed)")
+		return
+	}
+
+	// Issue a fresh token with updated user state.
+	token, err := h.auth.GenerateToken(user)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, authResponse{
+		Token: token,
+		User:  user,
+	})
 }
 
 // ---------------------------------------------------------------------------

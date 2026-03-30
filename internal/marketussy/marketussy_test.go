@@ -306,7 +306,7 @@ func TestPurchaseBreeding_BurnAmountSmallPrice(t *testing.T) {
 	}
 }
 
-func TestPurchaseBreeding_LeavesListingActiveUntilHandlerFinishes(t *testing.T) {
+func TestPurchaseBreeding_DeactivatesListing(t *testing.T) {
 	m := NewMarket()
 	horse := makeTestHorse("h1", "StudHorse", "seller1")
 	listing, _ := m.CreateListing(horse, "seller1", 1000)
@@ -314,8 +314,8 @@ func TestPurchaseBreeding_LeavesListingActiveUntilHandlerFinishes(t *testing.T) 
 	m.PurchaseBreeding(listing.ID, "buyer1")
 
 	got, _ := m.GetListing(listing.ID)
-	if !got.Active {
-		t.Error("listing should remain active until the caller completes breeding and deactivates it")
+	if got.Active {
+		t.Error("listing should be deactivated after a successful purchase to prevent double-purchase")
 	}
 }
 

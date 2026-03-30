@@ -135,7 +135,7 @@ func (r *CasinoRepo) UpdatePokerTable(ctx context.Context, table *models.PokerTa
 	if err != nil {
 		return fmt.Errorf("marshal poker log: %w", err)
 	}
-	_, err = r.db.db.ExecContext(ctx, `
+	result, err := r.db.db.ExecContext(ctx, `
 		UPDATE poker_tables
 		SET name = $2, created_by = $3, stake_currency = $4, buy_in = $5,
 			max_players = $6, status = $7, pot = $8, deck_seed = $9,
@@ -146,6 +146,13 @@ func (r *CasinoRepo) UpdatePokerTable(ctx context.Context, table *models.PokerTa
 		logJSON, nullableTime(table.StartedAt), table.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("update poker table: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update poker table rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("poker table not found: %s", table.ID)
 	}
 	return nil
 }

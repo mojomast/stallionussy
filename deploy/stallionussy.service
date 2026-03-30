@@ -7,7 +7,14 @@ Type=simple
 User=mojo
 Group=mojo
 WorkingDirectory=/home/mojo/projects/stallionussy
-ExecStart=/home/mojo/projects/stallionussy/stallionussy serve --port 4200
+
+# The app reads STALLIONUSSY_PORT from the environment when --port is not
+# explicitly passed on the command line. Set it in /etc/stallionussy/env to
+# override the default (8080). Production typically uses:
+#   STALLIONUSSY_PORT=4200
+EnvironmentFile=/etc/stallionussy/env
+ExecStart=/home/mojo/projects/stallionussy/stallionussy serve
+
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

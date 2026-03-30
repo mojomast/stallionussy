@@ -458,16 +458,18 @@ func TestMoveHorse(t *testing.T) {
 		t.Errorf("expected %q in dest, got %q", "Traveler", to.Horses[0].Name)
 	}
 
-	// Horse's owner should be updated
-	if horse.OwnerID != "owner-to" {
-		t.Errorf("expected ownerID %q, got %q", "owner-to", horse.OwnerID)
-	}
-
-	// Horse should still be findable in global registry
+	// Horse's owner should be updated — use GetHorse to get the canonical
+	// pointer from the global registry (the caller's original pointer is
+	// stale after re-registration into the slice).
 	got, err := sm.GetHorse(horse.ID)
 	if err != nil {
 		t.Fatalf("horse not found after move: %v", err)
 	}
+	if got.OwnerID != "owner-to" {
+		t.Errorf("expected ownerID %q, got %q", "owner-to", got.OwnerID)
+	}
+
+	// Horse should still be findable in global registry
 	if got.OwnerID != "owner-to" {
 		t.Errorf("global registry ownerID mismatch: expected %q, got %q", "owner-to", got.OwnerID)
 	}
@@ -604,14 +606,19 @@ func TestUpdateHorseStats(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if horse.Wins != 1 {
-		t.Errorf("expected 1 win, got %d", horse.Wins)
+	// Fetch the canonical pointer from the registry (after AddHorseToStable,
+	// the global pointer points into the stable's slice, not the caller's
+	// original pointer).
+	h, _ := sm.GetHorse(horse.ID)
+
+	if h.Wins != 1 {
+		t.Errorf("expected 1 win, got %d", h.Wins)
 	}
-	if horse.Races != 1 {
-		t.Errorf("expected 1 race, got %d", horse.Races)
+	if h.Races != 1 {
+		t.Errorf("expected 1 race, got %d", h.Races)
 	}
-	if horse.ELO != 1250 {
-		t.Errorf("expected ELO 1250, got %f", horse.ELO)
+	if h.ELO != 1250 {
+		t.Errorf("expected ELO 1250, got %f", h.ELO)
 	}
 
 	// Update again
@@ -619,14 +626,15 @@ func TestUpdateHorseStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if horse.Wins != 1 {
-		t.Errorf("expected 1 win after second update, got %d", horse.Wins)
+	h, _ = sm.GetHorse(horse.ID)
+	if h.Wins != 1 {
+		t.Errorf("expected 1 win after second update, got %d", h.Wins)
 	}
-	if horse.Losses != 1 {
-		t.Errorf("expected 1 loss, got %d", horse.Losses)
+	if h.Losses != 1 {
+		t.Errorf("expected 1 loss, got %d", h.Losses)
 	}
-	if horse.Races != 2 {
-		t.Errorf("expected 2 races, got %d", horse.Races)
+	if h.Races != 2 {
+		t.Errorf("expected 2 races, got %d", h.Races)
 	}
 }
 

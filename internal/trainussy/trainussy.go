@@ -1504,9 +1504,19 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		return ""
 	}
 
+	// BUG FIX: clampCeiling ensures FitnessCeiling never drifts above 1.0
+	// after seasonal bonus application. Without this, repeated seasonal
+	// events could push the ceiling arbitrarily high, breaking race balance.
+	clampCeiling := func() {
+		if horse.FitnessCeiling > 1.0 {
+			horse.FitnessCeiling = 1.0
+		}
+	}
+
 	switch event.Effect {
 	case "all_horses_chaos_boost":
 		horse.FitnessCeiling *= 1.03
+		clampCeiling()
 		return fmt.Sprintf("%s gained +3%% fitness ceiling from yogurt energy", horse.Name)
 
 	case "tmp_penalty":
@@ -1519,6 +1529,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 	case "int_bonus":
 		if geneExpress(horse.Genome, models.GeneINT) == "AA" {
 			horse.FitnessCeiling *= 1.02
+			clampCeiling()
 			return fmt.Sprintf("%s (INT AA) gained Dr. Mittens' blessing: +2%% ceiling", horse.Name)
 		}
 		return ""
@@ -1554,6 +1565,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 	case "haunted_boost", "haunted_buff":
 		if has, _ := hasTraitEffect(horse, "haunted_boost"); has {
 			horse.FitnessCeiling *= 1.02
+			clampCeiling()
 			return fmt.Sprintf("%s (haunted trait) gained +2%% ceiling from spectral energy", horse.Name)
 		}
 		return ""
@@ -1561,6 +1573,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 	case "sappho_boost":
 		if has, _ := hasTraitEffect(horse, "panic_resist"); has {
 			horse.FitnessCeiling *= 1.05
+			clampCeiling()
 			return fmt.Sprintf("%s gained +5%% ceiling from Sappho Poetry Festival inspiration", horse.Name)
 		}
 		return ""
@@ -1568,6 +1581,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 	case "gen0_boost":
 		if horse.Generation == 0 {
 			horse.FitnessCeiling *= 1.03
+			clampCeiling()
 			return fmt.Sprintf("%s (Gen 0) gained +3%% ceiling — Margaret Chen approved", horse.Name)
 		}
 		return ""
@@ -1594,6 +1608,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 	case "lot11_boost":
 		if horse.Generation > 0 {
 			horse.FitnessCeiling *= 1.05
+			clampCeiling()
 			return fmt.Sprintf("%s gained +5%% ceiling from STARDUSTUSSY transmission", horse.Name)
 		}
 		return ""

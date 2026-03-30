@@ -15,10 +15,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,6 +62,7 @@ type Server struct {
 	raceCache   map[string]*raceResult // raceID -> full result
 
 	// Persistence layer (nil when running without DB).
+	pgDB            *postgres.DB // retained for WithTx transactional support
 	userRepo        repository.UserRepository
 	stableRepo      repository.StableRepository
 	horseRepo       repository.HorseRepository
@@ -124,9 +127,38 @@ type Server struct {
 	pokerMu     sync.RWMutex
 	departures  map[string]*models.DepartureRecord
 	departMu    sync.RWMutex
+
+	// Progressive slot jackpot pool.
+	jackpotPool       int64 // accumulated progressive jackpot (Casino Chips)
+	jackpotMu         sync.Mutex
+	jackpotLastWinner string // username of last jackpot winner
+	jackpotLastAmount int64  // amount of last jackpot win
+
+	// Per-stable mutexes — protects read-check-write sequences on
+	// Cummies / CasinoChips from concurrent requests on the same stable.
+	stableMus   map[string]*sync.Mutex
+	stableMusMu sync.Mutex // protects the stableMus map itself
+
+	// CORS origin — read once at startup from CORS_ORIGIN env var.
+	// Defaults to "*" (permissive) when unset, for local development.
+	corsOrigin string
 }
 
 const starterHorseCount = 2
+
+// stableMu returns the per-stable mutex for the given stableID, creating one
+// lazily if it doesn't exist yet. This must be used to serialize any
+// read-check-write sequence that touches a stable's Cummies or CasinoChips.
+func (s *Server) stableMu(stableID string) *sync.Mutex {
+	s.stableMusMu.Lock()
+	defer s.stableMusMu.Unlock()
+	mu, ok := s.stableMus[stableID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.stableMus[stableID] = mu
+	}
+	return mu
+}
 
 // NewServer initializes all subsystems, seeds the legendary horses into a
 // "House of USSY" stable, registers all routes, and returns a ready Server.
@@ -162,10 +194,25 @@ func NewServer(db *postgres.DB) *Server {
 		pendingFights: make(map[string]*models.HorseFight),
 		pokerTables:   make(map[string]*models.PokerTable),
 		departures:    make(map[string]*models.DepartureRecord),
+		jackpotPool:   slotJackpotSeed,
+		stableMus:     make(map[string]*sync.Mutex),
 	}
+
+	// Read the allowed CORS origin once at startup. In production, set
+	// CORS_ORIGIN to the actual frontend URL (e.g. "https://horse.ussyco.de")
+	// to prevent arbitrary cross-origin requests. When unset, defaults to "*"
+	// for local development convenience.
+	s.corsOrigin = os.Getenv("CORS_ORIGIN")
+	if s.corsOrigin == "" {
+		s.corsOrigin = "*"
+	}
+	log.Printf("server: CORS origin set to %q", s.corsOrigin)
 
 	// If a DB connection is provided, wire up persistence and auth.
 	if db != nil {
+		// Retain the DB handle for transactional multi-step mutations.
+		s.pgDB = db
+
 		// Create repository instances.
 		s.userRepo = postgres.NewUserRepo(db)
 		s.stableRepo = postgres.NewStableRepo(db)
@@ -189,11 +236,19 @@ func NewServer(db *postgres.DB) *Server {
 		s.departureRepo = postgres.NewDepartureRepo(db)
 
 		// Create auth service.
+		// JWT_SECRET must be set in production (DB mode) — never fall back to a
+		// hardcoded default when real authentication is in play.
 		jwtSecret := os.Getenv("JWT_SECRET")
 		if jwtSecret == "" {
-			jwtSecret = "stallionussy-default-secret-change-me"
+			log.Fatal("server: JWT_SECRET environment variable is not set. " +
+				"Refusing to start in database mode with an empty secret. " +
+				"Set JWT_SECRET to a strong random value before running.")
 		}
-		s.auth = authussy.NewAuthService(jwtSecret, 72*time.Hour)
+		s.auth = authussy.NewAuthService(jwtSecret, 1*time.Hour)
+
+		// Wire up token version checking so the auth middleware can reject
+		// tokens that were issued before a password change.
+		s.auth.GetTokenVersion = s.userRepo.GetTokenVersion
 
 		// Create auth handler with stable creation callback.
 		s.authHandler = authussy.NewAuthHandler(s.auth, s.userRepo, func(name, ownerID string) *models.Stable {
@@ -220,16 +275,8 @@ func NewServer(db *postgres.DB) *Server {
 	}
 
 	// Start the WebSocket hub event loop.
-	go s.hub.Run()
-
-	// Start the challenge expiry cleanup goroutine.
-	go s.challengeExpiryLoop()
-
-	// Start the auction expiry loop goroutine.
-	go s.auctionExpiryLoop()
-
-	// Start the replay cleanup goroutine (deletes replays older than 7 days, hourly).
-	go s.replayCleanupLoop()
+	// NOTE: hub.Run and background goroutines are launched in Start() with
+	// context-based cancellation for graceful shutdown.
 
 	// Set up the chat command callback so the hub can forward commands
 	// (e.g. /send, /trade) to the server for processing.
@@ -346,7 +393,7 @@ func (s *Server) routes() {
 
 	// --- Racing ---
 	s.mux.HandleFunc("POST /api/races", s.handleCreateRace)
-	s.mux.HandleFunc("GET /api/races/quick", s.handleQuickRace)
+	s.mux.HandleFunc("POST /api/races/quick", s.handleQuickRace)
 	s.mux.HandleFunc("GET /api/races/recent", s.handleListRecentReplays)
 	s.mux.HandleFunc("GET /api/races/{id}", s.handleGetRaceReplay)
 
@@ -431,8 +478,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/casino/poker", s.handleCreatePokerTable)
 	s.mux.HandleFunc("POST /api/casino/poker/{id}/join", s.handleJoinPokerTable)
 	s.mux.HandleFunc("POST /api/casino/poker/{id}/draw", s.handleDrawPokerHand)
+	s.mux.HandleFunc("POST /api/casino/poker/{id}/action", s.handleHoldemAction)
 	s.mux.HandleFunc("GET /api/casino/slots/spin", s.handleSpinSlots)
 	s.mux.HandleFunc("POST /api/casino/slots/spin", s.handleSpinSlots)
+	s.mux.HandleFunc("GET /api/casino/jackpot", s.handleGetJackpot)
 
 	// --- Breeding Stallions (Permanent Stud Duty) ---
 	s.mux.HandleFunc("POST /api/horses/{id}/assign-breeder", s.handleAssignBreeder)
@@ -478,22 +527,94 @@ func (s *Server) routes() {
 }
 
 // ---------------------------------------------------------------------------
-// Start — launches the HTTP server
+// Start — launches the HTTP server with graceful shutdown
 // ---------------------------------------------------------------------------
 
 // Start begins listening on the given address (e.g. ":8080") and serves
-// HTTP requests. It blocks until the server errors or is shut down.
+// HTTP requests. It blocks until the server is shut down via SIGINT/SIGTERM
+// or a fatal error occurs. On receiving a termination signal, it:
+//   - Stops accepting new connections
+//   - Drains in-flight HTTP requests (up to 30s)
+//   - Cancels background goroutines (hub, expiry loops, cleanup loops)
+//   - Returns nil on clean shutdown, or an error if something went wrong
 func (s *Server) Start(addr string) error {
+	// Create the per-IP rate limiter used by the rate limit middleware.
+	rl := newRateLimiter()
+
 	var handler http.Handler
 	if s.auth != nil {
-		// Auth mode: CORS → AuthMiddleware → Logging → Mux
-		handler = enableCORS(s.auth.AuthMiddleware(loggingMiddleware(s.mux)))
+		// Auth mode: CORS → RateLimit → AuthMiddleware → Logging → Mux
+		// Rate limiting runs BEFORE auth so brute-force attacks are blocked
+		// before any JWT validation or DB lookups occur.
+		handler = enableCORS(s.corsOrigin, rateLimitMiddleware(rl, s.auth.AuthMiddleware(loggingMiddleware(s.mux))))
 	} else {
-		// No-auth mode (backward compatible).
-		handler = enableCORS(loggingMiddleware(s.mux))
+		// No-auth mode (backward compatible): CORS → RateLimit → Logging → Mux
+		handler = enableCORS(s.corsOrigin, rateLimitMiddleware(rl, loggingMiddleware(s.mux)))
 	}
-	log.Printf("server: StallionUSSY listening on %s", addr)
-	return http.ListenAndServe(addr, handler)
+
+	// Create an explicit http.Server with production-ready timeouts to
+	// defend against Slowloris-style DoS and resource exhaustion attacks.
+	srv := &http.Server{
+		Addr:           addr,
+		Handler:        handler,
+		ReadTimeout:    15 * time.Second,
+		WriteTimeout:   60 * time.Second, // generous for SSE / long responses
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MB
+	}
+
+	// Create a cancellable context for background goroutines. When we
+	// receive a shutdown signal, we cancel this context so goroutines
+	// (hub, expiry loops, cleanup) can terminate cleanly.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Launch background goroutines with the cancellable context.
+	go s.hub.RunWithContext(ctx)
+	go s.challengeExpiryLoop(ctx)
+	go s.auctionExpiryLoop(ctx)
+	go s.replayCleanupLoop(ctx)
+	go rateLimiterCleanupLoop(ctx, rl)
+
+	// Signal handling: trap SIGINT and SIGTERM for graceful shutdown.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Channel to capture ListenAndServe errors.
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("server: StallionUSSY listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	// Block until we receive a shutdown signal or a fatal server error.
+	select {
+	case sig := <-sigCh:
+		log.Printf("server: received signal %v, initiating graceful shutdown...", sig)
+	case err := <-errCh:
+		if err != nil {
+			cancel() // stop background goroutines on fatal error
+			return fmt.Errorf("server: fatal error: %w", err)
+		}
+	}
+
+	// Graceful shutdown: give in-flight requests up to 30 seconds to complete.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	log.Println("server: draining in-flight requests (30s deadline)...")
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server: HTTP shutdown error: %v", err)
+	}
+
+	// Cancel background goroutines and give them a moment to wrap up.
+	cancel()
+	log.Println("server: background goroutines cancelled, shutdown complete")
+
+	return nil
 }
 
 // ===========================================================================
@@ -975,18 +1096,21 @@ func (s *Server) handleBreed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ownership check: user must own either the sire or mare, and the target stable.
-	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-		ownsSire := s.userOwnsHorse(claims.UserID, req.SireID)
-		ownsMare := s.userOwnsHorse(claims.UserID, req.MareID)
-		if !ownsSire && !ownsMare {
-			http.Error(w, "you must own at least one of the breeding horses", http.StatusForbidden)
-			return
-		}
-		// Verify target stable belongs to user.
-		if !s.userOwnsStable(claims.UserID, req.StableID) {
-			http.Error(w, "target stable does not belong to you", http.StatusForbidden)
-			return
-		}
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+		return
+	}
+	ownsSire := s.userOwnsHorse(claims.UserID, req.SireID)
+	ownsMare := s.userOwnsHorse(claims.UserID, req.MareID)
+	if !ownsSire && !ownsMare {
+		http.Error(w, "you must own at least one of the breeding horses", http.StatusForbidden)
+		return
+	}
+	// Verify target stable belongs to user.
+	if !s.userOwnsStable(claims.UserID, req.StableID) {
+		http.Error(w, "target stable does not belong to you", http.StatusForbidden)
+		return
 	}
 
 	// Look up both parents.
@@ -1156,10 +1280,18 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, "you need a stable to fund a purse")
 				return
 			}
+			// Lock the stable for the balance check; the actual deduction
+			// happens below after validation, but we hold the lock over both.
+			mu := s.stableMu(purseStable.ID)
+			mu.Lock()
 			if purseStable.Cummies < req.Purse {
+				mu.Unlock()
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", purseStable.Cummies, req.Purse))
 				return
 			}
+			purseStable.Cummies -= req.Purse
+			s.persistStable(r.Context(), purseStable)
+			mu.Unlock()
 		}
 	} else if req.Purse > 0 {
 		writeError(w, http.StatusBadRequest, "custom purse races require authentication")
@@ -1184,10 +1316,7 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, err.Error())
 			return
 		}
-		if req.Purse > 0 && purseStable != nil {
-			purseStable.Cummies -= req.Purse
-			s.persistStable(r.Context(), purseStable)
-		}
+		// Purse deduction already happened above under the stable lock.
 
 		if len(horses) < 4 {
 			var playerHorse *models.Horse
@@ -1239,7 +1368,6 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 		selected := append([]*models.Horse{playerHorse}, opponents...)
 		race := racussy.NewRace(selected, trackType, quickRacePurse)
 		s.openBettingPool(race.ID, selected)
-		time.Sleep(10 * time.Second)
 		result := s.runRace(selected, trackType, quickRacePurse, race.ID)
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -1285,7 +1413,6 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 
 	race := racussy.NewRace(selected, trackType, purse)
 	s.openBettingPool(race.ID, selected)
-	time.Sleep(10 * time.Second)
 	result := s.runRace(selected, trackType, purse, race.ID)
 	writeJSON(w, http.StatusOK, result)
 }
@@ -1652,11 +1779,14 @@ func (s *Server) addEarningsToStable(horse *models.Horse, earnings int64) {
 	for _, stable := range s.stables.ListStables() {
 		for _, h := range stable.Horses {
 			if h.ID == horse.ID {
+				mu := s.stableMu(stable.ID)
+				mu.Lock()
 				stable.Cummies += earnings
 				stable.TotalEarnings += earnings
 				stable.TotalRaces++
 				// Write-through: persist updated stable balance to DB.
 				s.persistStable(context.Background(), stable)
+				mu.Unlock()
 				return
 			}
 		}
@@ -2541,7 +2671,7 @@ func (s *Server) handleDelistListing(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		// Guest mode fallback: read ownerID from query param or body.
+		// No auth claims — require explicit ownerID for verification.
 		ownerID = r.URL.Query().Get("ownerID")
 		if ownerID == "" {
 			var req struct {
@@ -2551,9 +2681,10 @@ func (s *Server) handleDelistListing(w http.ResponseWriter, r *http.Request) {
 				ownerID = req.OwnerID
 			}
 		}
-		// If ownerID still empty, default to listing owner for backward compat.
+		// If ownerID still empty, reject — never default to listing owner.
 		if ownerID == "" {
-			ownerID = listing.OwnerID
+			writeError(w, http.StatusUnauthorized, "authentication required or ownerID must be provided")
+			return
 		}
 	}
 
@@ -2704,17 +2835,16 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// Collect entry fee if the tournament has one.
+	// Collect entry fee BEFORE registration (if the tournament has one).
 	if tournament.EntryFee > 0 {
 		payingStable := registeredStable
 
+		mu := s.stableMu(payingStable.ID)
+		mu.Lock()
+
 		// Check sufficient funds.
 		if payingStable.Cummies < tournament.EntryFee {
+			mu.Unlock()
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d entry fee", payingStable.Cummies, tournament.EntryFee))
 			return
 		}
@@ -2727,9 +2857,24 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 
 		// Persist the stable after deduction.
 		s.persistStable(r.Context(), payingStable)
+		mu.Unlock()
 
 		log.Printf("server: collected %d cummies entry fee from stable %s (%s) for tournament %s",
 			tournament.EntryFee, payingStable.Name, payingStable.ID, tournament.Name)
+	}
+
+	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
+		// Refund entry fee if registration fails.
+		if tournament.EntryFee > 0 {
+			mu := s.stableMu(registeredStable.ID)
+			mu.Lock()
+			registeredStable.Cummies += tournament.EntryFee
+			tournament.PrizePool -= tournament.EntryFee
+			s.persistStable(r.Context(), registeredStable)
+			mu.Unlock()
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	// Write-through: persist updated tournament (with new registration + prize pool) to DB.
@@ -3088,9 +3233,12 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 		}
 
 		prize := prizeAmounts[i]
+		mu := s.stableMu(stable.ID)
+		mu.Lock()
 		stable.Cummies += prize
 		stable.TotalEarnings += prize
 		s.persistStable(ctx, stable)
+		mu.Unlock()
 
 		prizes = append(prizes, prizeInfo{
 			place:    i + 1,
@@ -3276,18 +3424,11 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Execute the transfer: move horse and transfer Cummies.
+	// Execute the transfer: move horse and transfer Cummies (in-memory).
 	if offer.Price > 0 {
 		if err := s.stables.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price); err != nil {
 			writeError(w, http.StatusBadRequest, "payment failed: "+err.Error())
 			return
-		}
-		// Write-through: persist updated balances for both stables after cummies transfer.
-		if updatedTo, err := s.stables.GetStable(offer.ToStableID); err == nil {
-			s.persistStable(r.Context(), updatedTo)
-		}
-		if updatedFrom, err := s.stables.GetStable(offer.FromStableID); err == nil {
-			s.persistStable(r.Context(), updatedFrom)
 		}
 	}
 
@@ -3296,24 +3437,34 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write-through: persist horse move in DB.
-	if s.horseRepo != nil {
-		ctx := r.Context()
-		if err := s.horseRepo.MoveHorse(ctx, offer.HorseID, offer.FromStableID, offer.ToStableID); err != nil {
-			log.Printf("server: failed to persist horse move for trade %s: %v", tradeID, err)
+	// Write-through: persist trade acceptance atomically (trade status +
+	// cummies transfer + horse move in a single DB transaction). Falls back
+	// to non-transactional persistence when running without a DB.
+	offer.UpdatedAt = time.Now()
+	if s.pgDB != nil {
+		if err := s.pgDB.AcceptTradeAtomically(r.Context(), offer); err != nil {
+			log.Printf("server: atomic trade persist failed for %s: %v", tradeID, err)
+		}
+	} else if s.tradeRepo != nil {
+		// Fallback: persist each piece independently (legacy path).
+		if err := s.tradeRepo.UpdateTrade(r.Context(), offer); err != nil {
+			log.Printf("server: failed to persist trade accept for %s: %v", tradeID, err)
+		}
+		if updatedTo, err := s.stables.GetStable(offer.ToStableID); err == nil {
+			s.persistStable(r.Context(), updatedTo)
+		}
+		if updatedFrom, err := s.stables.GetStable(offer.FromStableID); err == nil {
+			s.persistStable(r.Context(), updatedFrom)
+		}
+		if s.horseRepo != nil {
+			if err := s.horseRepo.MoveHorse(r.Context(), offer.HorseID, offer.FromStableID, offer.ToStableID); err != nil {
+				log.Printf("server: failed to persist horse move for trade %s: %v", tradeID, err)
+			}
 		}
 	}
 
 	log.Printf("server: trade accepted — horse %s moved from stable %s to %s for %d cummies",
 		offer.HorseName, offer.FromStableID, offer.ToStableID, offer.Price)
-
-	// Write-through: persist updated trade status to DB.
-	if s.tradeRepo != nil {
-		offer.UpdatedAt = time.Now()
-		if err := s.tradeRepo.UpdateTrade(r.Context(), offer); err != nil {
-			log.Printf("server: failed to persist trade accept for %s: %v", tradeID, err)
-		}
-	}
 
 	// Broadcast trade acceptance to all connected clients.
 	s.hub.BroadcastJSON(map[string]interface{}{
@@ -3463,11 +3614,10 @@ func (s *Server) handleCancelTrade(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAdvanceSeason(w http.ResponseWriter, r *http.Request) {
 	// Admin check: only the admin user "mojo" can advance the season.
-	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-		if claims.Username != "mojo" {
-			http.Error(w, "admin only", http.StatusForbidden)
-			return
-		}
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok || claims.Username != "mojo" {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
 	}
 
 	// Parse optional season from request body. Default to 0 (any season).
@@ -3719,7 +3869,11 @@ func (s *Server) handleGetHorseLeaderboard(w http.ResponseWriter, r *http.Reques
 	entries := make([]models.HorseLeaderboardEntry, 0)
 
 	for _, stable := range allStables {
-		for _, h := range stable.Horses {
+		// BUG FIX: Use ListHorses to get canonical pointers from the global
+		// registry instead of iterating stable.Horses (value copies) which
+		// may have stale ELO data due to pointer/copy divergence.
+		horses := s.stables.ListHorses(stable.ID)
+		for _, h := range horses {
 			stats := s.raceHistory.GetHorseStats(h.ID)
 
 			winRate := 0.0
@@ -3860,7 +4014,10 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 			reward = 1000
 		}
 
+		mu := s.stableMu(ranks[i].stable.ID)
+		mu.Lock()
 		ranks[i].stable.Cummies += reward
+		mu.Unlock()
 
 		champions = append(champions, models.SeasonChampion{
 			Place:      place,
@@ -3885,7 +4042,11 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 	for _, stable := range allStables {
 		for i := range stable.Horses {
 			oldELO := stable.Horses[i].ELO
-			stable.Horses[i].ELO = oldELO + (baseline-oldELO)*0.5
+			newELO := oldELO + (baseline-oldELO)*0.5
+			stable.Horses[i].ELO = newELO
+			// Also sync the soft-reset ELO to the global pointer registry
+			// so in-memory lookups (races, leaderboard) see the new value.
+			_ = s.stables.UpdateHorseStats(stable.Horses[i].ID, 0, 0, 0, newELO)
 		}
 		s.persistStable(r.Context(), stable)
 	}
@@ -4325,11 +4486,15 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 		if challengerStable == nil {
 			return nil, "you don't have a stable"
 		}
+		mu := s.stableMu(challengerStable.ID)
+		mu.Lock()
 		if challengerStable.Cummies < wager {
+			mu.Unlock()
 			return nil, fmt.Sprintf("insufficient cummies: you have ₵%d but wagered ₵%d", challengerStable.Cummies, wager)
 		}
 		challengerStable.Cummies -= wager
 		s.persistStable(context.Background(), challengerStable)
+		mu.Unlock()
 	}
 
 	bots := s.pickBotOpponents(challengerHorse, 1)
@@ -4364,12 +4529,15 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 	if wager > 0 {
 		challengerStable := s.getStableForUser(challengerID)
 		if challengerStable != nil {
+			mu := s.stableMu(challengerStable.ID)
+			mu.Lock()
 			if winnerID == challengerID {
 				payout := (wager * 2) - ((wager * 2) * 5 / 100)
 				challengerStable.Cummies += payout
 				challengerStable.TotalEarnings += payout
 			}
 			s.persistStable(context.Background(), challengerStable)
+			mu.Unlock()
 		}
 	}
 
@@ -4464,13 +4632,34 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 			s.challengeMu.Unlock()
 			return nil, "both players must have stables to wager"
 		}
+		// Lock both stables in deterministic order to avoid deadlocks.
+		mu1 := s.stableMu(challengerStable.ID)
+		mu2 := s.stableMu(defenderStable.ID)
+		if challengerStable.ID < defenderStable.ID {
+			mu1.Lock()
+			mu2.Lock()
+		} else if challengerStable.ID > defenderStable.ID {
+			mu2.Lock()
+			mu1.Lock()
+		} else {
+			mu1.Lock() // same stable (shouldn't happen, but safe)
+		}
+
 		if challengerStable.Cummies < challenge.Wager {
+			mu1.Unlock()
+			if challengerStable.ID != defenderStable.ID {
+				mu2.Unlock()
+			}
 			s.challengeMu.Lock()
 			challenge.Status = models.ChallengeStatusPending
 			s.challengeMu.Unlock()
 			return nil, fmt.Sprintf("challenger %s no longer has enough cummies (needs ₵%d)", challenge.ChallengerName, challenge.Wager)
 		}
 		if defenderStable.Cummies < challenge.Wager {
+			mu1.Unlock()
+			if challengerStable.ID != defenderStable.ID {
+				mu2.Unlock()
+			}
 			s.challengeMu.Lock()
 			challenge.Status = models.ChallengeStatusPending
 			s.challengeMu.Unlock()
@@ -4480,6 +4669,10 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 		// Escrow: deduct wager from both.
 		challengerStable.Cummies -= challenge.Wager
 		defenderStable.Cummies -= challenge.Wager
+		mu1.Unlock()
+		if challengerStable.ID != defenderStable.ID {
+			mu2.Unlock()
+		}
 	}
 
 	// Resolve challenger horse.
@@ -4487,8 +4680,14 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 	if err != nil {
 		// Refund wagers if escrowed.
 		if challenge.Wager > 0 {
+			mu1 := s.stableMu(challengerStable.ID)
+			mu1.Lock()
 			challengerStable.Cummies += challenge.Wager
+			mu1.Unlock()
+			mu2 := s.stableMu(defenderStable.ID)
+			mu2.Lock()
 			defenderStable.Cummies += challenge.Wager
+			mu2.Unlock()
 		}
 		s.challengeMu.Lock()
 		challenge.Status = models.ChallengeStatusPending
@@ -4548,9 +4747,12 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 
 		winnerStable := s.getStableForUser(winnerID)
 		if winnerStable != nil {
+			mu := s.stableMu(winnerStable.ID)
+			mu.Lock()
 			winnerStable.Cummies += wagerEarnings
 			winnerStable.TotalEarnings += wagerEarnings
 			s.persistStable(context.Background(), winnerStable)
+			mu.Unlock()
 		}
 
 		// Persist loser's stable too (wager was already deducted).
@@ -4741,11 +4943,17 @@ func (s *Server) findPendingChallengeForDefender(userID string) *models.Challeng
 
 // challengeExpiryLoop periodically checks for expired challenges and marks
 // them as expired. Runs as a background goroutine.
-func (s *Server) challengeExpiryLoop() {
+func (s *Server) challengeExpiryLoop(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("server: challengeExpiryLoop shutting down")
+			return
+		case <-ticker.C:
+		}
 		now := time.Now()
 		s.challengeMu.Lock()
 		for _, c := range s.challenges {
@@ -5066,11 +5274,13 @@ func readJSON(r *http.Request, v interface{}) error {
 	return decoder.Decode(v)
 }
 
-// enableCORS wraps a handler to add permissive CORS headers for development.
-// Properly handles OPTIONS preflight requests.
-func enableCORS(next http.Handler) http.Handler {
+// enableCORS wraps a handler to add CORS headers. The allowed origin is read
+// once at server startup from the CORS_ORIGIN environment variable (defaults
+// to "*" for local development). In production, set CORS_ORIGIN to the actual
+// frontend URL to prevent arbitrary cross-origin requests.
+func enableCORS(origin string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		w.Header().Set("Access-Control-Max-Age", "86400")
@@ -5117,6 +5327,210 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 		return hj.Hijack()
 	}
 	return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+}
+
+// ===========================================================================
+// Rate Limiter — per-IP token bucket to defend against brute-force & DoS
+// ===========================================================================
+
+// rateLimitCategory classifies an incoming request into one of several rate
+// limit buckets based on its path and HTTP method. Stricter categories (auth)
+// get fewer tokens per minute; read-only GETs are the most permissive.
+type rateLimitCategory int
+
+const (
+	rlCategoryAuth     rateLimitCategory = iota // /api/auth/login, /api/auth/register
+	rlCategoryCasino                            // /api/casino/*
+	rlCategoryMutation                          // POST/PUT/DELETE on other paths
+	rlCategoryRead                              // GET on other paths
+)
+
+// rateLimitConfig holds the token bucket parameters for a category.
+type rateLimitConfig struct {
+	maxTokens  float64 // bucket capacity (burst size)
+	refillRate float64 // tokens restored per second
+}
+
+// rateLimitConfigs maps each category to its bucket parameters.
+// Auth:     10 req/min  → 10 tokens, refill ~0.167/s
+// Casino:   30 req/min  → 30 tokens, refill 0.5/s
+// Mutation: 60 req/min  → 60 tokens, refill 1.0/s
+// Read:    120 req/min  → 120 tokens, refill 2.0/s
+var rateLimitConfigs = map[rateLimitCategory]rateLimitConfig{
+	rlCategoryAuth:     {maxTokens: 10, refillRate: 10.0 / 60.0},
+	rlCategoryCasino:   {maxTokens: 30, refillRate: 30.0 / 60.0},
+	rlCategoryMutation: {maxTokens: 60, refillRate: 60.0 / 60.0},
+	rlCategoryRead:     {maxTokens: 120, refillRate: 120.0 / 60.0},
+}
+
+// classifyRequest determines which rate limit category a request falls into.
+func classifyRequest(r *http.Request) rateLimitCategory {
+	path := r.URL.Path
+
+	// Auth endpoints get the strictest limits (brute-force protection).
+	if strings.HasPrefix(path, "/api/auth/login") || strings.HasPrefix(path, "/api/auth/register") {
+		return rlCategoryAuth
+	}
+
+	// Casino endpoints: moderate limits to prevent chip farming.
+	if strings.HasPrefix(path, "/api/casino") {
+		return rlCategoryCasino
+	}
+
+	// Any non-GET (mutation) endpoint: moderate limits.
+	if r.Method != http.MethodGet && r.Method != http.MethodOptions && r.Method != http.MethodHead {
+		return rlCategoryMutation
+	}
+
+	// Everything else is a read-only GET.
+	return rlCategoryRead
+}
+
+// visitor tracks a single IP's token bucket for one rate limit category.
+type visitor struct {
+	tokens   float64
+	lastSeen time.Time
+}
+
+// rateLimiter implements per-IP, per-category token bucket rate limiting.
+// Each IP gets a separate bucket for each rate limit category.
+type rateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]map[rateLimitCategory]*visitor // ip -> category -> visitor
+}
+
+// newRateLimiter creates a new rate limiter with an empty visitor map.
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{
+		visitors: make(map[string]map[rateLimitCategory]*visitor),
+	}
+}
+
+// allow checks whether a request from the given IP in the given category
+// should be allowed. It refills tokens based on elapsed time, then consumes
+// one token. Returns true if the request is allowed, false if rate-limited.
+func (rl *rateLimiter) allow(ip string, cat rateLimitCategory) bool {
+	cfg := rateLimitConfigs[cat]
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	buckets, ok := rl.visitors[ip]
+	if !ok {
+		buckets = make(map[rateLimitCategory]*visitor)
+		rl.visitors[ip] = buckets
+	}
+
+	v, ok := buckets[cat]
+	if !ok {
+		// First request from this IP in this category: start with a full bucket.
+		buckets[cat] = &visitor{
+			tokens:   cfg.maxTokens - 1, // consume one token for this request
+			lastSeen: time.Now(),
+		}
+		return true
+	}
+
+	// Refill tokens based on time elapsed since last request.
+	now := time.Now()
+	elapsed := now.Sub(v.lastSeen).Seconds()
+	v.tokens += elapsed * cfg.refillRate
+	if v.tokens > cfg.maxTokens {
+		v.tokens = cfg.maxTokens
+	}
+	v.lastSeen = now
+
+	// Try to consume one token.
+	if v.tokens < 1 {
+		return false
+	}
+	v.tokens--
+	return true
+}
+
+// cleanup removes visitors that haven't been seen in the given duration
+// across all categories. This prevents unbounded memory growth.
+func (rl *rateLimiter) cleanup(maxAge time.Duration) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+	for ip, buckets := range rl.visitors {
+		for cat, v := range buckets {
+			if v.lastSeen.Before(cutoff) {
+				delete(buckets, cat)
+			}
+		}
+		if len(buckets) == 0 {
+			delete(rl.visitors, ip)
+		}
+	}
+}
+
+// extractIP returns the client IP from the request. It checks X-Forwarded-For
+// first (for reverse proxy setups like nginx), then falls back to RemoteAddr.
+func extractIP(r *http.Request) string {
+	// X-Forwarded-For may contain "client, proxy1, proxy2" — use the first.
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.SplitN(xff, ",", 2)
+		ip := strings.TrimSpace(parts[0])
+		if ip != "" {
+			return ip
+		}
+	}
+
+	// X-Real-IP is set by some proxies (e.g. nginx with proxy_set_header).
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+
+	// Fall back to RemoteAddr, stripping the port.
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr // already just an IP (no port)
+	}
+	return host
+}
+
+// rateLimitMiddleware returns an http.Handler that enforces per-IP rate limits
+// based on the request path and method. Requests that exceed the limit get a
+// 429 Too Many Requests response with a JSON error body and Retry-After header.
+func rateLimitMiddleware(rl *rateLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip rate limiting for WebSocket upgrade requests and OPTIONS preflight.
+		if r.Method == http.MethodOptions || r.Header.Get("Upgrade") == "websocket" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		ip := extractIP(r)
+		cat := classifyRequest(r)
+
+		if !rl.allow(ip, cat) {
+			w.Header().Set("Retry-After", "10")
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "rate limit exceeded — slow down",
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// rateLimiterCleanupLoop runs every minute and removes visitors not seen in 5+
+// minutes. It stops when the provided context is cancelled (graceful shutdown).
+func rateLimiterCleanupLoop(ctx context.Context, rl *rateLimiter) {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.cleanup(5 * time.Minute)
+		}
+	}
 }
 
 // ===========================================================================
@@ -5481,8 +5895,11 @@ func (s *Server) handleClaimDailyReward(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "no stable found for user")
 		return
 	}
+	mu := s.stableMu(stable.ID)
+	mu.Lock()
 	stable.Cummies += actualCummies
 	s.persistStable(r.Context(), stable)
+	mu.Unlock()
 
 	// Grant streak_7 achievement when login streak reaches 7+.
 	if p.LoginStreak >= 7 {
@@ -5567,6 +5984,7 @@ func (s *Server) registerAuthRoutes() {
 	s.mux.HandleFunc("POST /api/auth/register", s.authHandler.HandleRegister)
 	s.mux.HandleFunc("POST /api/auth/login", s.authHandler.HandleLogin)
 	s.mux.HandleFunc("GET /api/auth/me", s.authHandler.HandleMe)
+	s.mux.HandleFunc("POST /api/auth/refresh", s.authHandler.HandleRefresh)
 }
 
 // ===========================================================================
@@ -6024,11 +6442,15 @@ func (s *Server) placeBet(raceID, userID, username, horseID string, amount int64
 	if stable == nil {
 		return nil, "you don't have a stable"
 	}
+	mu := s.stableMu(stable.ID)
+	mu.Lock()
 	if stable.Cummies < amount {
+		mu.Unlock()
 		return nil, fmt.Sprintf("not enough cummies (have ₵%d, need ₵%d)", stable.Cummies, amount)
 	}
 	stable.Cummies -= amount
 	s.persistStable(context.Background(), stable)
+	mu.Unlock()
 
 	// Record the bet.
 	bet := models.Bet{
@@ -6120,8 +6542,11 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 			// Credit winnings to the bettor's stable.
 			betStable := s.getStableForUser(bet.UserID)
 			if betStable != nil {
+				mu := s.stableMu(betStable.ID)
+				mu.Lock()
 				betStable.Cummies += bet.Payout
 				s.persistStable(context.Background(), betStable)
+				mu.Unlock()
 
 				// Grant betting_winner achievement for winning a bet.
 				s.grantAchievementToStable(betStable, "betting_winner")
@@ -6902,7 +7327,10 @@ func (s *Server) handlePlaceAuctionBid(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you need a stable to place bids")
 		return
 	}
+	bidMu := s.stableMu(bidderStable.ID)
+	bidMu.Lock()
 	if bidderStable.Cummies < req.Amount {
+		bidMu.Unlock()
 		s.auctionMu.Unlock()
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies — you have %d but need %d", bidderStable.Cummies, req.Amount))
 		return
@@ -6911,6 +7339,7 @@ func (s *Server) handlePlaceAuctionBid(w http.ResponseWriter, r *http.Request) {
 	// Escrow: deduct bid amount from bidder.
 	bidderStable.Cummies -= req.Amount
 	s.persistStable(r.Context(), bidderStable)
+	bidMu.Unlock()
 
 	// Refund previous bidder (if any).
 	previousBidderID := auction.BidderID
@@ -6918,8 +7347,11 @@ func (s *Server) handlePlaceAuctionBid(w http.ResponseWriter, r *http.Request) {
 	if previousBidderID != "" && previousBidAmount > 0 {
 		prevStable := s.getStableForUser(previousBidderID)
 		if prevStable != nil {
+			prevMu := s.stableMu(prevStable.ID)
+			prevMu.Lock()
 			prevStable.Cummies += previousBidAmount
 			s.persistStable(r.Context(), prevStable)
+			prevMu.Unlock()
 			log.Printf("server: auction %s — refunded %d cummies to %s",
 				auctionID, previousBidAmount, auction.BidderName)
 		}
@@ -7057,11 +7489,17 @@ func (s *Server) handleCancelAuction(w http.ResponseWriter, r *http.Request) {
 
 // auctionExpiryLoop runs every 5 seconds to check for expired auctions,
 // transfer horses to winners, and apply the Geoffrussy Tax.
-func (s *Server) auctionExpiryLoop() {
+func (s *Server) auctionExpiryLoop(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("server: auctionExpiryLoop shutting down")
+			return
+		case <-ticker.C:
+		}
 		now := time.Now()
 		s.auctionMu.Lock()
 
@@ -7084,30 +7522,47 @@ func (s *Server) auctionExpiryLoop() {
 				sellerPayout := auction.CurrentBid - tax
 				auction.GeoffrussyTax = tax
 
-				// Pay the seller (minus tax). Bid was already escrowed.
+				// Pay the seller (minus tax) — in-memory. Bid was already escrowed.
 				sellerStable := s.getStableForUser(auction.SellerID)
 				if sellerStable != nil {
+					sellerMu := s.stableMu(sellerStable.ID)
+					sellerMu.Lock()
 					sellerStable.Cummies += sellerPayout
-					s.persistStable(ctx, sellerStable)
+					sellerMu.Unlock()
 				}
 
-				// Transfer the horse from seller's stable to buyer's stable.
+				// Transfer the horse from seller's stable to buyer's stable (in-memory).
 				buyerStable := s.getStableForUser(auction.BidderID)
 				if buyerStable != nil && sellerStable != nil {
 					if err := s.stables.MoveHorse(auction.HorseID, sellerStable.ID, buyerStable.ID); err != nil {
 						log.Printf("server: auction %s — failed to move horse: %v", auction.ID, err)
 					} else {
-						// Update horse owner ID.
+						// Update horse owner ID in memory.
 						if horse, err := s.stables.GetHorse(auction.HorseID); err == nil && horse != nil {
 							horse.OwnerID = buyerStable.OwnerID
-							s.persistHorse(ctx, horse)
 						}
 						log.Printf("server: auction %s SOLD — %s goes to %s for %d cummies (tax: %d)",
 							auction.ID, auction.HorseName, auction.BidderName, auction.CurrentBid, tax)
 					}
 				}
 
-				s.persistAuction(ctx, auction)
+				// Write-through: persist auction settlement atomically (auction
+				// status + seller payment + horse transfer in one DB tx).
+				if s.pgDB != nil && buyerStable != nil && sellerStable != nil {
+					newOwnerID := buyerStable.OwnerID
+					if err := s.pgDB.SettleAuctionAtomically(ctx, auction, sellerStable.ID, buyerStable.ID, sellerPayout, newOwnerID); err != nil {
+						log.Printf("server: atomic auction settlement failed for %s: %v", auction.ID, err)
+					}
+				} else {
+					// Fallback: non-transactional persistence.
+					if sellerStable != nil {
+						s.persistStable(ctx, sellerStable)
+					}
+					if horse, err := s.stables.GetHorse(auction.HorseID); err == nil && horse != nil {
+						s.persistHorse(ctx, horse)
+					}
+					s.persistAuction(ctx, auction)
+				}
 
 				// Broadcast sold event.
 				s.hub.BroadcastJSON(map[string]interface{}{
@@ -7125,7 +7580,14 @@ func (s *Server) auctionExpiryLoop() {
 				auction.Status = models.AuctionStatusExpired
 				auction.CompletedAt = now
 
-				s.persistAuction(ctx, auction)
+				// Write-through: persist expiry atomically.
+				if s.pgDB != nil {
+					if err := s.pgDB.ExpireAuctionAtomically(ctx, auction); err != nil {
+						log.Printf("server: atomic auction expiry failed for %s: %v", auction.ID, err)
+					}
+				} else {
+					s.persistAuction(ctx, auction)
+				}
 
 				log.Printf("server: auction %s expired — %s returned to %s (no bids)",
 					auction.ID, auction.HorseName, auction.SellerName)
@@ -7468,11 +7930,17 @@ func (s *Server) handleListRecentReplays(w http.ResponseWriter, r *http.Request)
 
 // replayCleanupLoop periodically deletes race replays older than 7 days.
 // Runs every hour. No-op when the replay repo is nil.
-func (s *Server) replayCleanupLoop() {
+func (s *Server) replayCleanupLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("server: replayCleanupLoop shutting down")
+			return
+		case <-ticker.C:
+		}
 		if s.replayRepo == nil {
 			continue
 		}
@@ -7570,12 +8038,16 @@ func (s *Server) handleCreateAlliance(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
+	alMu := s.stableMu(stable.ID)
+	alMu.Lock()
 	if stable.Cummies < 500 {
+		alMu.Unlock()
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("creating an alliance costs 500 cummies (you have %d)", stable.Cummies))
 		return
 	}
 	stable.Cummies -= 500
 	s.persistStable(r.Context(), stable)
+	alMu.Unlock()
 
 	// Pick a random lore motto.
 	motto := models.AllianceLoreMottos[rand.IntN(len(models.AllianceLoreMottos))]
@@ -7857,10 +8329,6 @@ func (s *Server) handleDonateToAlliance(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
-	if stable.Cummies < req.Amount {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies (have %d, need %d)", stable.Cummies, req.Amount))
-		return
-	}
 
 	s.allianceMu.Lock()
 	alliance, exists := s.alliances[id]
@@ -7884,13 +8352,20 @@ func (s *Server) handleDonateToAlliance(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Transfer cummies.
+	// Transfer cummies (lock stable for the read-check-write).
+	donateMu := s.stableMu(stable.ID)
+	donateMu.Lock()
+	if stable.Cummies < req.Amount {
+		donateMu.Unlock()
+		s.allianceMu.Unlock()
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies (have %d, need %d)", stable.Cummies, req.Amount))
+		return
+	}
 	stable.Cummies -= req.Amount
+	s.persistStable(r.Context(), stable)
+	donateMu.Unlock()
 	alliance.Treasury += req.Amount
 	s.allianceMu.Unlock()
-
-	// Persist.
-	s.persistStable(r.Context(), stable)
 	s.persistAlliance(r.Context(), alliance)
 
 	s.hub.BroadcastJSON(map[string]interface{}{
@@ -7937,8 +8412,11 @@ func (s *Server) handleDisbandAlliance(w http.ResponseWriter, r *http.Request) {
 		for _, m := range alliance.Members {
 			memberStable := s.getStableForUser(m.UserID)
 			if memberStable != nil {
+				mMu := s.stableMu(memberStable.ID)
+				mMu.Lock()
 				memberStable.Cummies += share
 				s.persistStable(r.Context(), memberStable)
+				mMu.Unlock()
 			}
 		}
 	}
@@ -7999,7 +8477,18 @@ func (s *Server) handleChatAlliance(senderUserID, senderUsername string, args ma
 		}
 
 		stable := s.getStableForUser(senderUserID)
-		if stable == nil || stable.Cummies < 500 {
+		if stable == nil {
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Creating an alliance costs 500 cummies.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
+		chatAlMu := s.stableMu(stable.ID)
+		chatAlMu.Lock()
+		if stable.Cummies < 500 {
+			chatAlMu.Unlock()
 			s.hub.BroadcastJSON(map[string]interface{}{
 				"type": "chat_system",
 				"text": fmt.Sprintf("⚠️ %s — Creating an alliance costs 500 cummies.", senderUsername),
@@ -8010,6 +8499,7 @@ func (s *Server) handleChatAlliance(senderUserID, senderUsername string, args ma
 
 		stable.Cummies -= 500
 		s.persistStable(context.Background(), stable)
+		chatAlMu.Unlock()
 
 		motto := models.AllianceLoreMottos[rand.IntN(len(models.AllianceLoreMottos))]
 		alliance := &models.Alliance{
@@ -8177,7 +8667,7 @@ func (s *Server) handleChatAlliance(senderUserID, senderUsername string, args ma
 		}
 
 		stable := s.getStableForUser(senderUserID)
-		if stable == nil || stable.Cummies < amount {
+		if stable == nil {
 			s.hub.BroadcastJSON(map[string]interface{}{
 				"type": "chat_system",
 				"text": fmt.Sprintf("⚠️ %s — Insufficient cummies.", senderUsername),
@@ -8192,11 +8682,24 @@ func (s *Server) handleChatAlliance(senderUserID, senderUsername string, args ma
 			s.allianceMu.Unlock()
 			return
 		}
+		chatDonateMu := s.stableMu(stable.ID)
+		chatDonateMu.Lock()
+		if stable.Cummies < amount {
+			chatDonateMu.Unlock()
+			s.allianceMu.Unlock()
+			s.hub.BroadcastJSON(map[string]interface{}{
+				"type": "chat_system",
+				"text": fmt.Sprintf("⚠️ %s — Insufficient cummies.", senderUsername),
+				"ts":   time.Now().Unix(),
+			})
+			return
+		}
 		stable.Cummies -= amount
+		s.persistStable(context.Background(), stable)
+		chatDonateMu.Unlock()
 		alliance.Treasury += amount
 		s.allianceMu.Unlock()
 
-		s.persistStable(context.Background(), stable)
 		s.persistAlliance(context.Background(), alliance)
 
 		s.hub.BroadcastJSON(map[string]interface{}{
@@ -8320,7 +8823,10 @@ func (s *Server) handleHealHorse(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "stable not found")
 		return
 	}
+	healMu := s.stableMu(stable.ID)
+	healMu.Lock()
 	if stable.Cummies < cost {
+		healMu.Unlock()
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("healing costs ₵%d (you have ₵%d)", cost, stable.Cummies))
 		return
 	}
@@ -8333,6 +8839,7 @@ func (s *Server) handleHealHorse(w http.ResponseWriter, r *http.Request) {
 	s.syncHorseToStable(horse)
 	s.persistHorse(r.Context(), horse)
 	s.persistStable(r.Context(), stable)
+	healMu.Unlock()
 
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type": "chat_system",
@@ -8663,7 +9170,10 @@ func (s *Server) handleCreateFight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "entry fee cannot be negative")
 		return
 	}
+	createFightMu := s.stableMu(stable.ID)
+	createFightMu.Lock()
 	if stable.Cummies < req.EntryFee {
+		createFightMu.Unlock()
 		writeError(w, http.StatusBadRequest, "insufficient cummies for entry fee")
 		return
 	}
@@ -8672,6 +9182,8 @@ func (s *Server) handleCreateFight(w http.ResponseWriter, r *http.Request) {
 	if req.EntryFee > 0 {
 		stable.Cummies -= req.EntryFee
 	}
+	s.persistStable(r.Context(), stable)
+	createFightMu.Unlock()
 
 	// Default arena type.
 	if req.ArenaType == "" {
@@ -8795,7 +9307,10 @@ func (s *Server) handleJoinFight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you don't have a stable")
 		return
 	}
+	joinFightMu := s.stableMu(stable.ID)
+	joinFightMu.Lock()
 	if stable.Cummies < fight.EntryFee {
+		joinFightMu.Unlock()
 		s.fightMu.Unlock()
 		writeError(w, http.StatusBadRequest, "insufficient cummies for entry fee")
 		return
@@ -8805,6 +9320,8 @@ func (s *Server) handleJoinFight(w http.ResponseWriter, r *http.Request) {
 	if fight.EntryFee > 0 {
 		stable.Cummies -= fight.EntryFee
 	}
+	s.persistStable(r.Context(), stable)
+	joinFightMu.Unlock()
 
 	// Fill in horse 2 and mark as fighting.
 	fight.Horse2ID = horse2.ID
@@ -8861,8 +9378,11 @@ func (s *Server) handleJoinFight(w http.ResponseWriter, r *http.Request) {
 		}
 		winnerStable := s.getStableForUser(winnerOwnerID)
 		if winnerStable != nil {
+			fightWinMu := s.stableMu(winnerStable.ID)
+			fightWinMu.Lock()
 			winnerStable.Cummies += fight.Purse
 			s.persistStable(ctx, winnerStable)
+			fightWinMu.Unlock()
 		}
 	}
 
@@ -9072,12 +9592,16 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 	s.recordDeparture(r.Context(), stable, horse, models.DepartureCauseGlue)
 
 	// Award cummies to the owner.
-	if stable != nil {
-		stable.Cummies += cummiesEarned
-	}
-
 	// Remove the horse permanently.
 	ctx := context.Background()
+	if stable != nil {
+		glueMu := s.stableMu(stable.ID)
+		glueMu.Lock()
+		stable.Cummies += cummiesEarned
+		s.persistStable(ctx, stable)
+		glueMu.Unlock()
+	}
+
 	if err := s.stables.RemoveHorse(horseID); err != nil {
 		log.Printf("server: failed to remove horse from stableussy: %v", err)
 	}
@@ -9096,11 +9620,6 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 		if err := s.glueRepo.RecordGlue(ctx, result, claims.UserID, stableID); err != nil {
 			log.Printf("server: failed to persist glue result: %v", err)
 		}
-	}
-
-	// Persist stable (cummies updated).
-	if stable != nil {
-		s.persistStable(ctx, stable)
 	}
 
 	// Broadcast the horror.
@@ -9396,7 +9915,7 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "stallion not found")
 		return
 	}
-	if stallion.Retired || mare.Retired {
+	if mare.Retired {
 		writeError(w, http.StatusBadRequest, "retired horses cannot breed")
 		return
 	}
@@ -9440,19 +9959,30 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max active capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
 		return
 	}
-	if breeder.Fee > 0 && stable.Cummies < breeder.Fee {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: need %d, have %d", breeder.Fee, stable.Cummies))
-		return
-	}
 
 	// Deduct fee from buyer, add to stallion owner.
 	ctx := context.Background()
 	if breeder.Fee > 0 {
-		stable.Cummies -= breeder.Fee
 		ownerStable := s.getStableForUser(breeder.OwnerID)
+
+		// Lock buyer's stable for balance check + deduction.
+		buyerMu := s.stableMu(stable.ID)
+		buyerMu.Lock()
+		if stable.Cummies < breeder.Fee {
+			buyerMu.Unlock()
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: need %d, have %d", breeder.Fee, stable.Cummies))
+			return
+		}
+		stable.Cummies -= breeder.Fee
+		s.persistStable(ctx, stable)
+		buyerMu.Unlock()
+
 		if ownerStable != nil {
+			breedOwnerMu := s.stableMu(ownerStable.ID)
+			breedOwnerMu.Lock()
 			ownerStable.Cummies += breeder.Fee
 			s.persistStable(ctx, ownerStable)
+			breedOwnerMu.Unlock()
 		}
 	}
 
@@ -9597,6 +10127,30 @@ func (s *Server) handleChatFight(senderUserID, senderUsername string, args map[s
 		isToDeath = true
 	}
 
+	// Deduct entry fee from creator's stable.
+	creatorStable := s.getStableForUser(senderUserID)
+	if creatorStable == nil {
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": "You need a stable to create a fight.",
+		})
+		return
+	}
+	const chatFightEntryFee = int64(100)
+	chatCreateMu := s.stableMu(creatorStable.ID)
+	chatCreateMu.Lock()
+	if creatorStable.Cummies < chatFightEntryFee {
+		chatCreateMu.Unlock()
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": fmt.Sprintf("Insufficient cummies for entry fee (need %d, have %d).", chatFightEntryFee, creatorStable.Cummies),
+		})
+		return
+	}
+	creatorStable.Cummies -= chatFightEntryFee
+	s.persistStable(context.Background(), creatorStable)
+	chatCreateMu.Unlock()
+
 	fight := &models.HorseFight{
 		ID:            uuid.New().String(),
 		ArenaType:     arenaType,
@@ -9685,7 +10239,18 @@ func (s *Server) handleChatJoinFight(senderUserID, senderUsername string, args m
 
 	// Check entry fee.
 	stable := s.getStableForUser(senderUserID)
-	if stable == nil || stable.Cummies < fight.EntryFee {
+	if stable == nil {
+		s.fightMu.Unlock()
+		s.hub.SendToUser(senderUserID, map[string]interface{}{
+			"type":    "system_message",
+			"message": fmt.Sprintf("Insufficient cummies. Need %d.", fight.EntryFee),
+		})
+		return
+	}
+	chatJoinMu := s.stableMu(stable.ID)
+	chatJoinMu.Lock()
+	if stable.Cummies < fight.EntryFee {
+		chatJoinMu.Unlock()
 		s.fightMu.Unlock()
 		s.hub.SendToUser(senderUserID, map[string]interface{}{
 			"type":    "system_message",
@@ -9698,6 +10263,8 @@ func (s *Server) handleChatJoinFight(senderUserID, senderUsername string, args m
 	if fight.EntryFee > 0 {
 		stable.Cummies -= fight.EntryFee
 	}
+	s.persistStable(context.Background(), stable)
+	chatJoinMu.Unlock()
 
 	fight.Horse2ID = horse2.ID
 	fight.Horse2Name = horse2.Name
@@ -9747,13 +10314,21 @@ func (s *Server) handleChatJoinFight(senderUserID, senderUsername string, args m
 		}
 		winnerStable := s.getStableForUser(winnerOwnerID)
 		if winnerStable != nil {
+			chatWinMu := s.stableMu(winnerStable.ID)
+			chatWinMu.Lock()
 			winnerStable.Cummies += fight.Purse
 			s.persistStable(ctx, winnerStable)
+			chatWinMu.Unlock()
 		}
 	}
 
 	// Handle fatality.
 	if result.IsFatality && result.LoserID != "" {
+		loserHorse, _ := s.stables.GetHorse(result.LoserID)
+		loserStable := s.getStableForHorse(result.LoserID)
+		if loserHorse != nil && loserStable != nil {
+			s.recordDeparture(ctx, loserStable, loserHorse, models.DepartureCauseFight)
+		}
 		_ = s.stables.RemoveHorse(result.LoserID)
 		if s.horseRepo != nil {
 			_ = s.horseRepo.DeleteHorse(ctx, result.LoserID)

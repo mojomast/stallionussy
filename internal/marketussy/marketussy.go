@@ -189,6 +189,9 @@ func (m *Market) PurchaseBreeding(listingID, buyerID string) (*models.MarketTran
 	m.transactions = append(m.transactions, tx)
 	m.totalBurned += burnAmount
 
+	// Deactivate the listing so it cannot be purchased again.
+	listing.Active = false
+
 	return tx, nil
 }
 
