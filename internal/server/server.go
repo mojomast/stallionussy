@@ -306,6 +306,8 @@ func NewServer(db *postgres.DB) *Server {
 // ---------------------------------------------------------------------------
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+
 	// --- Auth (only when DB/auth is configured) ---
 	if s.authHandler != nil {
 		s.registerAuthRoutes()
@@ -548,6 +550,19 @@ func (s *Server) handleGetStable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stable)
+}
+
+func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"capabilities": map[string]bool{
+			"casino":             true,
+			"departed_horses":    true,
+			"starter_recovery":   true,
+			"async_draw_poker":   true,
+			"slot_machine":       true,
+			"stable_detail_hash": true,
+		},
+	})
 }
 
 func (s *Server) handleListStableHorses(w http.ResponseWriter, r *http.Request) {

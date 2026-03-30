@@ -2981,6 +2981,26 @@ async function api(path, opts = {}) {
   }
 }
 
+async function loadServerCapabilities(force = false) {
+  if (serverCapabilities && !force) return serverCapabilities;
+  try {
+    const data = await api('/capabilities');
+    serverCapabilities = (data && data.capabilities) || {};
+  } catch (e) {
+    serverCapabilities = {};
+  }
+  return serverCapabilities;
+}
+
+function hasCapability(name) {
+  return !!(serverCapabilities && serverCapabilities[name]);
+}
+
+function isFeatureUnavailableError(err) {
+  const msg = String(err && err.message || '');
+  return msg.includes('HTTP 404') || msg.includes('HTTP 405');
+}
+
 // ─── STATE ─────────────────────────────────────────────────────────────────
 let authToken = localStorage.getItem('stallionussy_token') || null;
 let currentUser = null;
@@ -3004,6 +3024,7 @@ let leaderboardSort = 'elo';      // current sort column for stable leaderboard
 let activeBettingPool = null;     // current open betting pool data
 let dailyRewardClaimed = false;   // whether daily reward has been claimed today
 let progressState = null;
+let serverCapabilities = null;
 const TUTORIAL_VERSION = '2026-03-ftue-v1';
 let postAuthDestination = '#home';
 let tutorialState = {
@@ -4581,9 +4602,7 @@ function copyRaceLink(raceID, buttonId = 'btn-share-race', label = 'SHARE RACE L
     const urlEl = $('#share-race-url');
     if (urlEl) urlEl.textContent = url;
   };
-  navigator.clipboard.writeText(url).then(() => {
-    markCopied();
-  }).catch(() => {
+  const fallbackCopy = () => {
     const ta = document.createElement('textarea');
     ta.value = url;
     document.body.appendChild(ta);
@@ -4591,7 +4610,16 @@ function copyRaceLink(raceID, buttonId = 'btn-share-race', label = 'SHARE RACE L
     document.execCommand('copy');
     document.body.removeChild(ta);
     markCopied();
-  });
+  };
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    navigator.clipboard.writeText(url).then(() => {
+      markCopied();
+    }).catch(() => {
+      fallbackCopy();
+    });
+    return;
+  }
+  fallbackCopy();
 }
 
 // ─── RACE HISTORY ─────────────────────────────────────────────────────────
@@ -6727,9 +6755,24 @@ async function startRace() {
   const selected = [...$$('.race-horse-cb:checked')].map(cb => cb.value);
   const track = $('#race-track').value;
   const purse = parseInt($('#race-purse').value) || 0;
+  const statusEl = $('#race-create-status');
+  const myHorseIDs = new Set(getMyHorses(false).map(h => h.id));
 
   if (selected.length < 2) {
-    alert('Select at least 2 horses for the race.');
+    if (statusEl) {
+      statusEl.textContent = 'Select at least 2 horses for the race.';
+      statusEl.style.color = 'var(--red)';
+    }
+    else alert('Select at least 2 horses for the race.');
+    return;
+  }
+
+  if (!selected.some(id => myHorseIDs.has(id))) {
+    if (statusEl) {
+      statusEl.textContent = 'You must enter at least one of your own active horses in the race.';
+      statusEl.style.color = 'var(--red)';
+    }
+    else alert('You must enter at least one of your own active horses in the race.');
     return;
   }
 
@@ -6742,6 +6785,10 @@ async function startRace() {
   $('#race-results').classList.add('hidden');
 
   try {
+    if (statusEl) {
+      statusEl.textContent = 'Submitting race...';
+      statusEl.style.color = 'var(--fg-dim)';
+    }
     const race = await api('/races', {
       method: 'POST',
       body: { horseIDs: selected, trackType: track, purse },
@@ -6763,7 +6810,12 @@ async function startRace() {
       onRaceStart({ race: raceObj });
     }
   } catch (e) {
-    alert(`Race error: ${e.message}`);
+    if (statusEl) {
+      statusEl.textContent = `Race error: ${e.message}`;
+      statusEl.style.color = 'var(--red)';
+    } else {
+      alert(`Race error: ${e.message}`);
+    }
   } finally {
     btn.disabled = false;
     btn.textContent = 'START RACE';
@@ -9200,12 +9252,11 @@ async function viewFightReplay(fightID) {
 // ─── GLUE FACTORY ──────────────────────────────────────────────────────────
 
 async function loadGluePage() {
+  await loadServerCapabilities();
   try {
-    const [horsesData, historyData, departedData] = await Promise.allSettled([
-      api('/horses'),
-      api('/glue/history'),
-      api('/departed'),
-    ]);
+    const requests = [api('/horses'), api('/glue/history')];
+    if (hasCapability('departed_horses')) requests.push(api('/departed'));
+    const [horsesData, historyData, departedData] = await Promise.allSettled(requests);
 
     const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
     const myHorses = horses.filter(h => isMyHorse(h) && !h.retired);
@@ -9243,8 +9294,12 @@ async function loadGluePage() {
     }
 
     const departedEl = $('#departed-horses');
-    const departed = departedData.status === 'fulfilled' ? (Array.isArray(departedData.value) ? departedData.value : []) : [];
-    if (departed.length === 0) {
+    const departed = departedData && departedData.status === 'fulfilled' ? (Array.isArray(departedData.value) ? departedData.value : []) : [];
+    if (!hasCapability('departed_horses')) {
+      departedEl.innerHTML = '<span class="text-dim">Departed-horse omens are not available on this server build yet.</span>';
+    } else if (departedData && departedData.status === 'rejected' && isFeatureUnavailableError(departedData.reason)) {
+      departedEl.innerHTML = '<span class="text-dim">Departed-horse omens are unavailable on this server version.</span>';
+    } else if (departed.length === 0) {
       departedEl.innerHTML = '<span class="text-dim">No omens from beyond the stable veil.</span>';
     } else {
       departedEl.innerHTML = departed.map(rec => {
@@ -9264,6 +9319,10 @@ async function loadGluePage() {
     }
   } catch (e) {
     console.error('loadGluePage:', e);
+    const departedEl = $('#departed-horses');
+    if (departedEl && isFeatureUnavailableError(e)) {
+      departedEl.innerHTML = '<span class="text-dim">Departed-horse omens are unavailable on this server version.</span>';
+    }
   }
 }
 
@@ -9271,6 +9330,13 @@ async function loadCasinoPage() {
   const tableEl = $('#poker-tables');
   const slotHistEl = $('#slot-history');
   const walletMsg = $('#casino-wallet-msg');
+  await loadServerCapabilities();
+  if (!hasCapability('casino')) {
+    if (walletMsg) walletMsg.textContent = 'Casino systems are not available on this server build yet.';
+    tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
+    if (slotHistEl) slotHistEl.innerHTML = 'No spins logged.';
+    return;
+  }
   try {
     const data = await api('/casino');
     if (walletMsg) {
@@ -9308,6 +9374,12 @@ async function loadCasinoPage() {
       </div>`;
     }).join('');
   } catch (e) {
+    if (isFeatureUnavailableError(e)) {
+      if (walletMsg) walletMsg.textContent = 'Casino systems are unavailable on this server version.';
+      tableEl.innerHTML = '<span class="text-dim">Casino unavailable on this server version.</span>';
+      if (slotHistEl) slotHistEl.innerHTML = 'No spins logged.';
+      return;
+    }
     tableEl.innerHTML = `<span class="text-dim">Error loading casino: ${escHtml(e.message)}</span>`;
   }
 }
@@ -9321,6 +9393,11 @@ async function exchangeCasinoChips(direction) {
     msgEl.innerHTML = `Wallet updated: <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | Chips: <span class="text-purple">${(data.casinoChips || 0).toLocaleString()}</span>`;
     loadCasinoPage();
   } catch (e) {
+    if (isFeatureUnavailableError(e)) {
+      msgEl.textContent = 'Casino exchange is unavailable on this server version.';
+      msgEl.style.color = 'var(--red)';
+      return;
+    }
     msgEl.textContent = `Error: ${e.message}`;
     msgEl.style.color = 'var(--red)';
   }
@@ -9341,10 +9418,20 @@ async function spinSlots() {
         loadCasinoPage();
         return;
       } catch (fallbackErr) {
+        if (isFeatureUnavailableError(fallbackErr)) {
+          msgEl.textContent = 'Slot machine is unavailable on this server version.';
+          msgEl.style.color = 'var(--red)';
+          return;
+        }
         msgEl.textContent = `Error: ${fallbackErr.message}`;
         msgEl.style.color = 'var(--red)';
         return;
       }
+    }
+    if (isFeatureUnavailableError(e)) {
+      msgEl.textContent = 'Slot machine is unavailable on this server version.';
+      msgEl.style.color = 'var(--red)';
+      return;
     }
     msgEl.textContent = `Error: ${e.message}`;
     msgEl.style.color = 'var(--red)';
@@ -9380,6 +9467,11 @@ async function createPokerTable() {
     msgEl.style.color = 'var(--fg)';
     loadCasinoPage();
   } catch (e) {
+    if (isFeatureUnavailableError(e)) {
+      msgEl.textContent = 'Poker tables are unavailable on this server version.';
+      msgEl.style.color = 'var(--red)';
+      return;
+    }
     msgEl.textContent = `Error: ${e.message}`;
     msgEl.style.color = 'var(--red)';
   }
@@ -9465,11 +9557,14 @@ async function loadStuds() {
     const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
     const myBreeders = myBreedersData.status === 'fulfilled' ? (Array.isArray(myBreedersData.value) ? myBreedersData.value : []) : [];
     const allBreeders = allBreedersData.status === 'fulfilled' ? (Array.isArray(allBreedersData.value) ? allBreedersData.value : []) : [];
+    const ownedHorses = horses.filter(h => isMyHorse(h));
+    const retiredOwnedHorses = ownedHorses.filter(h => h.retired);
+    const activeOwnedHorses = ownedHorses.filter(h => !h.retired);
 
     // Populate horse dropdown for assigning breeder
     const horseEl = $('#breeder-horse');
-    horseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-    myHorses.forEach(h => {
+    horseEl.innerHTML = '<option value="">-- SELECT RETIRED HORSE --</option>';
+    retiredOwnedHorses.forEach(h => {
       horseEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)} [ELO:${Math.round(h.elo || 1200)}]</option>`;
     });
 
@@ -9520,11 +9615,12 @@ async function loadStuds() {
     // Populate mare dropdown for breeding
     const mareEl = $('#stud-mare');
     mareEl.innerHTML = '<option value="">-- SELECT YOUR MARE --</option>';
-    myHorses.forEach(h => {
+    activeOwnedHorses.forEach(h => {
       mareEl.innerHTML += `<option value="${escHtml(h.id)}">${escHtml(h.name)}</option>`;
     });
   } catch (e) {
     console.error('loadStuds:', e);
+    $('#my-breeders').innerHTML = `<span class="text-dim">Stud system unavailable: ${escHtml(e.message || 'load failed')}</span>`;
   }
 }
 
@@ -9759,6 +9855,8 @@ window.SU = {
   drawPoker,
   claimDepartureReturn,
 };
+
+window.copyRaceLink = copyRaceLink;
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────
 function init() {

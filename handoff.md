@@ -115,6 +115,12 @@ All passed after the fixes in this pass.
 - Stable detail is now route-addressable as `#stable/{id}`, which lets the owned empty-stable recovery panel survive refresh/navigation.
 - Owned empty stables once again surface the emergency starter recovery CTA instead of incorrectly pushing players toward breeding with zero horses.
 - Slot spins now support the normal `POST` path plus a compatibility `GET` variant on the same route, reducing 405 dead ends while keeping auth intact.
+- Added `GET /api/capabilities` so the SPA can gate newer systems against older server builds instead of hard-failing on 404/405.
+- The SPA now degrades gracefully when `casino` or `departed_horses` are unavailable on the live server version.
+- Additional runtime fixes landed in the same pass:
+  - race share links now work again because `copyRaceLink` is globally reachable and clipboard fallback is hardened
+  - the studs page now defines its owned-horse lists correctly and only offers retired horses for breeder assignment
+  - custom race creation now validates “at least one owned horse” client-side and shows inline status instead of raw alerts where possible
 - Casino/departed follow-ups were tightened during the repair:
   - daily casino chip grants are now applied consistently from the casino overview path
   - poker table payloads now redact opponent hands until settlement
