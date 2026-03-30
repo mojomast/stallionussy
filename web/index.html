@@ -1692,6 +1692,25 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .tutorial-panel .tutorial-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .tutorial-panel .tutorial-tip { font-size: 10px; color: var(--fg-dim); margin-top: 8px; }
 .tutorial-help { position: fixed; right: 12px; bottom: 12px; z-index: 9400; }
+.help-panel {
+  position: fixed;
+  right: 12px;
+  bottom: 60px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: 60vh;
+  overflow-y: auto;
+  background: rgba(10,18,10,0.97);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow-green);
+  padding: 12px;
+  z-index: 9395;
+}
+.help-panel h3 { margin: 0 0 8px 0; color: var(--cyan); }
+.help-panel .help-meta { font-size: 10px; color: var(--fg-dim); margin-bottom: 8px; }
+.help-panel .help-body { font-size: 11px; line-height: 1.55; }
+.help-panel .help-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.help-panel .help-checklist { margin-top: 10px; font-size: 11px; }
+.help-panel .help-checklist div { margin: 4px 0; }
 @media (max-width: 768px) {
   .tutorial-panel {
     left: 12px !important;
@@ -1699,6 +1718,11 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     width: auto;
     bottom: 12px !important;
     top: auto !important;
+  }
+  .help-panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
   }
 }
 
@@ -2708,7 +2732,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <span class="modal-close" onclick="window.SU.skipTutorial()">[SKIP]</span>
     <h2 class="glow">FIRST STABLE WALKTHROUGH</h2>
     <div class="text-dim" style="font-size:11px;line-height:1.6;">
-      This guided tutorial walks the first core loop interactively: stable, starter horses, horse detail, training, racing, breeding, market, advanced competition, and replay/share.
+      This guided tutorial now covers the full playable spine: stable, recovery, horse detail, training, quick race, custom race, breeding, market, competition, replays, progression, and help surfaces.
     </div>
     <div class="tutorial-actions mt-8">
       <button class="term-btn amber" onclick="window.SU.startTutorial()">START TUTORIAL</button>
@@ -2720,8 +2744,10 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
 <div id="tutorial-spotlight" class="tutorial-spotlight hidden"></div>
 <div id="tutorial-panel" class="tutorial-panel hidden"></div>
+<div id="help-panel" class="help-panel hidden"></div>
 <div class="tutorial-help" style="display:flex;gap:8px;">
   <button id="tutorial-help-btn" class="term-btn sm" onclick="window.SU.replayTutorial()">HELP / TUTORIAL</button>
+  <button id="context-help-btn" class="term-btn sm cyan" onclick="window.SU.toggleHelpPanel()">PAGE HELP</button>
   <button id="lore-help-btn" class="term-btn sm purple" onclick="window.SU.openLore()">LORE CODEX</button>
 </div>
 
@@ -3086,6 +3112,20 @@ function getTutorialSecondHorse() {
   return getMyHorses(false)[1] || getMyHorses(false)[0] || null;
 }
 
+function getTutorialContext() {
+  const stable = getTutorialMyStable();
+  const activeHorses = getMyHorses(false);
+  const allOwnedHorses = getMyHorses(true);
+  return {
+    stable,
+    firstHorse: activeHorses[0] || null,
+    secondHorse: activeHorses[1] || activeHorses[0] || null,
+    activeHorseCount: activeHorses.length,
+    totalHorseCount: allOwnedHorses.length,
+    needsRecovery: !!stable && allOwnedHorses.length === 0,
+  };
+}
+
 function shouldOfferTutorial() {
   if (isGuest) return false;
   if (!currentUser) return false;
@@ -3095,10 +3135,11 @@ function shouldOfferTutorial() {
 }
 
 function tutorialSteps() {
-  const stable = getTutorialMyStable();
-  const firstHorse = getTutorialStarterHorse();
-  const secondHorse = getTutorialSecondHorse();
-  return [
+  const ctx = getTutorialContext();
+  const stable = ctx.stable;
+  const firstHorse = ctx.firstHorse;
+  const secondHorse = ctx.secondHorse;
+  const steps = [
     {
       id: 'stable',
       title: 'Stable Overview',
@@ -3120,6 +3161,35 @@ function tutorialSteps() {
       },
       completeWhen: () => !!stable && !$('#stable-detail')?.classList.contains('hidden'),
     },
+  ];
+
+  if (ctx.needsRecovery) {
+    steps.push(
+      {
+        id: 'recovery',
+        title: 'Emergency Recovery',
+        text: 'If your stable is empty, stop trying to breed or race. Use the starter recovery panel first, then check omens if you want to chase weird returns later.',
+        target: '#stable-recovery-msg, #stable-horses',
+        route: stable ? `#stable/${stable.id}` : '#stable',
+        actionLabel: 'OPEN RECOVERY PANEL',
+        action: () => { if (stable) viewStable(stable.id); },
+        completeWhen: () => !!$('#stable-recovery-msg') || !!$('#stable-horses')?.textContent.includes('EMPTY STABLE RECOVERY'),
+      },
+      {
+        id: 'help_surfaces',
+        title: 'Help Beyond The Tutorial',
+        text: 'Use PAGE HELP for task guidance on the current screen, and LORE CODEX when a mechanic mentions world terms the UI only summarizes.',
+        target: '#context-help-btn, #tutorial-help-btn',
+        route: '#stable',
+        actionLabel: 'OPEN PAGE HELP',
+        action: () => toggleHelpPanel(true),
+        completeWhen: () => !$('#help-panel')?.classList.contains('hidden'),
+      }
+    );
+    return steps;
+  }
+
+  steps.push(
     {
       id: 'horse',
       title: 'Horse Detail',
@@ -3135,7 +3205,7 @@ function tutorialSteps() {
     {
       id: 'training',
       title: 'Training',
-      text: 'Run one workout. Training raises race readiness but builds fatigue, so you need to balance improvement against recovery.',
+      text: 'Run one workout. Training raises race readiness but builds fatigue, so you need to alternate improvement with recovery days and avoid injury spirals.',
       target: '#training-result, #train-btn-General',
       route: firstHorse ? `#horse/${firstHorse.id}` : '#horse',
       actionLabel: 'TRAIN THIS HORSE',
@@ -3143,6 +3213,15 @@ function tutorialSteps() {
         if (firstHorse) trainHorse(firstHorse.id, 'General');
       },
       completeWhen: () => !!$('#training-result') && $('#training-result').textContent.trim().length > 0,
+    },
+    {
+      id: 'recovery_rules',
+      title: 'Fatigue And Recovery',
+      text: 'Fatigue is a real limiter. Rest days, horse rotation, and keeping an active bench matter more than overtraining one favorite.',
+      target: '#train-btn-RestDay, #training-result',
+      route: firstHorse ? `#horse/${firstHorse.id}` : '#horse',
+      actionLabel: 'SHOW REST OPTION',
+      completeWhen: () => getPage() === 'horse',
     },
     {
       id: 'race',
@@ -3154,9 +3233,18 @@ function tutorialSteps() {
       completeWhen: () => getPage() === 'race',
     },
     {
+      id: 'quick_race',
+      title: 'Quick Race',
+      text: 'Quick Race auto-uses your best active horse and fills the field fast. It is the lowest-friction way to keep progression moving.',
+      target: '#btn-quick-race',
+      route: '#race',
+      actionLabel: 'SHOW QUICK RACE',
+      completeWhen: () => getPage() === 'race',
+    },
+    {
       id: 'race_start',
       title: 'Start Your First Race',
-      text: 'Use your starter horses, keep the purse affordable, and start a race. Quick Race also works if you want instant action.',
+      text: 'Use your starter horses, choose a legal field, keep the purse affordable, and start a custom race.',
       target: '#btn-start-race, #btn-quick-race',
       route: '#race',
       actionLabel: 'AUTO-SELECT STARTERS',
@@ -3167,6 +3255,15 @@ function tutorialSteps() {
         });
       },
       completeWhen: () => !!currentRace,
+    },
+    {
+      id: 'custom_race_setup',
+      title: 'Track And Purse',
+      text: 'Custom races let you choose track type and purse. Those settings change risk, rewards, and which horses are advantaged.',
+      target: '#race-track, #race-purse',
+      route: '#race',
+      actionLabel: 'REVIEW RACE SETTINGS',
+      completeWhen: () => getPage() === 'race',
     },
     {
       id: 'results',
@@ -3180,7 +3277,7 @@ function tutorialSteps() {
     {
       id: 'breed',
       title: 'Breeding Preview',
-      text: 'Breeding is your long-term roster builder. Open the lab and inspect sire, mare, and destination stable selections.',
+      text: 'Breeding is your long-term roster builder. Learn sire, mare, and destination stable selection before you spend into a new foal.',
       target: '[data-page="breed"]',
       route: '#breed',
       actionLabel: 'GO TO BREEDING',
@@ -3189,22 +3286,78 @@ function tutorialSteps() {
     {
       id: 'market',
       title: 'Market Preview',
-      text: 'The market lets you list breeding stallions and buy pairings with an owned mare. Browse it before spending.',
+      text: 'The market lets you list breeding stallions and buy pairings with an owned mare. It is an economy loop, not just a menu.',
       target: '[data-page="market"]',
       route: '#market',
       actionLabel: 'GO TO MARKET',
       completeWhen: () => getPage() === 'market',
     },
     {
-      id: 'competition',
-      title: 'Advanced Competition',
-      text: 'Tournaments, direct challenges, and betting are higher-intensity loops. They matter more once your stable can afford risk.',
+      id: 'challenges',
+      title: 'Challenges And Betting',
+      text: 'Direct challenges and betting are your higher-pressure PvP loop. Use them after basic racing when you can afford variance.',
       target: '[data-page="challenges"]',
       route: '#challenges',
-      actionLabel: 'GO TO CHALLENGES',
+      actionLabel: 'OPEN CHALLENGES',
       completeWhen: () => getPage() === 'challenges',
     },
     {
+      id: 'fights',
+      title: 'Retired Horse Fights',
+      text: 'Fights are a separate high-risk system for retired horses. Do not treat them as normal progression; they can permanently remove horses.',
+      target: '[data-page="fights"]',
+      route: '#fights',
+      actionLabel: 'OPEN FIGHTS',
+      completeWhen: () => getPage() === 'fights',
+    },
+    {
+      id: 'glue_and_returns',
+      title: 'Glue And Return Omens',
+      text: 'Glue is irreversible economy extraction. If a horse is lost to glue or fatal fights, the departed ledger is where rare return omens appear later.',
+      target: '[data-page="glue"]',
+      route: '#glue',
+      actionLabel: 'OPEN GLUE LEDGER',
+      completeWhen: () => getPage() === 'glue',
+    },
+    {
+      id: 'studs',
+      title: 'Stud Duty',
+      text: 'Retired horses can be assigned to stud duty for a slower breeding economy path. This is a long-tail roster management tool.',
+      target: '[data-page="studs"]',
+      route: '#studs',
+      actionLabel: 'OPEN STUDS',
+      completeWhen: () => getPage() === 'studs',
+    },
+    {
+      id: 'casino',
+      title: 'Casino Systems',
+      text: 'Casino chips, slots, and draw poker are side-loop systems. Use them only when you understand they are not core recovery or progression tools.',
+      target: '[data-page="casino"]',
+      route: '#casino',
+      actionLabel: 'OPEN CASINO',
+      completeWhen: () => getPage() === 'casino',
+    },
+    {
+      id: 'progression',
+      title: 'Progression And Dailies',
+      text: 'Daily rewards, prestige tiers, seasons, and achievements are the long-term account progression layer. Check them whenever your stable feels capped.',
+      target: '#btn-claim-daily, #prestige-tier-name',
+      route: '#home',
+      actionLabel: 'RETURN HOME',
+      completeWhen: () => getPage() === 'home',
+    },
+    {
+      id: 'help_surfaces',
+      title: 'Help Beyond The Tutorial',
+      text: 'Use PAGE HELP for current-screen guidance, HELP / TUTORIAL to replay onboarding, and LORE CODEX for deeper world/system explanations.',
+      target: '#context-help-btn, #tutorial-help-btn',
+      route: '#home',
+      actionLabel: 'OPEN PAGE HELP',
+      action: () => toggleHelpPanel(true),
+      completeWhen: () => !$('#help-panel')?.classList.contains('hidden'),
+    },
+    {
+      id: 'market',
       id: 'replay',
       title: 'Replay And Share',
       text: 'Recent races stay replayable and shareable. Use history and replay links to review results and send them to other players.',
@@ -3213,7 +3366,8 @@ function tutorialSteps() {
       actionLabel: 'OPEN REPLAYS',
       completeWhen: () => getPage() === 'history',
     },
-  ];
+  );
+  return steps;
 }
 
 function hideTutorialUI() {
@@ -3234,8 +3388,17 @@ function hideTutorialWelcome() {
 function highlightTutorialTarget(targetSelector) {
   const spotlight = $('#tutorial-spotlight');
   if (!spotlight) return null;
-  const selector = (targetSelector || '').split(',')[0].trim();
-  const target = selector ? document.querySelector(selector) : null;
+  const selectors = String(targetSelector || '').split(',').map(s => s.trim()).filter(Boolean);
+  let target = null;
+  for (const selector of selectors) {
+    const candidate = document.querySelector(selector);
+    if (!candidate) continue;
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      target = candidate;
+      break;
+    }
+  }
   if (!target) {
     spotlight.classList.add('hidden');
     return null;
@@ -3386,6 +3549,146 @@ function getMyHorses(includeRetired = false) {
 
 function isMyHorse(horse) {
   return !!horse && horse.owner_id === getOwnerID();
+}
+
+function currentHelpContext() {
+  const ctx = getTutorialContext();
+  const page = getPage();
+  const base = {
+    home: {
+      title: 'Dashboard Help',
+      meta: 'Progression, season state, and account overview',
+      body: 'Use the dashboard to read your current season, prestige, daily reward state, and recent results before deciding whether to train, race, or recover.',
+      checklist: [
+        `Claim daily reward if available`,
+        `Check prestige and season status`,
+        `Review recent race and achievement feed`,
+      ],
+      actions: [
+        { label: 'Replay Tutorial', fn: () => replayTutorial() },
+        { label: 'Open Lore Codex', fn: () => openLore() },
+      ],
+    },
+    stable: {
+      title: 'Stable Help',
+      meta: 'Roster, recovery, and economic baseline',
+      body: ctx.needsRecovery
+        ? 'Your stable has no horses. Recovery is the immediate next step. Do not waste time trying to breed or custom-race from an empty roster.'
+        : 'Use the stable page to inspect active versus total horses, earnings, and whether you have enough depth to train, race, breed, or retire strategically.',
+      checklist: ctx.needsRecovery
+        ? ['Open your stable detail', 'Use starter recovery if available', 'Check departed omens in Glue ledger']
+        : ['Open stable detail', 'Review active horse count', 'Plan next race, training, or breeding action'],
+      actions: [
+        { label: 'Open My Stable', fn: () => { const s = getTutorialMyStable(); if (s) location.hash = `#stable/${s.id}`; } },
+      ],
+    },
+    horse: {
+      title: 'Horse Help',
+      meta: 'Training, fatigue, and individual performance',
+      body: 'Horse detail is where you decide whether to train, rest, keep racing, or retire a horse. Fitness and fatigue matter more than raw lore flavor.',
+      checklist: ['Check fatigue before training', 'Use RestDay when fatigue climbs', 'Review traits and injury state before racing'],
+      actions: [],
+    },
+    race: {
+      title: 'Race Help',
+      meta: 'Quick race, custom race, track, and purse setup',
+      body: 'Quick Race is the fastest progression path. Custom races need at least one of your own active horses plus a legal field size.',
+      checklist: ['Quick Race for low-friction progression', 'Custom race requires one owned active horse', 'Track and purse change risk and reward'],
+      actions: [],
+    },
+    breed: {
+      title: 'Breeding Help',
+      meta: 'Long-term roster building',
+      body: 'Breeding is for long-horizon roster growth. Choose sire, mare, and destination stable deliberately; it is not your emergency recovery path.',
+      checklist: ['Pick legal sire and mare', 'Check destination stable capacity', 'Use breeding when your stable is already functioning'],
+      actions: [],
+    },
+    market: {
+      title: 'Market Help',
+      meta: 'Breeding economy and purchased pairings',
+      body: 'Use the market to list breeding stallions or buy breedings with an owned mare. This is an economy layer, not a free horse generator.',
+      checklist: ['Review listing prices', 'Bring your own mare for purchases', 'Avoid overspending before core races are funded'],
+      actions: [],
+    },
+    challenges: {
+      title: 'Challenge Help',
+      meta: 'Direct PvP and betting-adjacent pressure',
+      body: 'Challenges are higher-variance than normal races. Use them when your stable can absorb risk and you want sharper competition than quick race offers.',
+      checklist: ['Choose one of your own horses', 'Start with CPU arena if no live opponent is available', 'Treat betting as optional risk'],
+      actions: [],
+    },
+    fights: {
+      title: 'Fight Help',
+      meta: 'Retired horse combat and irreversible risk',
+      body: 'Fights are for retired horses and can permanently remove them. This is a side system with destructive outcomes, not baseline progression.',
+      checklist: ['Only retired horses belong here', 'Read arena/death settings carefully', 'Expect permanent losses'],
+      actions: [],
+    },
+    glue: {
+      title: 'Glue / Omen Help',
+      meta: 'Irreversible destruction and rare return hooks',
+      body: 'Glue is permanent destruction for economy extraction. The departed ledger is where rare return omens surface later, but you should treat that as anomaly, not plan.',
+      checklist: ['Do not glue your last active horse', 'Use this page to monitor departed omens', 'Claim omens before they expire'],
+      actions: [],
+    },
+    casino: {
+      title: 'Casino Help',
+      meta: 'Side-loop gambling systems',
+      body: 'Casino features are intentionally ring-fenced. Chips, slots, and draw poker are side content; they should not be your main progression plan.',
+      checklist: ['Exchange only what you can spare', 'Use chips, not core race capital', 'Treat slots and poker as optional variance'],
+      actions: [],
+    },
+    studs: {
+      title: 'Stud Help',
+      meta: 'Retired stallion economy',
+      body: 'Stud duty is a slower long-tail breeding economy path. Only retired horses should be assigned here, while active mares remain your client side of the loop.',
+      checklist: ['Assign retired horses only', 'Keep active mares available for breeding', 'Use fees that match horse quality'],
+      actions: [],
+    },
+    lore: {
+      title: 'Lore Help',
+      meta: 'Reference and world explanation',
+      body: 'The codex explains what world terms mean when the main UI only tells you the mechanical effect. Use it for recall, not minute-to-minute operations.',
+      checklist: ['Search by section mentally: economy, anomalies, authority, bloodlines', 'Use this when a tooltip is too short'],
+      actions: [],
+    },
+  };
+  return base[page] || {
+    title: 'Page Help',
+    meta: 'General operator guidance',
+    body: 'Use page help to orient yourself, then use the tutorial for first-principles onboarding and the lore codex for deeper world explanations.',
+    checklist: ['Read current screen objective', 'Check recovery options if blocked', 'Use lore/help when terms are unfamiliar'],
+    actions: [],
+  };
+}
+
+function renderHelpPanel(forceOpen = false) {
+  const panel = $('#help-panel');
+  if (!panel) return;
+  const state = currentHelpContext();
+  panel.innerHTML = `
+    <h3>${escHtml(state.title)}</h3>
+    <div class="help-meta">${escHtml(state.meta)}</div>
+    <div class="help-body">${escHtml(state.body)}</div>
+    <div class="help-checklist">${(state.checklist || []).map(item => `<div>[ ] ${escHtml(item)}</div>`).join('')}</div>
+    <div class="help-actions">
+      <button class="term-btn sm" id="help-open-tutorial">TUTORIAL</button>
+      <button class="term-btn sm purple" id="help-open-lore">LORE</button>
+      <button class="term-btn sm danger" id="help-close-panel">CLOSE</button>
+    </div>
+  `;
+  $('#help-open-tutorial')?.addEventListener('click', () => replayTutorial());
+  $('#help-open-lore')?.addEventListener('click', () => openLore());
+  $('#help-close-panel')?.addEventListener('click', () => toggleHelpPanel(false));
+  if (forceOpen) panel.classList.remove('hidden');
+}
+
+function toggleHelpPanel(force) {
+  const panel = $('#help-panel');
+  if (!panel) return;
+  renderHelpPanel(true);
+  const shouldOpen = typeof force === 'boolean' ? force : panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', !shouldOpen);
 }
 
 function renderHorseOptions(horses, opts = {}) {
@@ -3927,6 +4230,7 @@ function navigate() {
     case 'studs': loadStuds(); break;
   }
 
+  renderHelpPanel(false);
   setTimeout(checkTutorialProgress, 50);
   setTimeout(() => wrapTables(document), 0);
 }
@@ -9829,6 +10133,7 @@ window.SU = {
   openLore,
   claimDailyReward,
   claimStarterRecovery,
+  toggleHelpPanel,
   toggleChatSidebar,
   switchLeaderboardTab,
   sortLeaderboard,

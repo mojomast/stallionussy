@@ -10,12 +10,14 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Authenticated users who end up with an empty stable can claim a one-time emergency starter pair from the stable page.
 - Owned empty stables now show an explicit recovery panel instead of sending zero-horse players into breeding dead ends.
 - First-time authenticated players are offered a skippable interactive tutorial that walks the main gameplay loop.
+- The interactive tutorial now covers the broader playable spine: stable, empty-stable recovery, horse detail, training/recovery, quick race, custom race, breeding, market, challenges, fights, glue/departed systems, studs, progression, replay/share, and help surfaces.
 - Race replay links use `#replay/{raceID}` and recent replays are available via `/api/races/recent`.
 - Stud-market breeding now requires an explicit owned mare.
 - Quick races open a short betting window before the race starts.
 - Bets and challenges now use authenticated ownership checks end to end.
 - Challenge history and betting resolution now render correctly in the SPA.
 - The SPA now includes an in-world lore codex page plus inline lore tooltips on core racing, genetics, progression, market, achievement, challenge, and betting surfaces.
+- The SPA now also includes a persistent page-help panel that gives current-screen guidance and recovery-oriented checklists outside the tutorial.
 - Progression now has a real daily action loop for authenticated players: training and race entries are limited per day and surfaced in the dashboard.
 - Authenticated quick races now guarantee solo progression by auto-filling the field with matched computer-controlled opponents when needed.
 - The challenge page now supports a `CPU Arena` fallback for immediate 1v1 progression when no other player is available.

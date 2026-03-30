@@ -11,6 +11,7 @@ This repo was re-audited and tightened around the main product-breakers.
 - Authenticated users with an empty stable can now claim a one-time emergency starter recovery grant from the stable page.
 - Authenticated users are restricted to a single stable, matching current server ownership assumptions.
 - First-time authenticated players now get a skippable interactive tutorial in the SPA covering stable, horse detail, training, racing, breeding, market, advanced competition, and replay/share.
+- The tutorial has since been expanded into a broader branch-aware walkthrough that now covers recovery, training/recovery logic, quick race, custom race, breeding, market, challenges, fights, glue/departed systems, studs, progression, replay/share, and help surfaces.
 - Tutorial can be replayed from the in-app help button and persists completion/skip state in browser local storage.
 - Race history/replay/share flow was repaired:
   - removed broken `apiFetch` usage
@@ -28,6 +29,10 @@ This repo was re-audited and tightened around the main product-breakers.
   - bottom-right help area now links to both tutorial replay and lore codex
   - inline lore tooltips added on race, horse detail, prestige, market, achievements, challenges, and betting surfaces
   - routing/export wiring added for `openLore()` and `loadLorePage()`
+- Added a persistent page-help panel alongside the tutorial/codex buttons:
+  - gives per-screen operator guidance outside onboarding
+  - includes short checklists and recovery-oriented guidance for dead-end states
+  - updates on navigation so users can get help without replaying the tutorial
 - Lore terminology was normalized to reduce drift:
   - `Sappho Score` = numeric bloodline quality signal shown in UI
   - `Sappho Scale` = broader social/institutional ideology around elite bloodstock
@@ -121,6 +126,7 @@ All passed after the fixes in this pass.
   - race share links now work again because `copyRaceLink` is globally reachable and clipboard fallback is hardened
   - the studs page now defines its owned-horse lists correctly and only offers retired horses for breeder assignment
   - custom race creation now validates “at least one owned horse” client-side and shows inline status instead of raw alerts where possible
+- Tutorial target highlighting now honors selector fallback instead of always using only the first selector, which fixes several spotlighting failures in onboarding.
 - Capability payload was tightened to match what the SPA actually gates today, instead of advertising unused subfeature flags.
 - Added request-level server tests for `GET /api/capabilities` and `POST /api/stables/{id}/claim-starters` so these routes are not only helper-tested.
 - Local container wiring was completed:
