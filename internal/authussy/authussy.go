@@ -145,6 +145,7 @@ func GetUserFromContext(ctx context.Context) (*Claims, bool) {
 var skipAuthPaths = map[string]bool{
 	"/api/auth/login":    true,
 	"/api/auth/register": true,
+	"/api/capabilities":  true,
 	"/ws":                true,
 	"/":                  true,
 }
