@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"testing"
+
+	"github.com/mojomast/stallionussy/internal/models"
 )
 
 func TestCreateOwnedStableSeedsStarterHorses(t *testing.T) {
@@ -18,6 +20,9 @@ func TestCreateOwnedStableSeedsStarterHorses(t *testing.T) {
 	if len(stable.Horses) != starterHorseCount {
 		t.Fatalf("expected %d starter horses, got %d", starterHorseCount, len(stable.Horses))
 	}
+	if stable.StarterGrants != 1 {
+		t.Fatalf("starter grants = %d, want 1", stable.StarterGrants)
+	}
 	for _, horse := range stable.Horses {
 		if horse.OwnerID != "user-1" {
 			t.Fatalf("starter horse owner = %q, want user-1", horse.OwnerID)
@@ -28,6 +33,69 @@ func TestCreateOwnedStableSeedsStarterHorses(t *testing.T) {
 		if horse.Name == "" {
 			t.Fatal("starter horse name should not be empty")
 		}
+	}
+}
+
+func TestEnsureStarterHorsesDoesNotReseedGrantedStable(t *testing.T) {
+	s := NewServer(nil)
+
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+
+	for _, horse := range append([]models.Horse(nil), stable.Horses...) {
+		if err := s.stables.RemoveHorse(horse.ID); err != nil {
+			t.Fatalf("RemoveHorse failed: %v", err)
+		}
+	}
+
+	stable.Horses = nil
+	if err := s.ensureStarterHorses(context.Background(), stable); err != nil {
+		t.Fatalf("ensureStarterHorses failed: %v", err)
+	}
+	if len(stable.Horses) != 0 {
+		t.Fatalf("expected no reseed after initial grant, got %d horses", len(stable.Horses))
+	}
+	if stable.StarterGrants != 1 {
+		t.Fatalf("starter grants = %d, want 1", stable.StarterGrants)
+	}
+}
+
+func TestGrantStarterHorsesAllowsOneRecovery(t *testing.T) {
+	s := NewServer(nil)
+
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+
+	for _, horse := range append([]models.Horse(nil), stable.Horses...) {
+		if err := s.stables.RemoveHorse(horse.ID); err != nil {
+			t.Fatalf("RemoveHorse failed: %v", err)
+		}
+	}
+	stable.Horses = nil
+
+	if err := s.grantStarterHorses(context.Background(), stable, true); err != nil {
+		t.Fatalf("grantStarterHorses recovery failed: %v", err)
+	}
+	if len(stable.Horses) != starterHorseCount {
+		t.Fatalf("expected %d recovery horses, got %d", starterHorseCount, len(stable.Horses))
+	}
+	if stable.StarterGrants != 2 {
+		t.Fatalf("starter grants = %d, want 2", stable.StarterGrants)
+	}
+
+	for _, horse := range append([]models.Horse(nil), stable.Horses...) {
+		if err := s.stables.RemoveHorse(horse.ID); err != nil {
+			t.Fatalf("RemoveHorse failed: %v", err)
+		}
+	}
+	stable.Horses = nil
+
+	if err := s.grantStarterHorses(context.Background(), stable, true); err == nil {
+		t.Fatal("expected second recovery to fail")
 	}
 }
 

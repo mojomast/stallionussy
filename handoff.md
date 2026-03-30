@@ -8,6 +8,7 @@ This repo was re-audited and tightened around the main product-breakers.
 
 - New authenticated users now get a stable with 2 starter horses.
 - Existing empty authenticated stables are backfilled with starter horses on boot.
+- Authenticated users with an empty stable can now claim a one-time emergency starter recovery grant from the stable page.
 - Authenticated users are restricted to a single stable, matching current server ownership assumptions.
 - First-time authenticated players now get a skippable interactive tutorial in the SPA covering stable, horse detail, training, racing, breeding, market, advanced competition, and replay/share.
 - Tutorial can be replayed from the in-app help button and persists completion/skip state in browser local storage.
@@ -71,6 +72,7 @@ All passed after the fixes in this pass.
 
 - Authenticated user: one stable only.
 - New stable: seeded with 2 starter horses.
+- Empty owned stable: may claim one emergency replacement starter pair.
 - First-time authenticated session: tutorial is offered once by default, can be skipped, and can be replayed later.
 - Replay share links: `#replay/{raceID}`.
 - Guest quick race is allowed.

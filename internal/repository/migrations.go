@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS stables (
     name            TEXT NOT NULL,
     owner_id        TEXT NOT NULL DEFAULT '',
     cummies         BIGINT NOT NULL DEFAULT 0,
+    starter_grants  INT NOT NULL DEFAULT 0,
     total_earnings  BIGINT NOT NULL DEFAULT 0,
     total_races     BIGINT NOT NULL DEFAULT 0,
     motto           TEXT NOT NULL DEFAULT '',

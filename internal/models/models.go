@@ -216,6 +216,7 @@ type Stable struct {
 	Name          string        `json:"name"`
 	OwnerID       string        `json:"owner_id"`
 	Cummies       int64         `json:"cummies"` // In-game currency balance
+	StarterGrants int           `json:"starter_grants"`
 	Horses        []Horse       `json:"horses"`
 	CreatedAt     time.Time     `json:"created_at"`
 	Achievements  []Achievement `json:"achievements"`

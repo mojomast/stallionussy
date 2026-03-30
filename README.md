@@ -7,6 +7,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Authenticated registration creates one stable per user.
 - New authenticated stables are seeded with 2 starter horses so users can immediately race and breed.
 - Existing empty user stables are backfilled with starter horses on server boot.
+- Authenticated users who end up with an empty stable can claim a one-time emergency starter pair from the stable page.
 - First-time authenticated players are offered a skippable interactive tutorial that walks the main gameplay loop.
 - Race replay links use `#replay/{raceID}` and recent replays are available via `/api/races/recent`.
 - Stud-market breeding now requires an explicit owned mare.
@@ -22,6 +23,7 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 ## Current Rules
 
 - Authenticated users get exactly one stable.
+- Each stable gets its initial starter pair plus at most one manual emergency starter recovery grant.
 - Guests still use guest-mode client behavior and do not get persistent auth-backed onboarding, but they can use `GET /api/races/quick`.
 - Shared race replays are public GET endpoints and are retained in cache/DB for about 7 days.
 - Custom race purses are funded from the authenticated creator's stable balance and cannot be minted from arbitrary client input.

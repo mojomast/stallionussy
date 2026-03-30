@@ -305,6 +305,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/stables/{id}", s.handleGetStable)
 	s.mux.HandleFunc("PUT /api/stables/{id}", s.handleUpdateStable)
 	s.mux.HandleFunc("GET /api/stables/{id}/horses", s.handleListStableHorses)
+	s.mux.HandleFunc("POST /api/stables/{id}/claim-starters", s.handleClaimStarterHorses)
 	s.mux.HandleFunc("GET /api/stables/{id}/achievements", s.handleGetStableAchievements)
 
 	// --- Horses ---
@@ -538,6 +539,46 @@ func (s *Server) handleListStableHorses(w http.ResponseWriter, r *http.Request) 
 		horses = []*models.Horse{}
 	}
 	writeJSON(w, http.StatusOK, horses)
+}
+
+func (s *Server) handleClaimStarterHorses(w http.ResponseWriter, r *http.Request) {
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	stableID := r.PathValue("id")
+	stable, err := s.stables.GetStable(stableID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if stable.OwnerID != claims.UserID {
+		writeError(w, http.StatusForbidden, "you can only recover starter horses for your own stable")
+		return
+	}
+	if len(stable.Horses) > 0 {
+		writeError(w, http.StatusBadRequest, "starter recovery is only available for empty stables")
+		return
+	}
+	if stable.StarterGrants >= 2 {
+		writeError(w, http.StatusBadRequest, "starter recovery already used for this stable")
+		return
+	}
+
+	if err := s.grantStarterHorses(r.Context(), stable, true); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	log.Printf("server: starter recovery granted to stable %s (%s)", stable.Name, stable.ID)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"stable":        stable,
+		"horses":        stable.Horses,
+		"starterGrants": stable.StarterGrants,
+		"message":       fmt.Sprintf("Starter recovery granted. %d new horses added.", starterHorseCount),
+	})
 }
 
 func (s *Server) handleGetStableAchievements(w http.ResponseWriter, r *http.Request) {
@@ -1694,6 +1735,27 @@ func (s *Server) ensureStarterHorses(ctx context.Context, stable *models.Stable)
 	if len(stable.Horses) > 0 {
 		return nil
 	}
+	if stable.StarterGrants > 0 {
+		return nil
+	}
+
+	return s.grantStarterHorses(ctx, stable, false)
+}
+
+func (s *Server) grantStarterHorses(ctx context.Context, stable *models.Stable, isRecovery bool) error {
+	if stable == nil || stable.OwnerID == "" || stable.OwnerID == "system" {
+		return fmt.Errorf("starter horses can only be granted to owned, non-system stables")
+	}
+	if len(stable.Horses) > 0 {
+		return fmt.Errorf("starter horses can only be granted to empty stables")
+	}
+	if isRecovery {
+		if stable.StarterGrants >= 2 {
+			return fmt.Errorf("starter recovery already used for this stable")
+		}
+	} else if stable.StarterGrants > 0 {
+		return nil
+	}
 
 	for i := 0; i < starterHorseCount; i++ {
 		founder := s.newStarterHorse(stable.OwnerID)
@@ -1704,6 +1766,7 @@ func (s *Server) ensureStarterHorses(ctx context.Context, stable *models.Stable)
 		s.persistHorse(ctx, founder)
 	}
 
+	stable.StarterGrants++
 	s.persistStable(ctx, stable)
 	return nil
 }
