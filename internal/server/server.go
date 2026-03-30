@@ -78,6 +78,8 @@ type Server struct {
 	fightRepo       repository.HorseFightRepository
 	glueRepo        repository.GlueFactoryRepository
 	breederRepo     repository.BreedingStallionRepository
+	casinoRepo      repository.CasinoRepository
+	departureRepo   repository.DepartureRepository
 
 	// Auth (nil when running without DB).
 	auth        *authussy.AuthService
@@ -116,6 +118,12 @@ type Server struct {
 	// Pending horse fights (in-memory: fights awaiting an opponent).
 	pendingFights map[string]*models.HorseFight // fightID -> fight
 	fightMu       sync.RWMutex
+
+	// Casino and departed-horse state.
+	pokerTables map[string]*models.PokerTable
+	pokerMu     sync.RWMutex
+	departures  map[string]*models.DepartureRecord
+	departMu    sync.RWMutex
 }
 
 const starterHorseCount = 2
@@ -152,6 +160,8 @@ func NewServer(db *postgres.DB) *Server {
 		rivalries:     make(map[string]map[string]int),
 		alliances:     make(map[string]*models.Alliance),
 		pendingFights: make(map[string]*models.HorseFight),
+		pokerTables:   make(map[string]*models.PokerTable),
+		departures:    make(map[string]*models.DepartureRecord),
 	}
 
 	// If a DB connection is provided, wire up persistence and auth.
@@ -175,6 +185,8 @@ func NewServer(db *postgres.DB) *Server {
 		s.fightRepo = postgres.NewFightRepo(db)
 		s.glueRepo = postgres.NewGlueFactoryRepo(db)
 		s.breederRepo = postgres.NewBreedingStallionRepo(db)
+		s.casinoRepo = postgres.NewCasinoRepo(db)
+		s.departureRepo = postgres.NewDepartureRepo(db)
 
 		// Create auth service.
 		jwtSecret := os.Getenv("JWT_SECRET")
@@ -407,6 +419,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/horses/{id}/glue", s.handleSendToGlue)
 	s.mux.HandleFunc("GET /api/glue/stats", s.handleGlueStats)
 	s.mux.HandleFunc("GET /api/glue/history", s.handleListGlueHistory)
+	s.mux.HandleFunc("GET /api/departed", s.handleListDepartedHorses)
+	s.mux.HandleFunc("POST /api/departed/{id}/claim", s.handleClaimDepartureReturn)
+
+	// --- Casino ---
+	s.mux.HandleFunc("GET /api/casino", s.handleGetCasinoOverview)
+	s.mux.HandleFunc("POST /api/casino/chips/exchange", s.handleExchangeCasinoChips)
+	s.mux.HandleFunc("GET /api/casino/poker", s.handleListPokerTables)
+	s.mux.HandleFunc("POST /api/casino/poker", s.handleCreatePokerTable)
+	s.mux.HandleFunc("POST /api/casino/poker/{id}/join", s.handleJoinPokerTable)
+	s.mux.HandleFunc("POST /api/casino/poker/{id}/draw", s.handleDrawPokerHand)
+	s.mux.HandleFunc("POST /api/casino/slots/spin", s.handleSpinSlots)
 
 	// --- Breeding Stallions (Permanent Stud Duty) ---
 	s.mux.HandleFunc("POST /api/horses/{id}/assign-breeder", s.handleAssignBreeder)
@@ -5835,6 +5858,9 @@ func (s *Server) loadFromDB() {
 			}
 		}
 	}
+
+	// 9. Load casino tables and departed horse records.
+	loadCasinoState(s, ctx)
 }
 
 // ===========================================================================
@@ -8828,6 +8854,11 @@ func (s *Server) handleJoinFight(w http.ResponseWriter, r *http.Request) {
 
 	// Handle fatality — permanently remove the loser.
 	if result.IsFatality && result.LoserID != "" {
+		loserHorse, _ := s.stables.GetHorse(result.LoserID)
+		loserStable := s.getStableForHorse(result.LoserID)
+		if loserHorse != nil && loserStable != nil {
+			s.recordDeparture(ctx, loserStable, loserHorse, models.DepartureCauseFight)
+		}
 		if err := s.stables.RemoveHorse(result.LoserID); err != nil {
 			log.Printf("server: failed to remove dead horse %s: %v", result.LoserID, err)
 		}
@@ -9023,6 +9054,8 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 		Eulogy:        eulogy,
 		CreatedAt:     time.Now(),
 	}
+
+	s.recordDeparture(r.Context(), stable, horse, models.DepartureCauseGlue)
 
 	// Award cummies to the owner.
 	if stable != nil {

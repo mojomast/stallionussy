@@ -2102,6 +2102,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <a href="#achievements" data-page="achievements">[ACHIEVE]</a>
   <a href="#lore" data-page="lore">[LORE]</a>
   <a href="#alliances" data-page="alliances">[ALLIANCE]</a>
+  <a href="#casino" data-page="casino">[CASINO]</a>
   <a href="#fights" data-page="fights">[FIGHTS]</a>
   <a href="#glue" data-page="glue">[GLUE]</a>
   <a href="#studs" data-page="studs">[STUDS]</a>
@@ -2806,6 +2807,66 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
       <h3 style="color:#ff4444;">// GLUE FACTORY LEDGER</h3>
       <div id="glue-history">
         <span class="text-dim">No horses have been processed. Yet.</span>
+      </div>
+      <h3 style="color:#aa66ff; margin-top:16px;">// RETURN OMENS</h3>
+      <div id="departed-horses">
+        <span class="text-dim">No omens from beyond the stable veil.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ CASINO PAGE ═══════════════════════════════════════════════════════ -->
+<div class="page" id="page-casino">
+  <div class="section-hdr">// CASINOUSSY — draw poker, slots, and suspicious financial decisions</div>
+  <div class="two-col">
+    <div>
+      <h3>CHIP EXCHANGE</h3>
+      <div class="form-row">
+        <label>BUY CHIPS:</label>
+        <input class="term-input" id="casino-buy-amount" type="number" value="50" min="1" style="max-width:120px;">
+        <button class="term-btn amber" id="btn-buy-chips">BUY</button>
+      </div>
+      <div class="form-row">
+        <label>CASH OUT:</label>
+        <input class="term-input" id="casino-cashout-amount" type="number" value="20" min="1" style="max-width:120px;">
+        <button class="term-btn" id="btn-cashout-chips">CASH OUT</button>
+      </div>
+      <div id="casino-wallet-msg" class="text-dim" style="font-size:11px;"></div>
+
+      <h3 style="margin-top:16px;">SLOT MACHINE</h3>
+      <div class="form-row">
+        <label>WAGER:</label>
+        <input class="term-input" id="slot-wager" type="number" value="10" min="1" style="max-width:120px;">
+        <button class="term-btn danger" id="btn-spin-slots">SPIN</button>
+      </div>
+      <div id="slot-result" class="text-dim" style="font-size:11px;"></div>
+      <div id="slot-history" class="mt-8 text-dim" style="font-size:11px;">No spins logged.</div>
+    </div>
+    <div>
+      <h3>ASYNC DRAW POKER</h3>
+      <div class="form-row">
+        <label>TABLE:</label>
+        <input class="term-input" id="poker-table-name" maxlength="40" placeholder="The Yogurt Room">
+      </div>
+      <div class="form-row">
+        <label>BUY-IN:</label>
+        <input class="term-input" id="poker-buyin" type="number" value="50" min="10" style="max-width:120px;">
+      </div>
+      <div class="form-row">
+        <label>CURRENCY:</label>
+        <select class="term-input" id="poker-currency" style="max-width:180px;">
+          <option value="casino_chips">Casino Chips</option>
+          <option value="cummies">Cummies</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label></label>
+        <button class="term-btn purple" id="btn-create-poker-table">OPEN TABLE</button>
+      </div>
+      <div id="poker-create-msg" class="text-dim" style="font-size:11px;"></div>
+      <div id="poker-tables" class="mt-8">
+        <span class="loading cursor-blink">Loading poker tables...</span>
       </div>
     </div>
   </div>
@@ -3825,6 +3886,7 @@ function navigate() {
     case 'achievements': loadAchievements(); break;
     case 'lore': loadLorePage(); break;
     case 'alliances': loadAlliances(); break;
+    case 'casino': loadCasinoPage(); break;
     case 'history': loadRaceHistory(); break;
     case 'replay': loadReplay(getPageParam()); break;
     case 'fights': loadFights(); break;
@@ -9107,9 +9169,10 @@ async function viewFightReplay(fightID) {
 
 async function loadGluePage() {
   try {
-    const [horsesData, historyData] = await Promise.allSettled([
+    const [horsesData, historyData, departedData] = await Promise.allSettled([
       api('/horses'),
       api('/glue/history'),
+      api('/departed'),
     ]);
 
     const horses = horsesData.status === 'fulfilled' ? (Array.isArray(horsesData.value) ? horsesData.value : []) : [];
@@ -9146,8 +9209,147 @@ async function loadGluePage() {
       html += '</tbody></table>';
       historyEl.innerHTML = html;
     }
+
+    const departedEl = $('#departed-horses');
+    const departed = departedData.status === 'fulfilled' ? (Array.isArray(departedData.value) ? departedData.value : []) : [];
+    if (departed.length === 0) {
+      departedEl.innerHTML = '<span class="text-dim">No omens from beyond the stable veil.</span>';
+    } else {
+      departedEl.innerHTML = departed.map(rec => {
+        const state = rec.state || 'dormant';
+        const cta = state === 'omen'
+          ? `<button class="term-btn sm purple" onclick="window.SU.claimDepartureReturn('${escHtml(rec.id)}')">CLAIM RETURN</button>`
+          : '';
+        const returned = state === 'claimed' ? `Returned as horse ${escHtml((rec.returnedHorse || '').slice(0, 8))}` : '';
+        return `<div class="fight-card ${state === 'omen' ? 'pending' : 'finished'}">
+          <div><strong>${escHtml(rec.horseName || '?')}</strong> <span class="text-dim">via ${escHtml(rec.cause || 'unknown')}</span></div>
+          <div class="fight-meta">State: ${escHtml(state)} ${returned ? `| ${returned}` : ''}</div>
+          ${rec.omenText ? `<div class="glue-result" style="margin-top:6px;">${escHtml(rec.omenText)}</div>` : ''}
+          ${rec.returnSummary ? `<div class="text-dim" style="font-size:10px; margin-top:4px;">${escHtml(rec.returnSummary)}</div>` : ''}
+          <div style="margin-top:8px;">${cta}</div>
+        </div>`;
+      }).join('');
+    }
   } catch (e) {
     console.error('loadGluePage:', e);
+  }
+}
+
+async function loadCasinoPage() {
+  const tableEl = $('#poker-tables');
+  const slotHistEl = $('#slot-history');
+  const walletMsg = $('#casino-wallet-msg');
+  try {
+    const data = await api('/casino');
+    if (walletMsg) {
+      walletMsg.innerHTML = `Wallet: <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | Chips: <span class="text-purple">${(data.casinoChips || 0).toLocaleString()}</span> | Daily grant: ${data.dailyChipGrant || 0} chips`;
+    }
+    const spins = Array.isArray(data.recentSpins) ? data.recentSpins : [];
+    if (slotHistEl) {
+      slotHistEl.innerHTML = spins.length ? spins.map(spin => `<div>${escHtml((spin.symbols || []).join(' | '))} -> ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span></div>`).join('') : 'No spins logged.';
+    }
+    const tables = Array.isArray(data.pokerTables) ? data.pokerTables : [];
+    if (!tables.length) {
+      tableEl.innerHTML = '<span class="text-dim">No tables yet. Open one and wait for another stable to sit down.</span>';
+      return;
+    }
+    tableEl.innerHTML = tables.map(t => {
+      const seated = (t.seats || []).length;
+      const mySeat = (t.seats || []).find(seat => seat.userID === getOwnerID());
+      const canJoin = !mySeat && t.status === 'open';
+      const drawUI = mySeat && t.status === 'drawing' && !mySeat.hasDrawn
+        ? `<button class="term-btn sm amber" onclick="window.SU.drawPoker('${escHtml(t.id)}')">DRAW / STAND</button>`
+        : '';
+      const joinUI = canJoin
+        ? `<button class="term-btn sm" onclick="window.SU.joinPokerTable('${escHtml(t.id)}')">JOIN TABLE</button>`
+        : '';
+      const handText = mySeat && Array.isArray(mySeat.hand) ? mySeat.hand.map(card => `${card.rank}${card.suit}`).join(' ') : '';
+      return `<div class="fight-card ${escHtml(t.status || 'open')}">
+        <div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+          <strong>${escHtml(t.name || 'Draw Table')}</strong>
+          <span class="text-amber">${t.buyIn || 0} ${t.stakeCurrency === 'cummies' ? '₵' : 'chips'}</span>
+        </div>
+        <div class="fight-meta">${seated}/${t.maxPlayers || 4} seated | status: ${escHtml(t.status || 'open')}</div>
+        ${handText ? `<div class="text-purple" style="margin-top:6px;">Your hand: ${escHtml(handText)}${mySeat.handRank ? ` | ${escHtml(mySeat.handRank)}` : ''}</div>` : ''}
+        <div class="text-dim" style="font-size:10px; margin-top:6px;">${escHtml(((t.log || []).slice(-2)).join(' | '))}</div>
+        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">${joinUI}${drawUI}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    tableEl.innerHTML = `<span class="text-dim">Error loading casino: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function exchangeCasinoChips(direction) {
+  const input = direction === 'buy' ? $('#casino-buy-amount') : $('#casino-cashout-amount');
+  const amount = parseInt(input.value, 10) || 0;
+  const msgEl = $('#casino-wallet-msg');
+  try {
+    const data = await api('/casino/chips/exchange', { method: 'POST', body: { direction, amount } });
+    msgEl.innerHTML = `Wallet updated: <span class="text-amber">${(data.cummies || 0).toLocaleString()}₵</span> | Chips: <span class="text-purple">${(data.casinoChips || 0).toLocaleString()}</span>`;
+    loadCasinoPage();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function spinSlots() {
+  const wager = parseInt($('#slot-wager').value, 10) || 0;
+  const msgEl = $('#slot-result');
+  try {
+    const spin = await api('/casino/slots/spin', { method: 'POST', body: { wager } });
+    msgEl.innerHTML = `<span class="text-purple">${escHtml((spin.symbols || []).join(' | '))}</span> -> payout ${spin.payoutAmount || 0} chips <span class="text-dim">${escHtml(spin.summary || '')}</span>`;
+    loadCasinoPage();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function createPokerTable() {
+  const name = $('#poker-table-name').value.trim();
+  const buyIn = parseInt($('#poker-buyin').value, 10) || 0;
+  const currency = $('#poker-currency').value;
+  const msgEl = $('#poker-create-msg');
+  try {
+    const table = await api('/casino/poker', { method: 'POST', body: { name, buyIn, currency } });
+    msgEl.textContent = `Opened ${table.name || 'table'} successfully.`;
+    msgEl.style.color = 'var(--fg)';
+    loadCasinoPage();
+  } catch (e) {
+    msgEl.textContent = `Error: ${e.message}`;
+    msgEl.style.color = 'var(--red)';
+  }
+}
+
+async function joinPokerTable(tableID) {
+  try {
+    await api(`/casino/poker/${encodeURIComponent(tableID)}/join`, { method: 'POST' });
+    loadCasinoPage();
+  } catch (e) {
+    showToast(`Poker error: ${e.message}`, 'danger');
+  }
+}
+
+async function drawPoker(tableID) {
+  const raw = prompt('Enter card indexes to discard, comma-separated from 0-4. Leave blank to stand pat.');
+  const discard = !raw ? [] : raw.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n >= 0 && n <= 4);
+  try {
+    await api(`/casino/poker/${encodeURIComponent(tableID)}/draw`, { method: 'POST', body: { discard } });
+    loadCasinoPage();
+  } catch (e) {
+    showToast(`Draw error: ${e.message}`, 'danger');
+  }
+}
+
+async function claimDepartureReturn(recordID) {
+  try {
+    const result = await api(`/departed/${encodeURIComponent(recordID)}/claim`, { method: 'POST' });
+    showToast(`Returned horse: ${result.horse?.name || 'unknown anomaly'}`, 'achievement');
+    loadGluePage();
+  } catch (e) {
+    showToast(`Return failed: ${e.message}`, 'danger');
   }
 }
 
@@ -9400,6 +9602,16 @@ function bindEvents() {
   const allianceBtn = $('#btn-create-alliance');
   if (allianceBtn) allianceBtn.addEventListener('click', createAlliance);
 
+  // Casino
+  const buyChipsBtn = $('#btn-buy-chips');
+  if (buyChipsBtn) buyChipsBtn.addEventListener('click', () => exchangeCasinoChips('buy'));
+  const cashoutBtn = $('#btn-cashout-chips');
+  if (cashoutBtn) cashoutBtn.addEventListener('click', () => exchangeCasinoChips('cashout'));
+  const spinBtn = $('#btn-spin-slots');
+  if (spinBtn) spinBtn.addEventListener('click', spinSlots);
+  const pokerBtn = $('#btn-create-poker-table');
+  if (pokerBtn) pokerBtn.addEventListener('click', createPokerTable);
+
   // Challenge
   const challengeBtn = $('#btn-create-challenge');
   if (challengeBtn) challengeBtn.addEventListener('click', createChallenge);
@@ -9481,6 +9693,9 @@ window.SU = {
   viewFightReplay,
   selectStallion,
   retireBreeder,
+  joinPokerTable,
+  drawPoker,
+  claimDepartureReturn,
 };
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────

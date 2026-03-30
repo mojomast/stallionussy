@@ -20,6 +20,8 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - The challenge page now supports a `CPU Arena` fallback for immediate 1v1 progression when no other player is available.
 - The SPA now uses a fixed desktop app shell: the left chat column stays pinned while the right content pane scrolls independently.
 - Quick Race now auto-selects your strongest active horse instead of the first available one.
+- The SPA now includes a `CASINO` page with ring-fenced casino chips, async five-card draw poker tables, and slot machines.
+- Horses destroyed in fatal fights or sent to the glue factory now enter a departed-horse ledger and can trigger rare return omens with altered traits and lore.
 
 ## Current Rules
 
@@ -37,6 +39,10 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Race purse distribution is flatter and win-streak multipliers are lower, so non-winning finishes still produce some forward progress.
 - Training fatigue penalties now taper earlier and rest recovers less, which makes rotating horses more valuable than cycling one favorite endlessly.
 - Irreversible destruction loops now protect your last active horse from being deleted.
+- Casino gambling uses a separate `casino chips` wallet by default so poker and slots do not directly destroy core stable progression.
+- Async poker is lightweight five-card draw: one buy-in, one draw phase, no live side pots, no websocket-dependent turn engine.
+- Casino chip exchange enforces a protected cummies floor so gambling cannot bankrupt a stable below basic operating capital.
+- Departed horses do not freely revive. They enter a dormant ledger, may surface a rare omen later, and return permanently altered with reduced efficiency and anomalous traits.
 
 ## Requirements
 
@@ -85,5 +91,6 @@ go build ./...
 - The first-session tutorial intentionally focuses on the core loop first: stable -> horse -> training -> race -> results, then previews breeding, market, competition, and replay/share.
 - The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
 - Authenticated player progression and season state now persist in Postgres and survive server restarts.
+- Casino tables, slot spin history, and departed-horse omens also persist in Postgres.
 - Challenges and betting pools are still in-memory and reset on server restart.
 - On mobile, chat remains a drawer instead of a persistent side column.

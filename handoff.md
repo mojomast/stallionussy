@@ -59,6 +59,17 @@ This repo was re-audited and tightened around the main product-breakers.
   - race purse distribution is flatter and streak multipliers are less top-heavy, so deeper placements still move a roster forward
   - training fatigue penalties start earlier and rest recovery is less extreme, which pushes healthier horse rotation
   - destructive loops like glue now protect the last active horse from irreversible account-bricking mistakes
+- Added a first-pass casino subsystem designed around async-safe social gambling rather than a real-time minigame stack:
+  - stables now track `casino_chips` separately from cummies
+  - players can exchange cummies into chips with a protected cummies floor to avoid hard-bricking core progression
+  - a new `#casino` SPA page exposes chip exchange, slots, and async draw poker
+  - poker is simplified to persistent five-card draw tables with one buy-in, one draw phase, and server-side showdown resolution
+  - slots use server-authoritative outcomes and persist recent spin history
+- Added a departed-horse / rare return system tied directly to destructive outcomes:
+  - horses lost in fatal arena fights or the glue factory are now written to a departed-horse ledger
+  - ledger records persist in Postgres as horse snapshots plus omen state
+  - rare omens can surface later and be claimed from the glue/ledger UI
+  - returned horses come back as altered roster members with reduced efficiency, changed lore, and permanent anomalous traits instead of a full undo
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
@@ -80,6 +91,8 @@ All passed after the fixes in this pass.
 - New stable: seeded with 2 starter horses.
 - Empty owned stable: may claim one emergency replacement starter pair.
 - Retired horses do not count against active prestige horse-slot limits.
+- Casino chips are the preferred gambling currency; cummies can be staked only through the explicit casino exchange / table rules.
+- Rare return events are exceptions, not a reusable revive economy: they come from the departed ledger and permanently change the horse.
 - First-time authenticated session: tutorial is offered once by default, can be skipped, and can be replayed later.
 - Replay share links: `#replay/{raceID}`.
 - Guest quick race is allowed.
@@ -91,5 +104,6 @@ All passed after the fixes in this pass.
 - Tutorial persistence is client-side only; it is not yet stored server-side per account.
 - Lore/codex content is currently SPA-local data, not server-backed content.
 - Challenges and betting pools are still in-memory and do not yet survive server restart.
+- The poker implementation is intentionally shallow: no hold'em, no side pots, no per-action timers, and no collusion detection beyond the ring-fenced economy design.
 - `docker-compose.yml` still does not provide Postgres.
 - `devplan.md` is now historical, not an accurate live delivery tracker.

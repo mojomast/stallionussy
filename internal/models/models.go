@@ -216,6 +216,7 @@ type Stable struct {
 	Name          string        `json:"name"`
 	OwnerID       string        `json:"owner_id"`
 	Cummies       int64         `json:"cummies"` // In-game currency balance
+	CasinoChips   int64         `json:"casino_chips"`
 	StarterGrants int           `json:"starter_grants"`
 	Horses        []Horse       `json:"horses"`
 	CreatedAt     time.Time     `json:"created_at"`
@@ -625,16 +626,17 @@ type HorseLeaderboardEntry struct {
 // PlayerProgress tracks a player's engagement metrics (daily logins, streaks,
 // prestige, and daily action limits).
 type PlayerProgress struct {
-	UserID           string `json:"userID"`
-	LoginStreak      int    `json:"loginStreak"`
-	LastLoginDate    string `json:"lastLoginDate"` // YYYY-MM-DD format
-	TotalLogins      int    `json:"totalLogins"`
-	DailyTrainsLeft  int    `json:"dailyTrainsLeft"` // resets daily, default 5
-	DailyRacesLeft   int    `json:"dailyRacesLeft"`  // resets daily, default 10
-	LastDailyReset   string `json:"lastDailyReset"`  // YYYY-MM-DD
-	PrestigeLevel    int    `json:"prestigeLevel"`
-	PrestigeXP       int64  `json:"prestigeXP"`
-	LifetimeEarnings int64  `json:"lifetimeEarnings"`
+	UserID              string `json:"userID"`
+	LoginStreak         int    `json:"loginStreak"`
+	LastLoginDate       string `json:"lastLoginDate"` // YYYY-MM-DD format
+	TotalLogins         int    `json:"totalLogins"`
+	DailyTrainsLeft     int    `json:"dailyTrainsLeft"` // resets daily, default 5
+	DailyRacesLeft      int    `json:"dailyRacesLeft"`  // resets daily, default 10
+	LastDailyReset      string `json:"lastDailyReset"`  // YYYY-MM-DD
+	LastCasinoGrantDate string `json:"lastCasinoGrantDate,omitempty"`
+	PrestigeLevel       int    `json:"prestigeLevel"`
+	PrestigeXP          int64  `json:"prestigeXP"`
+	LifetimeEarnings    int64  `json:"lifetimeEarnings"`
 }
 
 // DailyReward describes the reward for a specific day in the login streak cycle.

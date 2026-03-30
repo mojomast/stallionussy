@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS stables (
     name            TEXT NOT NULL,
     owner_id        TEXT NOT NULL DEFAULT '',
     cummies         BIGINT NOT NULL DEFAULT 0,
+    casino_chips    BIGINT NOT NULL DEFAULT 0,
     starter_grants  INT NOT NULL DEFAULT 0,
     total_earnings  BIGINT NOT NULL DEFAULT 0,
     total_races     BIGINT NOT NULL DEFAULT 0,
@@ -200,6 +201,7 @@ CREATE TABLE IF NOT EXISTS player_progress (
     daily_trains_left   INT NOT NULL DEFAULT 6,
     daily_races_left    INT NOT NULL DEFAULT 6,
     last_daily_reset    TEXT NOT NULL DEFAULT '',
+    last_casino_grant_date TEXT NOT NULL DEFAULT '',
     prestige_level      INT NOT NULL DEFAULT 0,
     prestige_xp         BIGINT NOT NULL DEFAULT 0,
     lifetime_earnings   BIGINT NOT NULL DEFAULT 0
@@ -218,6 +220,65 @@ CREATE TABLE IF NOT EXISTS seasons (
 );
 
 CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons (active);
+
+-- ==========================================================================
+-- Casino
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS poker_tables (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL DEFAULT '',
+    created_by      TEXT NOT NULL DEFAULT '',
+    stake_currency  TEXT NOT NULL DEFAULT 'casino_chips',
+    buy_in          BIGINT NOT NULL DEFAULT 0,
+    max_players     INT NOT NULL DEFAULT 4,
+    status          TEXT NOT NULL DEFAULT 'open',
+    pot             BIGINT NOT NULL DEFAULT 0,
+    deck_seed       BIGINT NOT NULL DEFAULT 0,
+    seats           JSONB NOT NULL DEFAULT '[]',
+    log             JSONB NOT NULL DEFAULT '[]',
+    started_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_poker_tables_status_created_at ON poker_tables (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS slot_spins (
+    id             TEXT PRIMARY KEY,
+    stable_id      TEXT NOT NULL DEFAULT '',
+    user_id        TEXT NOT NULL DEFAULT '',
+    wager_amount   BIGINT NOT NULL DEFAULT 0,
+    payout_amount  BIGINT NOT NULL DEFAULT 0,
+    multiplier     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    symbols        JSONB NOT NULL DEFAULT '[]',
+    summary        TEXT NOT NULL DEFAULT '',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_slot_spins_user_id_created_at ON slot_spins (user_id, created_at DESC);
+
+-- ==========================================================================
+-- Departed Horses / Return Omens
+-- ==========================================================================
+CREATE TABLE IF NOT EXISTS departed_horses (
+    id               TEXT PRIMARY KEY,
+    horse_id         TEXT NOT NULL DEFAULT '',
+    horse_name       TEXT NOT NULL DEFAULT '',
+    owner_id         TEXT NOT NULL DEFAULT '',
+    stable_id        TEXT NOT NULL DEFAULT '',
+    cause            TEXT NOT NULL DEFAULT '',
+    state            TEXT NOT NULL DEFAULT 'dormant',
+    horse_snapshot   JSONB NOT NULL DEFAULT '{}',
+    omen_text        TEXT NOT NULL DEFAULT '',
+    return_summary   TEXT NOT NULL DEFAULT '',
+    returned_horse   TEXT NOT NULL DEFAULT '',
+    last_roll_date   TEXT NOT NULL DEFAULT '',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    omen_expires_at  TIMESTAMPTZ,
+    returned_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_departed_horses_owner_state ON departed_horses (owner_id, state, created_at DESC);
 
 -- ===========================================================================
 -- Market Transactions

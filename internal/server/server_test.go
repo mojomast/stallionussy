@@ -168,13 +168,91 @@ func TestFirstBestActiveHorseChoosesHighestELO(t *testing.T) {
 	if len(stable.Horses) < 2 {
 		t.Fatalf("expected at least 2 horses, got %d", len(stable.Horses))
 	}
-	stable.Horses[0].ELO = 1200
-	stable.Horses[1].ELO = 1350
+	h1, err := s.stables.GetHorse(stable.Horses[0].ID)
+	if err != nil {
+		t.Fatalf("GetHorse failed: %v", err)
+	}
+	h2, err := s.stables.GetHorse(stable.Horses[1].ID)
+	if err != nil {
+		t.Fatalf("GetHorse failed: %v", err)
+	}
+	h1.ELO = 1200
+	h2.ELO = 1350
+	s.syncHorseToStable(h1)
+	s.syncHorseToStable(h2)
 	best := s.firstBestActiveHorse(stable)
 	if best == nil {
 		t.Fatal("expected best active horse")
 	}
-	if best.ID != stable.Horses[1].ID {
-		t.Fatalf("best horse = %s, want %s", best.ID, stable.Horses[1].ID)
+	if best.ID != h2.ID {
+		t.Fatalf("best horse = %s, want %s", best.ID, h2.ID)
+	}
+}
+
+func TestSlotMultiplierRewardsTrips(t *testing.T) {
+	if got := slotMultiplier([]string{"YOGURT", "YOGURT", "YOGURT"}); got <= 4 {
+		t.Fatalf("slotMultiplier yogurt trips = %v, want > 4", got)
+	}
+	if got := slotMultiplier([]string{"CHERRY", "OATS", "BELL"}); got != 0 {
+		t.Fatalf("slotMultiplier no match = %v, want 0", got)
+	}
+}
+
+func TestSettlePokerTablePaysWinningStable(t *testing.T) {
+	s := NewServer(nil)
+	stable1, _ := s.createOwnedStable(context.Background(), "One", "user-1", true)
+	stable2, _ := s.createOwnedStable(context.Background(), "Two", "user-2", true)
+	stable1.CasinoChips = 0
+	stable2.CasinoChips = 0
+	table := &models.PokerTable{
+		ID:            "table-1",
+		StakeCurrency: "casino_chips",
+		BuyIn:         50,
+		Pot:           100,
+		Seats: []models.PokerSeat{
+			{UserID: "user-1", Username: "one", Hand: []models.PokerCard{{Rank: "A", Suit: "S"}, {Rank: "A", Suit: "H"}, {Rank: "A", Suit: "D"}, {Rank: "K", Suit: "S"}, {Rank: "Q", Suit: "S"}}},
+			{UserID: "user-2", Username: "two", Hand: []models.PokerCard{{Rank: "2", Suit: "S"}, {Rank: "4", Suit: "H"}, {Rank: "6", Suit: "D"}, {Rank: "8", Suit: "C"}, {Rank: "10", Suit: "S"}}},
+		},
+	}
+	s.settlePokerTable(table)
+	if table.Status != models.PokerTableSettled {
+		t.Fatalf("table status = %q, want settled", table.Status)
+	}
+	if stable1.CasinoChips != 100 {
+		t.Fatalf("winner casino chips = %d, want 100", stable1.CasinoChips)
+	}
+	if stable2.CasinoChips != 0 {
+		t.Fatalf("loser casino chips = %d, want 0", stable2.CasinoChips)
+	}
+}
+
+func TestRecordDepartureAndClaimReturn(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Starter Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	horse, err := s.stables.GetHorse(stable.Horses[0].ID)
+	if err != nil {
+		t.Fatalf("GetHorse failed: %v", err)
+	}
+	s.recordDeparture(context.Background(), stable, horse, models.DepartureCauseGlue)
+	records := s.listDepartureRecords("user-1", 10)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 departure record, got %d", len(records))
+	}
+	rec := records[0]
+	rec.State = models.DepartureStateOmen
+	rec.ReturnSummary = buildReturnSummary(rec)
+	s.saveDepartureRecord(context.Background(), rec)
+	returned := rec.HorseSnapshot
+	returned.ID = "returned-1"
+	returned.Retired = false
+	returned.Traits = append(returned.Traits, returnTraitForRecord(rec))
+	if err := s.stables.AddHorseToStable(stable.ID, &returned); err != nil {
+		t.Fatalf("AddHorseToStable failed: %v", err)
+	}
+	if _, err := s.stables.GetHorse("returned-1"); err != nil {
+		t.Fatalf("expected returned horse to be present: %v", err)
 	}
 }

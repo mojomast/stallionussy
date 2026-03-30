@@ -25,6 +25,7 @@ func NewProgressRepo(db *DB) *ProgressRepo {
 const progressCols = `
 	user_id, login_streak, last_login_date, total_logins,
 	daily_trains_left, daily_races_left, last_daily_reset,
+	last_casino_grant_date,
 	prestige_level, prestige_xp, lifetime_earnings`
 
 func scanProgress(sc interface{ Scan(dest ...any) error }) (*models.PlayerProgress, error) {
@@ -37,6 +38,7 @@ func scanProgress(sc interface{ Scan(dest ...any) error }) (*models.PlayerProgre
 		&p.DailyTrainsLeft,
 		&p.DailyRacesLeft,
 		&p.LastDailyReset,
+		&p.LastCasinoGrantDate,
 		&p.PrestigeLevel,
 		&p.PrestigeXP,
 		&p.LifetimeEarnings,
@@ -53,8 +55,8 @@ func (r *ProgressRepo) CreateProgress(ctx context.Context, progress *models.Play
 		INSERT INTO player_progress (
 			user_id, login_streak, last_login_date, total_logins,
 			daily_trains_left, daily_races_left, last_daily_reset,
-			prestige_level, prestige_xp, lifetime_earnings
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+			last_casino_grant_date, prestige_level, prestige_xp, lifetime_earnings
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err := r.db.db.ExecContext(ctx, query,
 		progress.UserID,
 		progress.LoginStreak,
@@ -63,6 +65,7 @@ func (r *ProgressRepo) CreateProgress(ctx context.Context, progress *models.Play
 		progress.DailyTrainsLeft,
 		progress.DailyRacesLeft,
 		progress.LastDailyReset,
+		progress.LastCasinoGrantDate,
 		progress.PrestigeLevel,
 		progress.PrestigeXP,
 		progress.LifetimeEarnings,
@@ -119,9 +122,10 @@ func (r *ProgressRepo) UpdateProgress(ctx context.Context, progress *models.Play
 			daily_trains_left = $5,
 			daily_races_left = $6,
 			last_daily_reset = $7,
-			prestige_level = $8,
-			prestige_xp = $9,
-			lifetime_earnings = $10
+			last_casino_grant_date = $8,
+			prestige_level = $9,
+			prestige_xp = $10,
+			lifetime_earnings = $11
 		WHERE user_id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		progress.UserID,
@@ -131,6 +135,7 @@ func (r *ProgressRepo) UpdateProgress(ctx context.Context, progress *models.Play
 		progress.DailyTrainsLeft,
 		progress.DailyRacesLeft,
 		progress.LastDailyReset,
+		progress.LastCasinoGrantDate,
 		progress.PrestigeLevel,
 		progress.PrestigeXP,
 		progress.LifetimeEarnings,
