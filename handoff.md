@@ -107,3 +107,12 @@ All passed after the fixes in this pass.
 - The poker implementation is intentionally shallow: no hold'em, no side pots, no per-action timers, and no collusion detection beyond the ring-fenced economy design.
 - `docker-compose.yml` still does not provide Postgres.
 - `devplan.md` is now historical, not an accurate live delivery tracker.
+
+## Follow-up Fix
+
+- The post-casino SPA regression that caused a black screen was fixed by removing a stale `window.SU.claimStarterRecovery` export that no longer had a matching function implementation.
+- Routing now falls back to `#home` on unknown hashes instead of leaving the app with no active page.
+- Casino/departed follow-ups were tightened during the repair:
+  - daily casino chip grants are now applied consistently from the casino overview path
+  - poker table payloads now redact opponent hands until settlement
+  - departed-horse omens now expire and returned horses respect active-capacity limits before re-entry

@@ -256,3 +256,38 @@ func TestRecordDepartureAndClaimReturn(t *testing.T) {
 		t.Fatalf("expected returned horse to be present: %v", err)
 	}
 }
+
+func TestMaybeGrantDailyCasinoChipsOncePerDay(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Casino Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable failed: %v", err)
+	}
+	stable.CasinoChips = 0
+	if !s.maybeGrantDailyCasinoChips(context.Background(), "user-1", stable) {
+		t.Fatal("expected first daily casino chip grant")
+	}
+	if stable.CasinoChips != casinoDailyChipGrant {
+		t.Fatalf("casino chips = %d, want %d", stable.CasinoChips, casinoDailyChipGrant)
+	}
+	if s.maybeGrantDailyCasinoChips(context.Background(), "user-1", stable) {
+		t.Fatal("expected second same-day grant to be skipped")
+	}
+}
+
+func TestRedactPokerTableForUserHidesOpponentHand(t *testing.T) {
+	table := &models.PokerTable{
+		Status: models.PokerTableDrawing,
+		Seats: []models.PokerSeat{
+			{UserID: "user-1", Hand: []models.PokerCard{{Rank: "A", Suit: "S"}}},
+			{UserID: "user-2", Hand: []models.PokerCard{{Rank: "K", Suit: "H"}}},
+		},
+	}
+	redacted := redactPokerTableForUser(table, "user-1")
+	if len(redacted.Seats[0].Hand) == 0 {
+		t.Fatal("expected own hand to remain visible")
+	}
+	if len(redacted.Seats[1].Hand) != 0 {
+		t.Fatal("expected opponent hand to be hidden during active hand")
+	}
+}

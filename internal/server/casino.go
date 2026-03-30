@@ -50,7 +50,8 @@ func (s *Server) handleGetCasinoOverview(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
-	tables := s.listPokerTables(12)
+	claimedGrant := s.maybeGrantDailyCasinoChips(r.Context(), claims.UserID, stable)
+	tables := s.listPokerTablesForUser(claims.UserID, 12)
 	spins := []*models.SlotSpin{}
 	if s.casinoRepo != nil {
 		if recent, err := s.casinoRepo.ListSlotSpinsByUser(r.Context(), claims.UserID, 12); err == nil {
@@ -64,6 +65,7 @@ func (s *Server) handleGetCasinoOverview(w http.ResponseWriter, r *http.Request)
 		"exchangeRate":          casinoExchangeRate,
 		"protectedCummiesFloor": casinoProtectedCummiesFloor,
 		"dailyChipGrant":        casinoDailyChipGrant,
+		"dailyChipGrantClaimed": claimedGrant,
 		"pokerTables":           tables,
 		"recentSpins":           spins,
 	})
@@ -92,16 +94,7 @@ func (s *Server) handleExchangeCasinoChips(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
-	s.progressMu.Lock()
-	p := s.getOrCreateProgress(claims.UserID)
-	resetDailyLimitsIfNeeded(p)
-	today := time.Now().UTC().Format("2006-01-02")
-	if p.LastCasinoGrantDate != today {
-		stable.CasinoChips += casinoDailyChipGrant
-		p.LastCasinoGrantDate = today
-		s.persistProgress(r.Context(), clonePlayerProgress(p))
-	}
-	s.progressMu.Unlock()
+	s.maybeGrantDailyCasinoChips(r.Context(), claims.UserID, stable)
 
 	switch strings.ToLower(strings.TrimSpace(req.Direction)) {
 	case "buy", "to_chips":
@@ -133,14 +126,19 @@ func (s *Server) handleExchangeCasinoChips(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleListPokerTables(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.listPokerTables(30))
+	claims, ok := authussy.GetUserFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listPokerTablesForUser(claims.UserID, 30))
 }
 
-func (s *Server) listPokerTables(limit int) []*models.PokerTable {
+func (s *Server) listPokerTablesForUser(userID string, limit int) []*models.PokerTable {
 	if s.casinoRepo != nil {
 		tables, err := s.casinoRepo.ListPokerTables(context.Background(), limit)
 		if err == nil {
-			return tables
+			return redactPokerTablesForUser(tables, userID)
 		}
 	}
 	s.pokerMu.RLock()
@@ -152,9 +150,9 @@ func (s *Server) listPokerTables(limit int) []*models.PokerTable {
 	}
 	sort.Slice(tables, func(i, j int) bool { return tables[i].UpdatedAt.After(tables[j].UpdatedAt) })
 	if len(tables) > limit && limit > 0 {
-		return tables[:limit]
+		tables = tables[:limit]
 	}
-	return tables
+	return redactPokerTablesForUser(tables, userID)
 }
 
 func (s *Server) handleCreatePokerTable(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +217,7 @@ func (s *Server) handleCreatePokerTable(w http.ResponseWriter, r *http.Request) 
 	}
 	s.savePokerTable(r.Context(), table)
 	s.persistStable(r.Context(), stable)
-	writeJSON(w, http.StatusCreated, table)
+	writeJSON(w, http.StatusCreated, redactPokerTableForUser(table, claims.UserID))
 }
 
 func (s *Server) handleJoinPokerTable(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +271,7 @@ func (s *Server) handleJoinPokerTable(w http.ResponseWriter, r *http.Request) {
 	}
 	s.savePokerTable(r.Context(), table)
 	s.persistStable(r.Context(), stable)
-	writeJSON(w, http.StatusOK, table)
+	writeJSON(w, http.StatusOK, redactPokerTableForUser(table, claims.UserID))
 }
 
 func (s *Server) handleDrawPokerHand(w http.ResponseWriter, r *http.Request) {
@@ -330,7 +328,7 @@ func (s *Server) handleDrawPokerHand(w http.ResponseWriter, r *http.Request) {
 		s.settlePokerTable(table)
 	}
 	s.savePokerTable(r.Context(), table)
-	writeJSON(w, http.StatusOK, table)
+	writeJSON(w, http.StatusOK, redactPokerTableForUser(table, claims.UserID))
 }
 
 func (s *Server) handleSpinSlots(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +406,20 @@ func (s *Server) handleClaimDepartureReturn(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusForbidden, "that omen does not belong to you")
 		return
 	}
+	if rec.State == models.DepartureStateClaimed {
+		writeError(w, http.StatusConflict, "that omen was already claimed")
+		return
+	}
+	if rec.State == models.DepartureStateLost {
+		writeError(w, http.StatusBadRequest, "that omen has already faded")
+		return
+	}
+	if !rec.OmenExpiresAt.IsZero() && time.Now().After(rec.OmenExpiresAt) {
+		rec.State = models.DepartureStateLost
+		s.saveDepartureRecord(r.Context(), rec)
+		writeError(w, http.StatusBadRequest, "that omen has already faded")
+		return
+	}
 	if rec.State != models.DepartureStateOmen {
 		writeError(w, http.StatusBadRequest, "that horse is not currently trying to claw its way back")
 		return
@@ -417,6 +429,13 @@ func (s *Server) handleClaimDepartureReturn(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "you need a stable first")
 		return
 	}
+	ownerTier := s.getPrestigeTierForUser(stable.OwnerID)
+	if countActiveStableHorses(stable) >= ownerTier.MaxHorses {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max active capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
+		return
+	}
+	rec.State = models.DepartureStateClaimed
+	rec.ReturnedAt = time.Now()
 	horse := rec.HorseSnapshot
 	horse.ID = uuid.New().String()
 	horse.OwnerID = stable.OwnerID
@@ -432,12 +451,12 @@ func (s *Server) handleClaimDepartureReturn(w http.ResponseWriter, r *http.Reque
 	horse.Lore = strings.TrimSpace(horse.Lore + " " + rec.ReturnSummary)
 	horse.Traits = append(horse.Traits, returnTraitForRecord(rec))
 	if err := s.stables.AddHorseToStable(stable.ID, &horse); err != nil {
+		rec.State = models.DepartureStateOmen
+		rec.ReturnedAt = time.Time{}
 		writeError(w, http.StatusBadRequest, "failed to re-home returned horse: "+err.Error())
 		return
 	}
-	rec.State = models.DepartureStateClaimed
 	rec.ReturnedHorse = horse.ID
-	rec.ReturnedAt = time.Now()
 	s.persistHorse(r.Context(), &horse)
 	s.saveDepartureRecord(r.Context(), rec)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -463,6 +482,54 @@ func (s *Server) withdrawCasinoStake(stable *models.Stable, currency string, amo
 		stable.CasinoChips -= amount
 	}
 	return nil
+}
+
+func (s *Server) maybeGrantDailyCasinoChips(ctx context.Context, userID string, stable *models.Stable) bool {
+	if stable == nil || userID == "" {
+		return false
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	granted := false
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(userID)
+	resetDailyLimitsIfNeeded(p)
+	if p.LastCasinoGrantDate != today {
+		stable.CasinoChips += casinoDailyChipGrant
+		p.LastCasinoGrantDate = today
+		granted = true
+		progressSnapshot := clonePlayerProgress(p)
+		s.progressMu.Unlock()
+		s.persistProgress(ctx, progressSnapshot)
+		s.persistStable(ctx, stable)
+		return granted
+	}
+	s.progressMu.Unlock()
+	return granted
+}
+
+func redactPokerTablesForUser(tables []*models.PokerTable, userID string) []*models.PokerTable {
+	out := make([]*models.PokerTable, 0, len(tables))
+	for _, table := range tables {
+		out = append(out, redactPokerTableForUser(table, userID))
+	}
+	return out
+}
+
+func redactPokerTableForUser(table *models.PokerTable, userID string) *models.PokerTable {
+	if table == nil {
+		return nil
+	}
+	clone := *table
+	clone.Seats = make([]models.PokerSeat, len(table.Seats))
+	for i, seat := range table.Seats {
+		clone.Seats[i] = seat
+		if seat.UserID != userID && clone.Status != models.PokerTableSettled {
+			clone.Seats[i].Hand = nil
+			clone.Seats[i].Discarded = nil
+			clone.Seats[i].HandRank = ""
+		}
+	}
+	return &clone
 }
 
 func renderCasinoCurrency(currency string) string {

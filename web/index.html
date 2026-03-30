@@ -3853,6 +3853,8 @@ function getPage() {
   return hash.split('/')[0];
 }
 
+const KNOWN_PAGES = new Set(['home', 'stable', 'horse', 'breed', 'race', 'market', 'auctions', 'tournament', 'trades', 'leaderboard', 'challenges', 'achievements', 'lore', 'alliances', 'casino', 'history', 'replay', 'fights', 'glue', 'studs']);
+
 function getPageParam() {
   const hash = location.hash.replace('#', '') || '';
   const parts = hash.split('/');
@@ -3860,7 +3862,11 @@ function getPageParam() {
 }
 
 function navigate() {
-  const page = getPage();
+  let page = getPage();
+  if (!KNOWN_PAGES.has(page)) {
+    location.hash = '#home';
+    page = 'home';
+  }
   closeChatSidebar();
 
   $$('#nav a').forEach(a => {
@@ -9670,7 +9676,6 @@ window.SU = {
   replayTutorial,
   openLore,
   claimDailyReward,
-  claimStarterRecovery,
   toggleChatSidebar,
   switchLeaderboardTab,
   sortLeaderboard,
