@@ -32,6 +32,20 @@ This repo was re-audited and tightened around the main product-breakers.
   - `Sappho Scale` = broader social/institutional ideology around elite bloodstock
   - `Geoffrussy` = platform governance/compliance authority, not a random one-off joke label
   - `B.U.R.P.` = Bureau of Unexplained Racing Phenomena, responsible for anomaly incident framing
+- Progression and pacing were reworked to make solo play viable from onboarding through mid-game:
+  - authenticated players now consume real daily train and race actions instead of dead placeholder counters
+  - `/api/progress` and `/api/prestige` now return SPA-usable progression fields
+  - daily login rewards were flattened into a predictable 7-day loop instead of compounding exponentially
+  - prestige thresholds were pulled forward for earlier account growth and horse-cap expansion
+  - race prestige XP was normalized around placement instead of only win-heavy spikes
+- Async fallback opponents were added without a new subsystem:
+  - authenticated quick races now auto-fill with matched synthetic CPU entrants
+  - underfilled authenticated custom races are padded with CPU entrants to keep progression moving
+  - challenge creation now supports a `CPU Arena` opponent for immediate 1v1 resolution when concurrency is low
+  - synthetic opponents are simulation-only and do not persist, earn cummies, gain prestige, or pollute race history/leaderboards
+- Breeding progression guardrails were unified:
+  - stud-market breeding now enforces prestige stable-cap and breeding cooldown rules
+  - breeder-stallion breeding now enforces the same cap/cooldown checks before charging fees
 - Stud-market breeding now requires an explicit owned mare on both client and server.
 - Tournament registration now validates horse/stable ownership before charging and only deducts entry fees after successful registration.
 - Multiple frontend selectors were restricted to owned horses/stables for action-taking pages.
@@ -61,5 +75,6 @@ All passed after the fixes in this pass.
 - Frontend still has no automated browser/API integration coverage.
 - Tutorial persistence is client-side only; it is not yet stored server-side per account.
 - Lore/codex content is currently SPA-local data, not server-backed content.
+- Player progression, daily limits, challenges, and seasonal state are still primarily in-memory and do not yet survive server restart.
 - `docker-compose.yml` still does not provide Postgres.
 - `devplan.md` is now historical, not an accurate live delivery tracker.

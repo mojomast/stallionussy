@@ -2075,6 +2075,9 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     <button class="term-btn sm purple daily-reward-btn" id="btn-daily-reward" onclick="window.SU.claimDailyReward()">CLAIM DAILY</button>
     <span class="text-dim" id="daily-reward-status" style="font-size:10px;"></span>
   </div>
+  <div class="text-dim mb-8" id="daily-action-status" style="font-size:11px;line-height:1.6;">
+    Daily actions: syncing progression state...
+  </div>
 
   <div class="flex-gap">
     <div style="flex:2;min-width:300px;">
@@ -2856,6 +2859,7 @@ let leaderboardTab = 'stables';   // 'stables' or 'horses'
 let leaderboardSort = 'elo';      // current sort column for stable leaderboard
 let activeBettingPool = null;     // current open betting pool data
 let dailyRewardClaimed = false;   // whether daily reward has been claimed today
+let progressState = null;
 const TUTORIAL_VERSION = '2026-03-ftue-v1';
 let postAuthDestination = '#home';
 let tutorialState = {
@@ -3462,6 +3466,22 @@ function renderLoreHint(key, label) {
   if (!entry) return '';
   const text = label || entry.title;
   return `<span class="has-tooltip"><span class="lore-chip">${escHtml(text)}</span><span class="tooltip-text">${escHtml(entry.tooltip)}</span></span>`;
+}
+
+function updateDailyActionStatus(progress) {
+  const el = $('#daily-action-status');
+  if (!el) return;
+  if (!progress || isGuest) {
+    el.innerHTML = isGuest
+      ? 'Guest mode: spectator quick races stay available, but daily progression tracks are disabled until you authenticate.'
+      : 'Daily actions: unavailable.';
+    return;
+  }
+  const trains = progress.dailyTrainsLeft ?? 0;
+  const races = progress.dailyRacesLeft ?? 0;
+  const streak = progress.loginStreak ?? 0;
+  const nextReward = progress.nextDailyReward?.cummies ? ` | Next daily reward: ₵${Number(progress.nextDailyReward.cummies).toLocaleString()}` : '';
+  el.innerHTML = `Daily actions: <span class="text-amber">${trains}</span> trains left | <span class="text-amber">${races}</span> races left | streak: <span class="text-amber">${streak}</span>${nextReward}`;
 }
 
 // ─── SYSTEM MESSAGES (LORE) ────────────────────────────────────────────────
@@ -6132,11 +6152,13 @@ async function trainHorse(horseId, workoutType) {
 
   resultEl.innerHTML = `<span class="loading">Training: ${workoutType}...</span>`;
 
-  try {
-    const result = await api(`/horses/${horseId}/train`, {
-      method: 'POST',
-      body: { workoutType },
-    });
+	try {
+		const result = await api(`/horses/${horseId}/train`, {
+			method: 'POST',
+			body: { workoutType },
+		});
+		await checkDailyRewardStatus();
+		await loadPrestige();
 
     if (result && result.injury) {
       resultEl.innerHTML = `<div class="injury-alert">
@@ -6530,9 +6552,11 @@ async function quickRace() {
   raceNarrativeLog = [];
   $('#race-results').classList.add('hidden');
 
-  try {
-    const race = await api('/races/quick');
-    if (race) {
+	try {
+		const race = await api('/races/quick');
+		await checkDailyRewardStatus();
+		await loadPrestige();
+		if (race) {
       const raceObj = race.race || race;
       const raceWeather = race.weather || null;
       const narrativeIndexed = race.narrative_indexed || [];
@@ -7877,24 +7901,30 @@ async function loadChallenges() {
   }
 
   // Populate target stable dropdown
-  const targetStableEl = $('#challenge-target-stable');
-  if (targetStableEl) {
-    targetStableEl.innerHTML = '<option value="">-- SELECT OPPONENT --</option>';
-    allStables.filter(s => s.owner_id !== getOwnerID()).forEach(s => {
-      targetStableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
-    });
-  }
+	const targetStableEl = $('#challenge-target-stable');
+	if (targetStableEl) {
+		targetStableEl.innerHTML = '<option value="">-- SELECT OPPONENT --</option>';
+		targetStableEl.innerHTML += '<option value="bot">CPU Arena</option>';
+		allStables.filter(s => s.owner_id !== getOwnerID()).forEach(s => {
+			targetStableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
+		});
+	}
 
   // When target stable changes, populate target horse dropdown
   if (targetStableEl && !targetStableEl._challengeListener) {
     targetStableEl._challengeListener = true;
     targetStableEl.addEventListener('change', async () => {
-      const stableId = targetStableEl.value;
-      const targetHorseEl = $('#challenge-target-horse');
-      targetHorseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
-      if (!stableId) return;
-      try {
-        const horses = await api(`/stables/${stableId}/horses`);
+		const stableId = targetStableEl.value;
+		const targetHorseEl = $('#challenge-target-horse');
+		targetHorseEl.innerHTML = '<option value="">-- SELECT HORSE --</option>';
+		if (!stableId) return;
+		if (stableId === 'bot') {
+			targetHorseEl.innerHTML += '<option value="bot-auto">Auto-match CPU Opponent</option>';
+			targetHorseEl.value = 'bot-auto';
+			return;
+		}
+		try {
+			const horses = await api(`/stables/${stableId}/horses`);
         const horseList = Array.isArray(horses) ? horses : [];
         horseList.filter(h => !h.retired).forEach(h => {
           targetHorseEl.innerHTML += `<option value="${h.id}">${escHtml(h.name)} (ELO: ${Math.round(h.elo || 1200)})</option>`;
@@ -8000,33 +8030,48 @@ function renderChallenges(challenges) {
 async function createChallenge() {
   const myHorse = $('#challenge-my-horse').value;
   const targetStable = $('#challenge-target-stable').value;
-  const targetHorse = $('#challenge-target-horse').value;
-  const wager = parseInt($('#challenge-wager').value) || 0;
-  const msgEl = $('#challenge-create-msg');
-  const defenderStable = allStables.find(s => s.id === targetStable);
+	const targetHorse = $('#challenge-target-horse').value;
+	const wager = parseInt($('#challenge-wager').value) || 0;
+	const msgEl = $('#challenge-create-msg');
+	const defenderStable = allStables.find(s => s.id === targetStable);
 
-  if (!myHorse) { msgEl.textContent = 'ERROR: select your horse'; msgEl.style.color = 'var(--red)'; return; }
-  if (!targetStable) { msgEl.textContent = 'ERROR: select opponent stable'; msgEl.style.color = 'var(--red)'; return; }
-  if (!targetHorse) { msgEl.textContent = 'ERROR: select opponent horse'; msgEl.style.color = 'var(--red)'; return; }
-  if (!defenderStable) { msgEl.textContent = 'ERROR: opponent stable not found'; msgEl.style.color = 'var(--red)'; return; }
+	if (!myHorse) { msgEl.textContent = 'ERROR: select your horse'; msgEl.style.color = 'var(--red)'; return; }
+	if (!targetStable) { msgEl.textContent = 'ERROR: select opponent stable'; msgEl.style.color = 'var(--red)'; return; }
+	if (targetStable !== 'bot' && !targetHorse) { msgEl.textContent = 'ERROR: select opponent horse'; msgEl.style.color = 'var(--red)'; return; }
+	if (targetStable !== 'bot' && !defenderStable) { msgEl.textContent = 'ERROR: opponent stable not found'; msgEl.style.color = 'var(--red)'; return; }
 
-  msgEl.textContent = 'Sending challenge...';
-  msgEl.style.color = 'var(--fg-dim)';
+	msgEl.textContent = 'Sending challenge...';
+	msgEl.style.color = 'var(--fg-dim)';
 
-  try {
-    await api('/challenges', {
-      method: 'POST',
-      body: {
-        horseID: myHorse,
-        defender_stable_id: targetStable,
-        defender_horse_id: targetHorse,
-        wager,
-      },
-    });
-    msgEl.innerHTML = `Challenge sent! ${renderLoreHint('challenge', 'HONOR CODE')}`;
-    msgEl.style.color = 'var(--fg)';
-    await loadChallengeList();
-    setTimeout(checkTutorialProgress, 50);
+	try {
+		const result = await api('/challenges', {
+			method: 'POST',
+			body: {
+				horseID: myHorse,
+				defender_stable_id: targetStable,
+				defender_horse_id: targetStable === 'bot' ? '' : targetHorse,
+				defenderName: targetStable === 'bot' ? 'CPU Arena' : undefined,
+				wager,
+			},
+		});
+		await checkDailyRewardStatus();
+		await loadPrestige();
+		const racePayload = result && (result.race || result.result || null);
+		const raceObj = racePayload && (racePayload.race || racePayload);
+		if (raceObj && raceObj.entries) {
+			msgEl.innerHTML = `CPU challenge resolved. ${renderLoreHint('challenge', 'HONOR CODE')}`;
+			currentRace = raceObj;
+			currentWeather = racePayload.weather || null;
+			location.hash = '#race';
+			setTimeout(() => {
+				simulateLocalRace(raceObj, racePayload.narrative || [], racePayload.narrative_indexed || []);
+			}, 150);
+		} else {
+			msgEl.innerHTML = `Challenge sent! ${renderLoreHint('challenge', 'HONOR CODE')}`;
+		}
+		msgEl.style.color = 'var(--fg)';
+		await loadChallengeList();
+		setTimeout(checkTutorialProgress, 50);
   } catch(e) {
     msgEl.textContent = `Error: ${e.message}`;
     msgEl.style.color = 'var(--red)';
@@ -8217,8 +8262,8 @@ async function claimDailyReward() {
 
   if (btn) btn.disabled = true;
 
-  try {
-    const data = await api('/daily-reward', { method: 'POST' });
+	try {
+		const data = await api('/daily-reward', { method: 'POST' });
     const cummies = data?.cummies || data?.reward || data?.amount || 0;
     const streak = data?.streak || data?.day || 0;
 
@@ -8230,8 +8275,10 @@ async function claimDailyReward() {
     if (statusEl) {
       statusEl.innerHTML = `<span class="text-amber">+₵${cummies.toLocaleString()}</span> <span class="streak-badge">(streak: ${streak})</span>`;
     }
-    showToast(`Daily reward claimed: ₵${cummies} (streak: ${streak})`, 'prestige');
-  } catch(e) {
+		showToast(`Daily reward claimed: ₵${cummies} (streak: ${streak})`, 'prestige');
+		await checkDailyRewardStatus();
+		await loadPrestige();
+	} catch(e) {
     if (btn) btn.disabled = false;
     if (statusEl) {
       statusEl.textContent = e.message.includes('already') ? 'Already claimed today!' : `Error: ${e.message}`;
@@ -8245,30 +8292,35 @@ async function claimDailyReward() {
 }
 
 async function checkDailyRewardStatus() {
-  try {
-    const data = await api('/progress');
-    if (data?.daily_claimed || data?.dailyClaimed) {
-      dailyRewardClaimed = true;
-      const btn = $('#btn-daily-reward');
-      if (btn) { btn.classList.add('claimed'); btn.textContent = 'CLAIMED'; btn.disabled = true; }
-    }
-  } catch(e) { /* silent */ }
+	try {
+		const data = await api('/progress');
+		progressState = data || null;
+		dailyRewardClaimed = !!(data?.daily_claimed || data?.dailyClaimed);
+		const btn = $('#btn-daily-reward');
+		if (btn) {
+			btn.classList.toggle('claimed', dailyRewardClaimed);
+			btn.textContent = dailyRewardClaimed ? 'CLAIMED' : 'CLAIM DAILY';
+			btn.disabled = dailyRewardClaimed;
+		}
+		updateDailyActionStatus(progressState);
+	} catch(e) { /* silent */ }
 }
 
 // ─── PRESTIGE DISPLAY ──────────────────────────────────────────────────────
 async function loadPrestige() {
-  try {
-    const data = await api('/prestige');
-    if (!data) return;
+	try {
+		const data = await api('/prestige');
+		if (!data) return;
 
     const container = $('#dash-prestige');
     if (!container) return;
     container.style.display = '';
 
-    const tier = data.tier_name || data.tierName || data.tier || 'Fresh Foal';
-    const level = data.level || 0;
-    const xp = data.xp || data.experience || 0;
-    const nextXp = data.next_tier_xp || data.nextTierXP || data.xp_to_next || 10000;
+		const currentTier = data.currentTier || {};
+		const tier = currentTier.name || data.tier_name || data.tierName || data.tier || 'Fresh Foal';
+		const level = currentTier.level || data.level || 0;
+		const xp = data.xp || data.experience || 0;
+		const nextXp = data.next_tier_xp || data.nextTierXP || data.xp_to_next || data.xpToNext || 10000;
 
     // Generate star display based on level (1-5 stars per tier)
     const filledStars = Math.min(5, Math.max(1, level));

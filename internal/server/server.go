@@ -591,6 +591,13 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if _, err := s.consumeDailyTrain(claims.UserID); err != nil {
+			writeError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+	}
+
 	// Training while injured: 50% chance to worsen the injury.
 	if horse.Injury != nil && horse.Injury.Severity != models.SeverityCareerEnding {
 		if rand.Float64() < 0.50 {
@@ -680,9 +687,9 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 	s.persistHorse(r.Context(), horse)
 	s.persistTrainingSession(r.Context(), session)
 
-	// Grant 10 prestige XP for training.
+	// Grant modest prestige XP for training so daily progress is steady but not explosive.
 	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-		s.addPrestigeXP(claims.UserID, claims.Username, 10)
+		s.addPrestigeXP(claims.UserID, claims.Username, 8)
 	}
 
 	// Broadcast training event to all connected clients.
@@ -1037,10 +1044,14 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var requestingClaims *authussy.Claims
+	var purseStable *models.Stable
+
 	// Ownership check: the requesting player must own at least one horse
 	// in the race. Other slots can be filled with AI / system horses or
 	// horses from other stables (to allow vs-AI and multiplayer races).
 	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		requestingClaims = claims
 		ownsAtLeastOne := false
 		for _, hid := range req.HorseIDs {
 			if s.userOwnsHorse(claims.UserID, hid) {
@@ -1053,17 +1064,15 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Purse > 0 {
-			stable := s.getStableForUser(claims.UserID)
-			if stable == nil {
+			purseStable = s.getStableForUser(claims.UserID)
+			if purseStable == nil {
 				writeError(w, http.StatusBadRequest, "you need a stable to fund a purse")
 				return
 			}
-			if stable.Cummies < req.Purse {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", stable.Cummies, req.Purse))
+			if purseStable.Cummies < req.Purse {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", purseStable.Cummies, req.Purse))
 				return
 			}
-			stable.Cummies -= req.Purse
-			s.persistStable(r.Context(), stable)
 		}
 	} else if req.Purse > 0 {
 		writeError(w, http.StatusBadRequest, "custom purse races require authentication")
@@ -1083,12 +1092,82 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if requestingClaims != nil {
+		if _, err := s.consumeDailyRace(requestingClaims.UserID); err != nil {
+			writeError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		if req.Purse > 0 && purseStable != nil {
+			purseStable.Cummies -= req.Purse
+			s.persistStable(r.Context(), purseStable)
+		}
+
+		if len(horses) < 4 {
+			var playerHorse *models.Horse
+			for _, h := range horses {
+				if h.OwnerID == requestingClaims.UserID {
+					playerHorse = h
+					break
+				}
+			}
+			if playerHorse != nil {
+				needed := 4 - len(horses)
+				if needed > 0 {
+					horses = append(horses, s.pickBotOpponents(playerHorse, needed)...)
+				}
+			}
+		}
+	}
+
 	// Run the race with weather and all post-race processing.
 	result := s.runRace(horses, req.TrackType, req.Purse)
 	writeJSON(w, http.StatusCreated, result)
 }
 
 func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if _, err := s.consumeDailyRace(claims.UserID); err != nil {
+			writeError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+
+		stable := s.getStableForUser(claims.UserID)
+		if stable == nil || len(stable.Horses) == 0 {
+			writeError(w, http.StatusBadRequest, "you need a stable with at least one active horse")
+			return
+		}
+
+		var playerHorse *models.Horse
+		for i := range stable.Horses {
+			if stable.Horses[i].Retired {
+				continue
+			}
+			h, err := s.stables.GetHorse(stable.Horses[i].ID)
+			if err == nil {
+				playerHorse = h
+				break
+			}
+		}
+		if playerHorse == nil {
+			writeError(w, http.StatusBadRequest, "no active horse available for quick race")
+			return
+		}
+
+		tracks := []models.TrackType{
+			models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+			models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+		}
+		trackType := tracks[rand.IntN(len(tracks))]
+		opponents := s.pickBotOpponents(playerHorse, 3+rand.IntN(3))
+		selected := append([]*models.Horse{playerHorse}, opponents...)
+		race := racussy.NewRace(selected, trackType, quickRacePurse)
+		s.openBettingPool(race.ID, selected)
+		time.Sleep(10 * time.Second)
+		result := s.runRace(selected, trackType, quickRacePurse, race.ID)
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+
 	// Get all horses from the leaderboard (excluding retired ones).
 	allHorses := s.stables.GetLeaderboard()
 	var eligible []*models.Horse
@@ -1124,8 +1203,8 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	}
 	trackType := tracks[rand.IntN(len(tracks))]
 
-	// Default purse for quick races.
-	purse := int64(500)
+	// Guest quick races remain spectator-friendly and do not feed progression.
+	purse := quickRacePurse
 
 	race := racussy.NewRace(selected, trackType, purse)
 	s.openBettingPool(race.ID, selected)
@@ -1312,18 +1391,24 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 
 		horse.TotalEarnings += earnings
 
-		// Add earnings to the horse's stable.
-		if earnings > 0 {
+		// Add earnings to the horse's stable unless this is a simulation-only bot entry.
+		if earnings > 0 && !isBotHorse(horse) {
 			s.addEarningsToStable(horse, earnings)
 		}
 
-		// Grant prestige XP for racing: 100 XP for wins, 25 XP for participation.
-		// Since runRace doesn't have request context, look up the owner from horse.
-		raceXP := int64(25) // participation XP
-		if entry.FinishPlace == 1 {
-			raceXP = 100 // win XP
+		// Grant steady progression XP for placements; skip synthetic bot entrants.
+		raceXP := int64(10)
+		switch entry.FinishPlace {
+		case 1:
+			raceXP = 40
+		case 2:
+			raceXP = 25
+		case 3:
+			raceXP = 15
 		}
-		s.addPrestigeXPForHorse(horse, raceXP)
+		if !isBotHorse(horse) {
+			s.addPrestigeXPForHorse(horse, raceXP)
+		}
 
 		// Apply post-race fatigue.
 		fatigue := racussy.CalcPostRaceFatigue(horse, race, entry.FinishPlace, weather)
@@ -1379,45 +1464,46 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 			}
 		}
 
-		// Record race result in history.
-		result := &models.RaceResult{
-			RaceID:      race.ID,
-			HorseID:     horse.ID,
-			HorseName:   horse.Name,
-			TrackType:   trackType,
-			Distance:    race.Distance,
-			FinishPlace: entry.FinishPlace,
-			TotalHorses: len(race.Entries),
-			FinalTime:   entry.FinalTime,
-			ELOBefore:   oldELO,
-			ELOAfter:    newELO,
-			Earnings:    earnings,
-			Weather:     string(weather),
-			CreatedAt:   time.Now(),
+		// Record race result in history for real horses only.
+		if !isBotHorse(horse) {
+			result := &models.RaceResult{
+				RaceID:      race.ID,
+				HorseID:     horse.ID,
+				HorseName:   horse.Name,
+				TrackType:   trackType,
+				Distance:    race.Distance,
+				FinishPlace: entry.FinishPlace,
+				TotalHorses: len(race.Entries),
+				FinalTime:   entry.FinalTime,
+				ELOBefore:   oldELO,
+				ELOAfter:    newELO,
+				Earnings:    earnings,
+				Weather:     string(weather),
+				CreatedAt:   time.Now(),
+			}
+			s.raceHistory.RecordResult(result)
+
+			// Write-through: persist race result to DB.
+			ctx := context.Background()
+			s.persistRaceResult(ctx, result)
+
+			// Sync horse state back to stable.
+			s.syncHorseToStable(horse)
+
+			// Check achievements for this horse.
+			s.checkAndApplyAchievements(horse)
+
+			// Check milestone traits.
+			if wins == 1 && horse.Wins == 1 {
+				s.trainer.AssignTraitOnMilestone(horse, "first_win")
+			}
+			if horse.Races == 10 {
+				s.trainer.AssignTraitOnMilestone(horse, "10_races")
+			}
+
+			// Write-through: persist horse state to DB AFTER milestone traits are assigned.
+			s.persistHorse(ctx, horse)
 		}
-		s.raceHistory.RecordResult(result)
-
-		// Write-through: persist race result to DB.
-		ctx := context.Background()
-		s.persistRaceResult(ctx, result)
-
-		// Sync horse state back to stable.
-		s.syncHorseToStable(horse)
-
-		// Check achievements for this horse.
-		s.checkAndApplyAchievements(horse)
-
-		// Check milestone traits.
-		if wins == 1 && horse.Wins == 1 {
-			s.trainer.AssignTraitOnMilestone(horse, "first_win")
-		}
-		if horse.Races == 10 {
-			s.trainer.AssignTraitOnMilestone(horse, "10_races")
-		}
-
-		// Write-through: persist horse state to DB AFTER milestone traits are assigned,
-		// so traits like "first_win" and "10_races" are persisted immediately.
-		s.persistHorse(ctx, horse)
 	}
 
 	// Resolve any betting pool for this race. The winner is the first entry
@@ -2147,6 +2233,24 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ownerTier := s.getPrestigeTierForUser(buyerStable.OwnerID)
+	if len(buyerStable.Horses) >= ownerTier.MaxHorses {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
+		return
+	}
+
+	cooldown := time.Duration(breedingCooldownHours) * time.Hour
+	if !studHorse.LastBredAt.IsZero() && time.Since(studHorse.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(studHorse.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stud horse %q is on breeding cooldown (%.0f minutes remaining)", studHorse.Name, remaining.Minutes()))
+		return
+	}
+	if !mare.LastBredAt.IsZero() && time.Since(mare.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(mare.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("mare %q is on breeding cooldown (%.0f minutes remaining)", mare.Name, remaining.Minutes()))
+		return
+	}
+
 	// Find the seller's stable.
 	sellerStableID := ""
 	for _, stable := range s.stables.ListStables() {
@@ -2193,6 +2297,12 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add foal to stable: "+err.Error())
 		return
 	}
+	studHorse.LastBredAt = time.Now()
+	mare.LastBredAt = time.Now()
+	s.syncHorseToStable(studHorse)
+	s.syncHorseToStable(mare)
+	s.persistHorse(r.Context(), studHorse)
+	s.persistHorse(r.Context(), mare)
 	s.persistStable(r.Context(), buyerStable)
 
 	// Write-through: persist the new foal and update the listing (now inactive).
@@ -3814,6 +3924,21 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := s.consumeDailyRace(claims.UserID); err != nil {
+		writeError(w, http.StatusTooManyRequests, err.Error())
+		return
+	}
+
+	if challenge.DefenderID == "bot" {
+		result, errMsg := s.runBotChallenge(challenge)
+		if errMsg != "" {
+			writeError(w, http.StatusBadRequest, errMsg)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+		return
+	}
+
 	// Grant first_challenge achievement for issuing a challenge.
 	if stable := s.getStableForUser(claims.UserID); stable != nil {
 		s.grantAchievementToStable(stable, "first_challenge")
@@ -3944,6 +4069,22 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 		return nil, fmt.Sprintf("horse %s is retired and cannot race", horse.Name)
 	}
 
+	if strings.EqualFold(defenderName, "CPU Arena") || strings.EqualFold(defenderName, "bot") {
+		return &models.Challenge{
+			ID:                  uuid.New().String(),
+			ChallengerID:        challengerID,
+			ChallengerName:      challengerName,
+			ChallengerHorse:     horse.ID,
+			ChallengerHorseName: horse.Name,
+			DefenderID:          "bot",
+			DefenderName:        "CPU Arena",
+			Wager:               wager,
+			Status:              models.ChallengeStatusCompleted,
+			CreatedAt:           time.Now(),
+			ExpiresAt:           time.Now(),
+		}, ""
+	}
+
 	// Find the defender by username. We look through stables and match by
 	// checking if the user repo has a matching username, or fall back to
 	// matching stable owner names.
@@ -4019,6 +4160,94 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 		challengerName, challenge.ID, defenderUsername, horse.Name, wager)
 
 	return challenge, ""
+}
+
+func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interface{}, string) {
+	if challenge == nil {
+		return nil, "challenge not found"
+	}
+	challengerHorse, err := s.stables.GetHorse(challenge.ChallengerHorse)
+	if err != nil || challengerHorse == nil {
+		return nil, "challenger horse not found"
+	}
+	challengerID := challenge.ChallengerID
+	challengerName := challenge.ChallengerName
+	wager := challenge.Wager
+	if wager > 0 {
+		challengerStable := s.getStableForUser(challengerID)
+		if challengerStable == nil {
+			return nil, "you don't have a stable"
+		}
+		if challengerStable.Cummies < wager {
+			return nil, fmt.Sprintf("insufficient cummies: you have ₵%d but wagered ₵%d", challengerStable.Cummies, wager)
+		}
+		challengerStable.Cummies -= wager
+		s.persistStable(context.Background(), challengerStable)
+	}
+
+	bots := s.pickBotOpponents(challengerHorse, 1)
+	if len(bots) == 0 {
+		return nil, "no CPU arena entrant available"
+	}
+	defenderHorse := bots[0]
+	challenge.DefenderHorse = defenderHorse.ID
+	challenge.DefenderHorseName = defenderHorse.Name
+	challenge.Status = models.ChallengeStatusCompleted
+
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+	trackType := tracks[rand.IntN(len(tracks))]
+	result := s.runRace([]*models.Horse{challengerHorse, defenderHorse}, trackType, challengeBasePurse)
+
+	winnerID := "bot"
+	winnerName := challenge.DefenderName
+	for _, entry := range result.Race.Entries {
+		if entry.FinishPlace != 1 {
+			continue
+		}
+		if entry.HorseID == challengerHorse.ID {
+			winnerID = challengerID
+			winnerName = challengerName
+		}
+		break
+	}
+
+	if wager > 0 {
+		challengerStable := s.getStableForUser(challengerID)
+		if challengerStable != nil {
+			if winnerID == challengerID {
+				payout := (wager * 2) - ((wager * 2) * 5 / 100)
+				challengerStable.Cummies += payout
+				challengerStable.TotalEarnings += payout
+			}
+			s.persistStable(context.Background(), challengerStable)
+		}
+	}
+
+	if winnerID == challengerID {
+		s.addPrestigeXP(challengerID, challengerName, 15)
+	}
+
+	s.challengeMu.Lock()
+	s.challenges[challenge.ID] = challenge
+	s.challengeMu.Unlock()
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type":       "challenge",
+		"action":     "completed",
+		"challenge":  challenge,
+		"winnerID":   winnerID,
+		"winnerName": winnerName,
+		"result":     result,
+	})
+
+	return map[string]interface{}{
+		"challenge": challenge,
+		"race":      result,
+		"winnerID":  winnerID,
+	}, ""
 }
 
 // acceptChallenge accepts a pending challenge, runs the 1v1 race, and
@@ -4749,28 +4978,32 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 
 // dailyRewards defines the 7-day login streak reward cycle.
 var dailyRewards = []models.DailyReward{
-	{Day: 1, Cummies: 100, Bonus: "Welcome back, breeder"},
-	{Day: 2, Cummies: 150, Bonus: "Streak building..."},
-	{Day: 3, Cummies: 200, Bonus: "Triple threat!"},
-	{Day: 4, Cummies: 250, Bonus: "Dedicated stable hand"},
-	{Day: 5, Cummies: 500, Bonus: "5-day streak! Bonus cummies!"},
-	{Day: 6, Cummies: 300, Bonus: "Almost there..."},
-	{Day: 7, Cummies: 1000, Bonus: "WEEKLY JACKPOT! Dr. Mittens approves"},
+	{Day: 1, Cummies: 150, Bonus: "Morning hay stipend"},
+	{Day: 2, Cummies: 200, Bonus: "Trackside meal voucher"},
+	{Day: 3, Cummies: 250, Bonus: "Stable office reimbursement"},
+	{Day: 4, Cummies: 300, Bonus: "Geoffrussy compliance rebate"},
+	{Day: 5, Cummies: 400, Bonus: "Bloodline morale dividend"},
+	{Day: 6, Cummies: 500, Bonus: "Pre-race confidence injection"},
+	{Day: 7, Cummies: 700, Bonus: "Weekly breeder retention package"},
 }
 
 // prestigeTiers defines progression levels and their bonuses.
 var prestigeTiers = []models.PrestigeTier{
 	{Level: 0, Name: "Stable Hand", RequiredXP: 0, CummiesBonus: 1.0, TrainingBonus: 1.0, MaxHorses: 5},
-	{Level: 1, Name: "Paddock Manager", RequiredXP: 1000, CummiesBonus: 1.05, TrainingBonus: 1.05, MaxHorses: 7},
-	{Level: 2, Name: "Ranch Owner", RequiredXP: 5000, CummiesBonus: 1.1, TrainingBonus: 1.1, MaxHorses: 10},
-	{Level: 3, Name: "Stud Baron", RequiredXP: 15000, CummiesBonus: 1.15, TrainingBonus: 1.15, MaxHorses: 15},
-	{Level: 4, Name: "Racing Magnate", RequiredXP: 50000, CummiesBonus: 1.2, TrainingBonus: 1.2, MaxHorses: 20},
-	{Level: 5, Name: "Ussy Lord", RequiredXP: 150000, CummiesBonus: 1.3, TrainingBonus: 1.3, MaxHorses: 30},
-	{Level: 6, Name: "The Geoffrussy", RequiredXP: 500000, CummiesBonus: 1.5, TrainingBonus: 1.5, MaxHorses: 50},
+	{Level: 1, Name: "Paddock Manager", RequiredXP: 250, CummiesBonus: 1.05, TrainingBonus: 1.05, MaxHorses: 7},
+	{Level: 2, Name: "Ranch Owner", RequiredXP: 1000, CummiesBonus: 1.1, TrainingBonus: 1.1, MaxHorses: 10},
+	{Level: 3, Name: "Stud Baron", RequiredXP: 3500, CummiesBonus: 1.15, TrainingBonus: 1.15, MaxHorses: 15},
+	{Level: 4, Name: "Racing Magnate", RequiredXP: 10000, CummiesBonus: 1.2, TrainingBonus: 1.2, MaxHorses: 20},
+	{Level: 5, Name: "Ussy Lord", RequiredXP: 30000, CummiesBonus: 1.3, TrainingBonus: 1.3, MaxHorses: 30},
+	{Level: 6, Name: "The Geoffrussy", RequiredXP: 100000, CummiesBonus: 1.5, TrainingBonus: 1.5, MaxHorses: 50},
 }
 
 // breedingCooldownHours is the minimum time between breeds for a single horse.
 const breedingCooldownHours = 4
+const defaultDailyTrains = 6
+const defaultDailyRaces = 6
+const quickRacePurse = int64(200)
+const challengeBasePurse = int64(250)
 
 // getOrCreateProgress returns the player's progress, creating a fresh one if needed.
 // Caller must hold progressMu or call within a locked section.
@@ -4779,8 +5012,8 @@ func (s *Server) getOrCreateProgress(userID string) *models.PlayerProgress {
 	if !ok {
 		p = &models.PlayerProgress{
 			UserID:          userID,
-			DailyTrainsLeft: 5,
-			DailyRacesLeft:  10,
+			DailyTrainsLeft: defaultDailyTrains,
+			DailyRacesLeft:  defaultDailyRaces,
 			LastDailyReset:  time.Now().UTC().Format("2006-01-02"),
 		}
 		s.progress[userID] = p
@@ -4792,10 +5025,111 @@ func (s *Server) getOrCreateProgress(userID string) *models.PlayerProgress {
 func resetDailyLimitsIfNeeded(p *models.PlayerProgress) {
 	today := time.Now().UTC().Format("2006-01-02")
 	if p.LastDailyReset != today {
-		p.DailyTrainsLeft = 5
-		p.DailyRacesLeft = 10
+		p.DailyTrainsLeft = defaultDailyTrains
+		p.DailyRacesLeft = defaultDailyRaces
 		p.LastDailyReset = today
 	}
+}
+
+func (s *Server) consumeDailyTrain(userID string) (*models.PlayerProgress, error) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	p := s.getOrCreateProgress(userID)
+	resetDailyLimitsIfNeeded(p)
+	if p.DailyTrainsLeft <= 0 {
+		return nil, fmt.Errorf("no daily training sessions left; check back after reset")
+	}
+	p.DailyTrainsLeft--
+	return p, nil
+}
+
+func (s *Server) consumeDailyRace(userID string) (*models.PlayerProgress, error) {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	p := s.getOrCreateProgress(userID)
+	resetDailyLimitsIfNeeded(p)
+	if p.DailyRacesLeft <= 0 {
+		return nil, fmt.Errorf("no daily race entries left; check back after reset")
+	}
+	p.DailyRacesLeft--
+	return p, nil
+}
+
+func isBotHorse(h *models.Horse) bool {
+	if h == nil {
+		return false
+	}
+	return h.OwnerID == "bot" || strings.HasPrefix(h.ID, "bot:")
+}
+
+func cloneBotHorse(src *models.Horse, targetELO float64) *models.Horse {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	clone.ID = "bot:" + uuid.New().String()
+	clone.OwnerID = "bot"
+	clone.LastBredAt = time.Time{}
+	clone.CreatedAt = time.Now()
+	clone.TotalEarnings = 0
+	clone.TrainingXP = 0
+	clone.PeakELO = maxFloat64(clone.PeakELO, clone.ELO)
+	clone.ELO = (clone.ELO*0.7 + targetELO*0.3)
+	clone.Fatigue = minFloat64(clone.Fatigue*0.35, 35)
+	clone.Lore = "House entrant deployed by the circuit office when the real stables are asleep."
+	clone.Injury = nil
+	return &clone
+}
+
+func maxFloat64(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minFloat64(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func (s *Server) pickBotOpponents(playerHorse *models.Horse, count int) []*models.Horse {
+	if playerHorse == nil || count <= 0 {
+		return nil
+	}
+	board := s.stables.GetLeaderboard()
+	candidates := make([]*models.Horse, 0, len(board))
+	for _, h := range board {
+		if h == nil || h.Retired || h.ID == playerHorse.ID || isBotHorse(h) {
+			continue
+		}
+		candidates = append(candidates, h)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		return absFloat64(candidates[i].ELO-playerHorse.ELO) < absFloat64(candidates[j].ELO-playerHorse.ELO)
+	})
+	window := candidates
+	if len(window) > 8 {
+		window = window[:8]
+	}
+	chosen := make([]*models.Horse, 0, count)
+	for i := 0; i < count; i++ {
+		template := window[i%len(window)]
+		chosen = append(chosen, cloneBotHorse(template, playerHorse.ELO))
+	}
+	return chosen
+}
+
+func absFloat64(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // getPrestigeTier returns the current prestige tier for the given XP.
@@ -4906,7 +5240,20 @@ func (s *Server) handleGetProgress(w http.ResponseWriter, r *http.Request) {
 	// Return a copy under read lock.
 	s.progressMu.RLock()
 	defer s.progressMu.RUnlock()
-	writeJSON(w, http.StatusOK, p)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"userID":           p.UserID,
+		"loginStreak":      p.LoginStreak,
+		"lastLoginDate":    p.LastLoginDate,
+		"totalLogins":      p.TotalLogins,
+		"dailyTrainsLeft":  p.DailyTrainsLeft,
+		"dailyRacesLeft":   p.DailyRacesLeft,
+		"lastDailyReset":   p.LastDailyReset,
+		"prestigeLevel":    p.PrestigeLevel,
+		"prestigeXP":       p.PrestigeXP,
+		"lifetimeEarnings": p.LifetimeEarnings,
+		"dailyClaimed":     p.LastLoginDate == time.Now().UTC().Format("2006-01-02"),
+		"nextDailyReward":  dailyRewards[(p.LoginStreak)%len(dailyRewards)],
+	})
 }
 
 // handleClaimDailyReward processes a daily login reward claim.
@@ -4942,16 +5289,9 @@ func (s *Server) handleClaimDailyReward(w http.ResponseWriter, r *http.Request) 
 
 	// Determine reward based on streak position in the 7-day cycle.
 	cycleDay := ((p.LoginStreak - 1) % 7) + 1 // 1-7
-	cycleNumber := (p.LoginStreak - 1) / 7    // 0, 1, 2, ...
 
 	reward := dailyRewards[cycleDay-1]
-
-	// After day 7, cycle back with 1.5x multiplier per full cycle completed.
-	multiplier := 1.0
-	for i := 0; i < cycleNumber; i++ {
-		multiplier *= 1.5
-	}
-	actualCummies := int64(float64(reward.Cummies) * multiplier)
+	actualCummies := reward.Cummies
 
 	s.progressMu.Unlock()
 
@@ -4982,11 +5322,12 @@ func (s *Server) handleClaimDailyReward(w http.ResponseWriter, r *http.Request) 
 		claims.Username, p.LoginStreak, actualCummies, reward.Bonus)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"streak":   p.LoginStreak,
-		"day":      cycleDay,
-		"cummies":  actualCummies,
-		"bonus":    reward.Bonus,
-		"progress": p,
+		"streak":       p.LoginStreak,
+		"day":          cycleDay,
+		"cummies":      actualCummies,
+		"bonus":        reward.Bonus,
+		"dailyClaimed": true,
+		"progress":     p,
 	})
 }
 
@@ -5018,12 +5359,18 @@ func (s *Server) handleGetPrestige(w http.ResponseWriter, r *http.Request) {
 		"currentTier": currentTier,
 		"xp":          xp,
 		"allTiers":    prestigeTiers,
+		"tier":        currentTier.Name,
+		"tierName":    currentTier.Name,
+		"level":       currentTier.Level,
 	}
 	if nextTier != nil {
 		resp["nextTier"] = nextTier
 		resp["xpToNext"] = nextTier.RequiredXP - xp
+		resp["nextTierXP"] = nextTier.RequiredXP
 	} else {
 		resp["maxed"] = true
+		resp["xpToNext"] = int64(0)
+		resp["nextTierXP"] = xp
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -8766,6 +9113,22 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, "stallion not found")
 		return
 	}
+	if stallion.Retired || mare.Retired {
+		writeError(w, http.StatusBadRequest, "retired horses cannot breed")
+		return
+	}
+
+	cooldown := time.Duration(breedingCooldownHours) * time.Hour
+	if !stallion.LastBredAt.IsZero() && time.Since(stallion.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(stallion.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stallion %q is on breeding cooldown (%.0f minutes remaining)", stallion.Name, remaining.Minutes()))
+		return
+	}
+	if !mare.LastBredAt.IsZero() && time.Since(mare.LastBredAt) < cooldown {
+		remaining := cooldown - time.Since(mare.LastBredAt)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("mare %q is on breeding cooldown (%.0f minutes remaining)", mare.Name, remaining.Minutes()))
+		return
+	}
 
 	// Get the breeder record.
 	if s.breederRepo == nil {
@@ -8787,6 +9150,11 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 	stable := s.getStableForUser(claims.UserID)
 	if stable == nil {
 		writeError(w, http.StatusBadRequest, "you don't have a stable")
+		return
+	}
+	ownerTier := s.getPrestigeTierForUser(stable.OwnerID)
+	if len(stable.Horses) >= ownerTier.MaxHorses {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("stable is at max capacity (%d horses) for prestige level %q", ownerTier.MaxHorses, ownerTier.Name))
 		return
 	}
 	if breeder.Fee > 0 && stable.Cummies < breeder.Fee {
@@ -8820,6 +9188,12 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to add foal: %v", err))
 		return
 	}
+	stallion.LastBredAt = time.Now()
+	mare.LastBredAt = time.Now()
+	s.syncHorseToStable(stallion)
+	s.syncHorseToStable(mare)
+	s.persistHorse(ctx, stallion)
+	s.persistHorse(ctx, mare)
 
 	// Update breeder stats.
 	breeder.BreedCount++

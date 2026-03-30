@@ -14,6 +14,9 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Bets and challenges now use authenticated ownership checks end to end.
 - Challenge history and betting resolution now render correctly in the SPA.
 - The SPA now includes an in-world lore codex page plus inline lore tooltips on core racing, genetics, progression, market, achievement, challenge, and betting surfaces.
+- Progression now has a real daily action loop for authenticated players: training and race entries are limited per day and surfaced in the dashboard.
+- Authenticated quick races now guarantee solo progression by auto-filling the field with matched computer-controlled opponents when needed.
+- The challenge page now supports a `CPU Arena` fallback for immediate 1v1 progression when no other player is available.
 
 ## Current Rules
 
@@ -24,6 +27,8 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 - Tutorial state is currently persisted in browser local storage and can be replayed from the in-app help button.
 - Lore help follows a progressive disclosure model: practical UI text first, short mechanic-plus-fiction tooltip second, full codex entry third.
 - Lore wording is now normalized around these terms: `Sappho Score` is the numeric rating, `Sappho Scale` is the broader institutional doctrine; `Geoffrussy` is the platform governance authority; `B.U.R.P.` is the anomaly-response bureau.
+- Prestige thresholds were pulled forward for better early and mid-game pacing, while higher tiers still ramp sharply.
+- Stud-market and breeder-stallion breeding now respect stable-cap and breeding-cooldown rules just like direct breeding.
 
 ## Requirements
 
@@ -71,3 +76,4 @@ go build ./...
 - Frontend is a single-file SPA at `web/index.html`.
 - The first-session tutorial intentionally focuses on the core loop first: stable -> horse -> training -> race -> results, then previews breeding, market, competition, and replay/share.
 - The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
+- Authenticated progression state is still server-memory only for now; daily limits and prestige survive requests but not server restarts.
