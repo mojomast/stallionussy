@@ -10597,30 +10597,44 @@ function isRedSuit(suit) {
 }
 
 // ─── CASINO: Render slot reels (3 rows x 5 columns) ─────────────────────
+// Payline patterns mirror the backend slotPaylines (row index per reel).
+const SLOT_PAYLINE_PATTERNS = [
+  [1, 1, 1, 1, 1], // 1: Middle row
+  [0, 0, 0, 0, 0], // 2: Top row
+  [2, 2, 2, 2, 2], // 3: Bottom row
+  [0, 1, 2, 1, 0], // 4: V-shape
+  [2, 1, 0, 1, 2], // 5: Inverted V
+  [1, 0, 1, 0, 1], // 6: Zigzag up
+  [1, 2, 1, 2, 1], // 7: Zigzag down
+  [0, 0, 1, 2, 2], // 8: Diagonal down
+  [2, 2, 1, 0, 0], // 9: Diagonal up
+];
+
 function renderSlotReels(spin) {
   const reelsEl = $('#slot-reels');
   if (!reelsEl) return;
 
-  // The server may return symbols as a flat array or a 2D grid.
-  // We support both: flat array of 15 (row-major 3x5) or grid[row][col]
-  const grid = spin.grid || spin.reelGrid || null;
-  const flatSymbols = spin.symbols || [];
-  const winCells = new Set(); // Set of "row,col" strings for winner highlighting
+  // The backend sends reels as column-major: reels[reel][row] (5 reels × 3 rows).
+  // We also accept a row-major grid[row][col] or flat 15-symbol array as fallback.
+  const reelsData = spin.reels || null;        // column-major [5][3]
+  const flatSymbols = spin.symbols || [];       // backward-compat: middle row only (5 items)
+  const winCells = new Set();  // Set of "row,col" strings for winner highlighting
   const scatterCells = new Set();
   const wildCells = new Set();
 
-  // Build a 3x5 grid from whatever data we have
+  // Build a 3x5 grid (row-major: cellData[row][col])
   const rows = 3, cols = 5;
   const cellData = [];
   for (let r = 0; r < rows; r++) {
     cellData[r] = [];
     for (let c = 0; c < cols; c++) {
-      if (grid && grid[r] && grid[r][c] !== undefined) {
-        cellData[r][c] = String(grid[r][c]);
+      if (reelsData && reelsData[c] && reelsData[c][r] !== undefined) {
+        // Transpose column-major reels[reel][row] → cellData[row][reel]
+        cellData[r][c] = String(reelsData[c][r]);
       } else if (flatSymbols.length >= rows * cols) {
         cellData[r][c] = String(flatSymbols[r * cols + c]);
       } else if (flatSymbols.length === cols && r === 1) {
-        // Single-row result: center row only
+        // Single-row backward-compat: center row only
         cellData[r][c] = String(flatSymbols[c]);
       } else {
         cellData[r][c] = '—';
@@ -10628,25 +10642,48 @@ function renderSlotReels(spin) {
     }
   }
 
-  // Mark winner cells from payline details
-  const paylines = spin.paylines || spin.paylineResults || [];
+  // Mark winner cells by reconstructing positions from payline patterns.
+  // Each PaylineResult has lineNum (1-based) and match (3/4/5 symbols matched
+  // left-to-right). We use the pattern to find which (row, col) cells are part
+  // of the winning match.
+  const paylines = spin.paylines || [];
   paylines.forEach(pl => {
-    if (pl.win || pl.payout > 0) {
-      (pl.positions || pl.cells || []).forEach(pos => {
-        if (Array.isArray(pos)) winCells.add(`${pos[0]},${pos[1]}`);
-        else if (pos.row !== undefined) winCells.add(`${pos.row},${pos.col}`);
-      });
+    if (pl.payout > 0) {
+      const patternIdx = (pl.lineNum || 1) - 1;
+      const pattern = SLOT_PAYLINE_PATTERNS[patternIdx];
+      if (pattern) {
+        const matchLen = pl.match || 0;
+        for (let reel = 0; reel < matchLen && reel < 5; reel++) {
+          winCells.add(`${pattern[reel]},${reel}`);
+        }
+      }
     }
   });
 
   // Mark scatter/wild cells
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const sym = cellData[r][c].toLowerCase();
-      if (sym === 'scatter' || sym === '⭐' || sym.includes('scatter')) scatterCells.add(`${r},${c}`);
-      if (sym === 'wild' || sym === '🃏' || sym.includes('wild')) wildCells.add(`${r},${c}`);
+      const sym = cellData[r][c].toUpperCase();
+      if (sym === 'YOGURT' || sym.includes('SCATTER')) scatterCells.add(`${r},${c}`);
+      if (sym === 'WILD_MARE' || sym.includes('WILD')) wildCells.add(`${r},${c}`);
     }
   }
+
+  // Pretty-print symbol names for display in grid cells.
+  const SLOT_SYMBOL_DISPLAY = {
+    'WILD_MARE': '🃏 WILD',
+    'GOLDEN_STALLION': '🏇 STALLION',
+    'CHAMPION_TROPHY': '🏆 TROPHY',
+    'RACING_SADDLE': '🏇 SADDLE',
+    'LUCKY_HORSESHOE': '🧲 SHOE',
+    'SUGAR_CUBE': '🧁 SUGAR',
+    'CARROT': '🥕 CARROT',
+    'OATS': '🌾 OATS',
+    'BELL': '🔔 BELL',
+    'CHERRY': '🍒 CHERRY',
+    'YOGURT': '⭐ YOGURT',
+    'SKULL': '💀 SKULL',
+  };
 
   // Render columns (each reel is a column)
   let html = '';
@@ -10658,7 +10695,8 @@ function renderSlotReels(spin) {
       if (winCells.has(key)) cls += ' winner';
       if (scatterCells.has(key)) cls += ' scatter';
       if (wildCells.has(key)) cls += ' wild';
-      html += `<div class="${cls}">${escHtml(cellData[r][c])}</div>`;
+      const displayText = SLOT_SYMBOL_DISPLAY[cellData[r][c]] || escHtml(cellData[r][c]);
+      html += `<div class="${cls}">${displayText}</div>`;
     }
     html += '</div>';
   }
@@ -10698,7 +10736,7 @@ async function loadCasinoPage() {
     try {
       const jpData = await api('/casino/slots/jackpot');
       if (jackpotEl) {
-        const jpAmount = jpData.jackpot || jpData.jackpotAmount || jpData.amount || 0;
+        const jpAmount = jpData.jackpotPool || jpData.jackpot || jpData.jackpotAmount || jpData.amount || 0;
         jackpotEl.textContent = jpAmount.toLocaleString() + ' CHIPS';
       }
     } catch (_jpErr) {
@@ -10958,12 +10996,13 @@ async function spinSlots() {
     setTimeout(() => { if (machineEl) machineEl.classList.remove('spin-animation'); }, 500);
 
     // Payline results
-    const paylines = spin.paylines || spin.paylineResults || [];
+    const paylines = spin.paylines || [];
     if (paylinesEl) {
       if (paylines.length > 0) {
         paylinesEl.innerHTML = paylines.map(pl => {
-          if (pl.payout > 0 || pl.win) {
-            return `<div class="slot-payline-win">Line ${pl.line || '?'}: ${escHtml(pl.symbol || pl.description || '???')} × ${pl.count || '?'} → +${pl.payout || 0} chips</div>`;
+          if (pl.payout > 0) {
+            const sym = Array.isArray(pl.symbols) ? pl.symbols[0] : (pl.symbol || '???');
+            return `<div class="slot-payline-win">Line ${pl.lineNum || '?'}: ${escHtml(sym)} × ${pl.match || '?'} → +${pl.payout || 0} chips</div>`;
           }
           return '';
         }).filter(Boolean).join('');
