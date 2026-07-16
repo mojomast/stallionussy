@@ -8846,16 +8846,25 @@ async function viewTournament(tourneyId) {
   contentEl.innerHTML = '<span class="loading cursor-blink">Loading tournament...</span>';
 
   try {
-    const t = await api(`/tournaments/${tourneyId}`);
+    const data = await api(`/tournaments/${tourneyId}`);
+    // R-1: GET /api/tournaments/{id} responds {tournament, standings} — the
+    // old code read fields off the top level, so status/name/rounds were all
+    // undefined and the register/run-round UI never rendered.
+    const t = (data && data.tournament) || data;
     if (!t) {
       contentEl.innerHTML = '<span class="text-red">Tournament not found.</span>';
       return;
     }
 
     const name = t.name || `Tournament ${(t.id || '').substring(0, 8)}`;
-    const standings = t.standings || [];
+    const standings = (data && data.standings) || t.standings || [];
     const isOpen = (t.status || '').toLowerCase() === 'open';
     const isInProgress = (t.status || '').toLowerCase() === 'inprogress';
+    // R-8: the server only lets the organizer (or the admin) run rounds —
+    // don't offer the button to everyone else.
+    const isOrganizer = !t.created_by
+      || t.created_by === getOwnerID()
+      || (currentUser && currentUser.username === 'mojo');
 
     let html = `<h3>🏆 ${escHtml(name)} ${renderStatusBadge(t.status || 'Open')}</h3>
       <div style="font-size:12px;margin:8px 0;">
@@ -8916,12 +8925,14 @@ async function viewTournament(tourneyId) {
         <div id="tourney-reg-msg" class="text-dim" style="font-size:11px;"></div>`;
     }
 
-    // Run next round button (if in progress or open with enough entrants)
-    if (isOpen || isInProgress) {
+    // Run next round button (organizer only — R-8; the server 403s everyone else)
+    if ((isOpen || isInProgress) && isOrganizer) {
       html += `<div style="margin-top:12px;">
         <button class="term-btn amber" onclick="window.SU.runTournamentRound('${escHtml(tourneyId)}')">▶ RUN NEXT ROUND</button>
         <span id="tourney-round-msg" class="text-dim" style="font-size:11px;margin-left:8px;"></span>
       </div>`;
+    } else if (isOpen || isInProgress) {
+      html += `<div class="text-dim" style="margin-top:12px;font-size:11px;">Waiting on the organizer to run the next round...</div>`;
     }
 
     contentEl.innerHTML = html;
@@ -8967,12 +8978,24 @@ async function runTournamentRound(tourneyId) {
   }
 
   try {
-    await api(`/tournaments/${tourneyId}/race`, { method: 'POST' });
+    const result = await api(`/tournaments/${tourneyId}/race`, { method: 'POST' });
     if (msgEl) {
       msgEl.textContent = 'Round complete!';
       msgEl.style.color = 'var(--fg)';
     }
     viewTournament(tourneyId);
+    // R-7: the response carries the full race ({race, narrative,
+    // narrative_indexed, weather, standings}) — show the horses actually
+    // racing (same flow as CPU challenges) instead of a bare "Round complete!".
+    const raceObj = result && result.race;
+    if (raceObj && raceObj.entries) {
+      currentRace = raceObj;
+      currentWeather = result.weather || null;
+      location.hash = '#race';
+      setTimeout(() => {
+        simulateLocalRace(raceObj, result.narrative || [], result.narrative_indexed || []);
+      }, 150);
+    }
   } catch (e) {
     if (msgEl) {
       msgEl.textContent = `Error: ${e.message}`;
