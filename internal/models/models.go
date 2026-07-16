@@ -604,7 +604,12 @@ type BettingPool struct {
 	Bets      []Bet          `json:"bets"`
 	HouseCut  int64          `json:"houseCut"`
 	OpenedAt  time.Time      `json:"openedAt"`
-	ClosedAt  time.Time      `json:"closedAt"`
+	// ClosesAt is the betting deadline for pools that close on a timer
+	// (exhibition pools). Zero for pools closed manually by their race flow.
+	// Derived from OpenedAt + the server's betting window, so it is not
+	// persisted — rehydration recomputes it.
+	ClosesAt time.Time `json:"closesAt,omitzero"`
+	ClosedAt time.Time `json:"closedAt"`
 }
 
 // BettingPool kinds. Exhibition pools are user-opened and self-resolve on a

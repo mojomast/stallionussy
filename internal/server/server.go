@@ -1587,9 +1587,13 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 		// C-3: fund the purse from the house treasury instead of minting it.
 		// If the house can't cover the full purse, the race runs for less.
 		purse := s.debitHouseFunds(r.Context(), quickRacePurse)
-		race := racussy.NewRace(selected, trackType, purse)
-		s.openBettingPool(race.ID, selected, models.PoolKindRace)
-		result := s.runRace(selected, trackType, purse, race.ID)
+		// R-2: quick races are simulated synchronously in this same request,
+		// so a betting pool would open and close in microseconds — every bet
+		// bounced with "betting is closed" while the pool-opened broadcast
+		// popped a modal over the race on every connected client. Betting on
+		// quick races is intentionally gone; exhibition pools (with a real
+		// betting window) are the way to wager.
+		result := s.runRace(selected, trackType, purse)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -1632,11 +1636,11 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	// Guest quick races remain spectator-friendly and do not feed progression.
 	// C-3: they carry no purse — the previous flat purse was minted from
 	// nothing and paid out to random stables' horses.
+	// R-2: no betting pool either — the race simulates synchronously, so the
+	// pool would close before anyone could possibly bet.
 	purse := int64(0)
 
-	race := racussy.NewRace(selected, trackType, purse)
-	s.openBettingPool(race.ID, selected, models.PoolKindRace)
-	result := s.runRace(selected, trackType, purse, race.ID)
+	result := s.runRace(selected, trackType, purse)
 	writeJSON(w, http.StatusOK, result)
 }
 
@@ -6959,6 +6963,9 @@ func (s *Server) loadFromDB() {
 				if window <= 0 {
 					window = defaultBettingWindow
 				}
+				// ClosesAt is derived, not persisted — recompute it so the
+				// pool JSON keeps its countdown after a restart (R-3).
+				pool.ClosesAt = pool.OpenedAt.Add(window)
 				remaining := time.Until(pool.OpenedAt.Add(window))
 				const grace = 5 * time.Second
 				if remaining < grace || pool.Status == "closed" {
@@ -7226,6 +7233,16 @@ func (s *Server) openBettingPool(raceID string, horses []*models.Horse, kind str
 		Horses:   bettingHorses,
 		OpenedAt: time.Now(),
 	}
+	// Exhibition pools close on a timer, so clients get a real deadline to
+	// count down against (R-3). Race/tournament pools close when their race
+	// flow says so — no fixed deadline.
+	if kind == models.PoolKindExhibition {
+		window := s.bettingWindow
+		if window <= 0 {
+			window = defaultBettingWindow
+		}
+		pool.ClosesAt = pool.OpenedAt.Add(window)
+	}
 	s.bettingPools[raceID] = pool
 	s.persistBettingPool(context.Background(), pool)
 
@@ -7233,6 +7250,8 @@ func (s *Server) openBettingPool(raceID string, horses []*models.Horse, kind str
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type":   "betting_pool_opened",
 		"raceID": raceID,
+		"kind":   kind,
+		"pool":   pool,
 		"horses": bettingHorses,
 	})
 	s.hub.BroadcastJSON(map[string]interface{}{
@@ -7429,7 +7448,29 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 	pool.Status = "resolved"
 
 	if len(pool.Bets) == 0 {
-		// No bets placed — nothing to resolve.
+		// No bets placed — no money to move, but still tell clients the pool
+		// is done (R-2: pools must always resolve visibly, otherwise any UI
+		// tracking the pool waits forever).
+		winnerHorseName := ""
+		for _, bh := range pool.Horses {
+			if bh.HorseID == winnerHorseID {
+				winnerHorseName = bh.HorseName
+				break
+			}
+		}
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":            "betting_resolved",
+			"raceID":          raceID,
+			"winnerHorseID":   winnerHorseID,
+			"winnerHorseName": winnerHorseName,
+			"winnerName":      winnerHorseName,
+			"totalPool":       int64(0),
+			"houseCut":        int64(0),
+			"distributable":   int64(0),
+			"winnerCount":     0,
+			"bets":            []models.Bet{},
+			"payouts":         []models.Bet{},
+		})
 		delete(s.bettingPools, raceID)
 		s.persistBettingPool(context.Background(), pool)
 		return 0
@@ -7733,6 +7774,24 @@ func (s *Server) resolveExhibitionPool(raceID string) {
 		s.refundBettingPool(raceID)
 		return
 	}
+
+	// R-3: the race that decides the bets must be watchable. Cache the full
+	// result so GET /api/races/{raceID} serves the replay, and broadcast the
+	// tick-by-tick replay to connected spectators — exactly like tournament
+	// rounds do. (Still zero stat/ELO/earnings side effects: the ponies race
+	// for the love of the game.)
+	narrativeIndexed := racussy.GenerateRaceNarrativeIndexed(race, weather)
+	narrative := make([]string, len(narrativeIndexed))
+	for i, nl := range narrativeIndexed {
+		narrative[i] = nl.Text
+	}
+	s.cacheRaceResult(race.ID, &raceResult{
+		Race:             race,
+		Narrative:        narrative,
+		NarrativeIndexed: narrativeIndexed,
+		Weather:          weather,
+	})
+	go s.broadcastRaceReplay(race, narrativeIndexed)
 
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type": "chat_system",

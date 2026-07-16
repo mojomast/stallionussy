@@ -3096,6 +3096,16 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
     </div>
   </div>
 
+  <div id="exhibition-betting" class="mb-16">
+    <h3>// EXHIBITION BETTING — 🎰 THE SPECTATOR'S LOOP <span class="has-tooltip"><span class="lore-chip">BETTING</span><span class="tooltip-text">What it does: opens a pari-mutuel pool on an exhibition field — 60 seconds of betting, then the ponies run it live. Why it matters: no stats or fatigue are touched, so it is pure spectacle and pure wagering. Flavor: Geoffrussy keeps 10% and calls it infrastructure.</span></span></h3>
+    <div class="text-dim" style="font-size:11px;margin-bottom:6px;">Open a pool, bet during the countdown, then watch the field decide it. Exhibition races never touch a horse's record.</div>
+    <div class="form-row" style="gap:8px;">
+      <button class="term-btn" id="btn-open-exhibition">🎰 OPEN EXHIBITION POOL</button>
+      <span id="exhibition-msg" class="text-dim" style="font-size:11px;"></span>
+    </div>
+    <div id="active-pools-list" class="mt-8"><span class="text-dim">No open betting pools.</span></div>
+  </div>
+
   <div id="race-live" class="hidden">
     <hr>
     <h3 id="race-live-title">// RACE IN PROGRESS</h3>
@@ -5183,14 +5193,22 @@ function handleWsMessage(msg) {
       if (getPage() === 'challenges') loadChallenges();
       break;
     case 'betting_pool_opened':
-      showToast(`🎰 Betting open for race! Place your bets...`, 'betting');
+      // R-2: never auto-open the betting modal — it used to cover the race
+      // animation on every connected client. Betting is opt-in via the
+      // EXHIBITION BETTING panel on the race page.
+      if ((msg.kind || msg.pool?.kind) === 'exhibition') {
+        showToast(`🎰 Exhibition betting pool opened! Get your bets in on the RACE page.`, 'betting');
+      } else {
+        showToast(`🎰 Betting open for the next race!`, 'betting');
+      }
       onBettingPoolOpened(msg);
       break;
     case 'betting_update':
       onBettingUpdate(msg);
       break;
     case 'betting_pool_closed':
-      showToast(`🎰 Betting closed! Race starting...`, 'betting');
+      showToast(`🎰 Betting closed! The field is off...`, 'betting');
+      onBettingPoolClosed(msg);
       break;
     case 'betting_resolved':
       showToast(`🎰 Bets resolved! Pool: ${msg.totalPool || 0}₵`, 'betting');
@@ -7950,6 +7968,7 @@ async function loadRacePage() {
   $('#race-track').onchange = updateTrackDesc;
 
   renderRaceHorseList();
+  fetchActivePools();
   setTimeout(checkTutorialProgress, 50);
 }
 
@@ -9680,20 +9699,198 @@ function challengeStable(stableId, stableName) {
 }
 
 // ─── BETTING UI ────────────────────────────────────────────────────────────
+// R-2/R-3: the betting modal only ever opens on explicit user action. WS
+// events keep the exhibition panel + any open modal in sync instead.
+
 function onBettingPoolOpened(msg) {
-  const pool = msg.pool || msg;
-  activeBettingPool = pool;
+  // Refresh the exhibition panel if the player is looking at it.
+  if (getPage() === 'race') fetchActivePools();
+}
 
-  // Show the betting modal
+function onBettingPoolClosed(msg) {
+  const raceID = msg.raceID || msg.race_id;
+  if (getPage() === 'race') fetchActivePools();
+  // If the modal is showing this pool, lock it: no more bets.
+  if (!activeBettingPool) return;
+  if ((activeBettingPool.raceID || activeBettingPool.race_id) !== raceID) return;
   const modal = $('#betting-modal');
-  if (modal) modal.style.display = 'flex';
-
+  if (!modal || modal.style.display === 'none') return;
+  $$('#betting-horses .term-btn').forEach(b => { b.disabled = true; });
+  const msgEl = $('#betting-msg');
+  if (msgEl) {
+    msgEl.textContent = 'BETTING CLOSED — the field is off! Results incoming...';
+    msgEl.style.color = 'var(--amber)';
+  }
   const infoEl = $('#betting-pool-info');
-  if (infoEl) {
-    infoEl.innerHTML = `Race: ${escHtml(String(pool.raceID || pool.race_id || '?'))} | Status: OPEN ${renderLoreHint('betting', 'POOL LORE')}`;
+  if (infoEl) infoEl.innerHTML = `Race: ${escHtml(String(raceID || '?'))} | Status: CLOSED`;
+}
+
+// Opens the betting modal for a specific pool (user-initiated).
+async function openBettingModalForPool(raceID) {
+  try {
+    const pool = await api(`/betting/pools/${raceID}`);
+    activeBettingPool = pool;
+    const modal = $('#betting-modal');
+    if (modal) modal.style.display = 'flex';
+    updateBettingModalInfo();
+    renderBettingHorses(pool);
+  } catch (e) {
+    showToast(`Could not open pool: ${e.message}`, 'betting');
+  }
+}
+
+function updateBettingModalInfo() {
+  const infoEl = $('#betting-pool-info');
+  if (!infoEl || !activeBettingPool) return;
+  const pool = activeBettingPool;
+  const raceID = pool.raceID || pool.race_id || '?';
+  const status = (pool.status || 'open').toUpperCase();
+  let countdown = '';
+  const secs = poolSecondsLeft(pool);
+  if (secs !== null && status === 'OPEN') {
+    countdown = secs > 0 ? ` | Closes in <span class="text-amber">${secs}s</span>` : ' | <span class="text-amber">RACING...</span>';
+  }
+  infoEl.innerHTML = `Race: ${escHtml(String(raceID))} | Status: ${status}${countdown} ${renderLoreHint('betting', 'POOL LORE')}`;
+}
+
+// Seconds until a pool's betting deadline, or null if it has none.
+function poolSecondsLeft(pool) {
+  const closesAt = pool && (pool.closesAt || pool.closes_at);
+  if (!closesAt || String(closesAt).startsWith('0001')) return null;
+  return Math.max(0, Math.ceil((new Date(closesAt).getTime() - Date.now()) / 1000));
+}
+
+// ─── EXHIBITION BETTING PANEL (race page) ──────────────────────────────────
+let activePoolsCache = [];
+let activePoolsTicker = null;
+
+async function fetchActivePools() {
+  try {
+    const pools = await api('/betting/active');
+    activePoolsCache = Array.isArray(pools) ? pools : [];
+  } catch (e) {
+    activePoolsCache = [];
+  }
+  renderActivePools();
+}
+
+function renderActivePools() {
+  const listEl = $('#active-pools-list');
+  if (!listEl) return;
+
+  if (activePoolsCache.length === 0) {
+    listEl.innerHTML = '<span class="text-dim">No open betting pools. Open one and summon the crowd.</span>';
+    stopActivePoolsTicker();
+    return;
   }
 
-  renderBettingHorses(pool);
+  let html = '';
+  activePoolsCache.forEach(pool => {
+    const raceID = pool.raceID || pool.race_id || '?';
+    const horses = pool.horses || [];
+    const secs = poolSecondsLeft(pool);
+    const countdown = secs === null
+      ? '<span class="text-dim">closes at race time</span>'
+      : (secs > 0
+        ? `closes in <span class="text-amber pool-countdown" data-race="${escHtml(String(raceID))}">${secs}s</span>`
+        : '<span class="text-amber">RACING...</span>');
+    const names = horses.slice(0, 4).map(h => escHtml(h.horseName || h.horse_name || '?')).join(', ')
+      + (horses.length > 4 ? ` +${horses.length - 4} more` : '');
+    html += `<div class="race-card" style="margin-bottom:6px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div>
+          <span style="font-weight:bold;">🎰 ${escHtml(String(raceID).substring(0, 14))}</span>
+          <span class="text-dim" style="font-size:10px;margin-left:8px;">${horses.length} horses | pool ₵${(pool.totalPool || 0).toLocaleString()}</span>
+        </div>
+        <div style="font-size:11px;">${countdown}</div>
+        <button class="term-btn sm amber" onclick="window.SU.openBettingModalForPool('${escHtml(String(raceID))}')">PLACE BET</button>
+      </div>
+      <div class="text-dim" style="font-size:10px;margin-top:4px;">${names}</div>
+    </div>`;
+  });
+  listEl.innerHTML = html;
+  startActivePoolsTicker();
+}
+
+function startActivePoolsTicker() {
+  if (activePoolsTicker) return;
+  activePoolsTicker = setInterval(() => {
+    if (getPage() !== 'race') { stopActivePoolsTicker(); return; }
+    let anyExpired = false;
+    activePoolsCache.forEach(pool => {
+      const secs = poolSecondsLeft(pool);
+      if (secs === null) return;
+      const el = document.querySelector(`.pool-countdown[data-race="${(pool.raceID || pool.race_id || '')}"]`);
+      if (el) el.textContent = `${secs}s`;
+      if (secs <= 0) anyExpired = true;
+    });
+    // Keep any open betting modal countdown fresh too.
+    updateBettingModalInfo();
+    if (anyExpired) fetchActivePools();
+  }, 1000);
+}
+
+function stopActivePoolsTicker() {
+  if (activePoolsTicker) {
+    clearInterval(activePoolsTicker);
+    activePoolsTicker = null;
+  }
+}
+
+// Opens a new exhibition pool with a random field of 4-6 non-retired horses.
+async function openExhibitionPool() {
+  const msgEl = $('#exhibition-msg');
+  if (isGuest) {
+    if (msgEl) { msgEl.textContent = 'Log in to open a betting pool.'; msgEl.style.color = 'var(--red)'; }
+    return;
+  }
+  try {
+    if (allHorses.length === 0) {
+      const data = await api('/horses');
+      allHorses = Array.isArray(data) ? data : [];
+    }
+    const eligible = allHorses.filter(h => !h.retired);
+    if (eligible.length < 2) {
+      if (msgEl) { msgEl.textContent = 'Not enough horses in the world for an exhibition.'; msgEl.style.color = 'var(--red)'; }
+      return;
+    }
+    const shuffled = [...eligible].sort(() => Math.random() - 0.5);
+    const field = shuffled.slice(0, Math.min(4 + Math.floor(Math.random() * 3), shuffled.length));
+    const raceID = `exh-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+    await api('/betting/pools', {
+      method: 'POST',
+      body: { raceID, horseIDs: field.map(h => h.id) },
+    });
+    if (msgEl) {
+      msgEl.textContent = 'Pool open! The crowd gathers...';
+      msgEl.style.color = 'var(--fg)';
+    }
+    await fetchActivePools();
+    openBettingModalForPool(raceID);
+  } catch (e) {
+    if (msgEl) { msgEl.textContent = `Error: ${e.message}`; msgEl.style.color = 'var(--red)'; }
+  }
+}
+
+// Fetches a finished race replay (e.g. a resolved exhibition) and plays it.
+async function watchRace(raceID) {
+  try {
+    const payload = await api(`/races/${raceID}`);
+    const raceObj = payload.race || payload;
+    if (!raceObj || !raceObj.entries) {
+      showToast('Replay not available for this race.', 'betting');
+      return;
+    }
+    closeBettingModal();
+    currentRace = raceObj;
+    currentWeather = payload.weather || null;
+    location.hash = '#race';
+    setTimeout(() => {
+      simulateLocalRace(raceObj, payload.narrative || [], payload.narrative_indexed || []);
+    }, 150);
+  } catch (e) {
+    showToast(`Replay error: ${e.message}`, 'betting');
+  }
 }
 
 function renderBettingHorses(pool) {
@@ -9726,9 +9923,13 @@ function renderBettingHorses(pool) {
 }
 
 function onBettingUpdate(msg) {
-  // Update odds in the betting panel
+  // Update odds in the betting panel (only for the pool the modal shows).
+  if (getPage() === 'race') fetchActivePools();
   if (!activeBettingPool) return;
   const pool = msg.pool || msg;
+  const modalRace = activeBettingPool.raceID || activeBettingPool.race_id;
+  const updateRace = msg.raceID || msg.race_id || pool.raceID || pool.race_id;
+  if (modalRace && updateRace && modalRace !== updateRace) return;
   if (pool.horses || pool.entries) {
     activeBettingPool.horses = pool.horses || pool.entries;
     renderBettingHorses(activeBettingPool);
@@ -9736,17 +9937,34 @@ function onBettingUpdate(msg) {
 }
 
 function onBettingResolved(msg) {
+  // Keep the exhibition panel in sync (the pool is gone from /active now).
+  if (getPage() === 'race') fetchActivePools();
+
   const resultsEl = $('#betting-results');
   const contentEl = $('#betting-results-content');
   if (!resultsEl || !contentEl) return;
 
+  // Only paint results into the modal when it is showing this pool —
+  // otherwise the toast is enough (R-2: no surprise modals).
+  const modal = $('#betting-modal');
+  const modalRace = activeBettingPool && (activeBettingPool.raceID || activeBettingPool.race_id);
+  const resolvedRace = msg.raceID || msg.race_id || '';
+  if (!modal || modal.style.display === 'none' || (modalRace && resolvedRace && modalRace !== resolvedRace)) {
+    if (!modalRace || modalRace === resolvedRace) activeBettingPool = null;
+    return;
+  }
+
   resultsEl.classList.remove('hidden');
 
+  const raceID = resolvedRace;
   const winner = msg.winnerName || msg.winnerHorseName || msg.winner_name || '?';
   const totalPool = msg.totalPool || msg.total_pool || 0;
   const payouts = msg.payouts || msg.bets || [];
 
   let html = `<div class="mb-8"><span class="text-amber">Winner: ${escHtml(winner)}</span> | Pool: ₵${totalPool.toLocaleString()}</div>`;
+  if (raceID) {
+    html += `<div class="mb-8"><button class="term-btn sm amber" onclick="window.SU.watchRace('${escHtml(String(raceID))}')">▶ WATCH THE RACE</button></div>`;
+  }
 
   if (payouts.length > 0) {
     html += '<table class="term-table"><thead><tr><th>USER</th><th>BET</th><th>PAYOUT</th></tr></thead><tbody>';
@@ -11424,6 +11642,7 @@ function bindEvents() {
   // Racing
   $('#btn-start-race').addEventListener('click', startRace);
   $('#btn-quick-race').addEventListener('click', quickRace);
+  $('#btn-open-exhibition').addEventListener('click', openExhibitionPool);
 
   // Market
   $('#btn-create-listing').addEventListener('click', createListing);
@@ -11508,6 +11727,9 @@ window.SU = {
   declineChallenge,
   placeBet,
   closeBettingModal,
+  openBettingModalForPool,
+  openExhibitionPool,
+  watchRace,
   startTutorial,
   skipTutorial,
   replayTutorial,
