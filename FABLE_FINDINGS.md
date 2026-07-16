@@ -4,7 +4,9 @@ Codebase archaeology of **STALLIONRUN / StallionUSSY** — a comedy horse breedi
 
 > Read-only audit. No code was modified.
 >
-> **Fix pass (branch `fable/full-improvement-pass`, 2026-07-16):** all CRITICAL and HIGH findings are fixed and annotated inline with `[FIXED: <sha>]`. Two related bugs discovered during fixing were folded into their parent findings: tournament registration double-counted every entry fee into the prize pool (fixed with C-2), and the betting house cut evaporated instead of going to the house (now banks into the House of USSY treasury, which funds the C-3 purses). MEDIUM/LOW findings remain open for a later pass.
+> **Fix pass (branch `fable/full-improvement-pass`, 2026-07-16):** all CRITICAL and HIGH findings are fixed and annotated inline with `[FIXED: <sha>]`. Two related bugs discovered during fixing were folded into their parent findings: tournament registration double-counted every entry fee into the prize pool (fixed with C-2), and the betting house cut evaporated instead of going to the house (now banks into the House of USSY treasury, which funds the C-3 purses).
+>
+> **Phase 3 (same branch, 2026-07-16):** all MEDIUM findings are resolved and annotated inline (`[FIXED: <sha>]`, `[ALREADY-FIXED]`, or `[WONTFIX: reason]`), and a wiring & balance pass covered every gameplay action end-to-end — see the "Phase 3 — Wiring & Balance Pass" section at the bottom. LOW findings remain open.
 
 ## Severity Summary
 
@@ -152,47 +154,60 @@ Fix: add `sm.MoveHorse(offer.HorseID, offer.FromStableID, offer.ToStableID)` to 
 
 ### MEDIUM
 
-#### M-1 — Casino daily chip grant is a free 400-cummies/day faucet
+#### M-1 [FIXED: 06832d4] — Casino daily chip grant is a free 400-cummies/day faucet
 `casinoDailyChipGrant` = 40 chips/day (`casino.go:23`), granted on casino overview/exchange (`casino.go:949`), cashable at 10 cummies/chip (`casino.go:205`) = 400 free cummies/day/user with zero play. Design faucet — flag for economy balance.
+*Resolution:* the grant is now sponsored by the House of USSY treasury at cashout value (400 cummies/grant); a broke house grants nothing and the player's day is not consumed. Bounded by the treasury, which recoups from betting cuts and lost bot wagers.
 
-#### M-2 — Slot jackpot pays at least 1000 chips from a pool seeded at 500 (can exceed contributions)
+#### M-2 [FIXED: 06832d4] — Slot jackpot pays at least 1000 chips from a pool seeded at 500 (can exceed contributions)
 `slotJackpotMinPayout`=1000 while `slotJackpotSeed`=500 (`casino.go:109`,`112`); the jackpot win path forces `pool = max(pool, 1000)` (`casino.go:653-656`). Immediately after a restart (pool=500) a jackpot mints 1000 from nothing. Also the jackpot pool is RAM-only (see In-Memory Inventory) so all accumulated 2% contributions are lost on restart.
+*Resolution:* the min-payout top-up and the post-win reseed are now funded from the house treasury (partial if it's short), and the pool persists in a new `casino_jackpot` table, hydrated on startup.
 
-#### M-3 — Slot jackpot line win stacks with the jackpot on the same spin
+#### M-3 [WONTFIX: intended stacking] — Slot jackpot line win stacks with the jackpot on the same spin
 When the middle row is all `GOLDEN_STALLION`, payline #1 (index 0 = middle row, `casino.go:83`) also scores a 5-of-a-kind (100×wager) in the payline loop (`casino.go:601-620`) *and* the jackpot is added (`casino.go:648-662`); both accumulate into `totalPayout`. Worth confirming this stacking is intended for RTP.
+*Resolution (WONTFIX):* stacking a progressive jackpot on top of the natural 5-of-a-kind line pay is standard slot design; the hit probability is (2/60)^5 ≈ 4×10⁻⁸ so RTP impact is negligible, and with M-2 fixed the jackpot portion is house-funded, so the stack can no longer mint.
 
-#### M-4 — Trait `stamina_boost` uses post-modification fatigue and adds it back fragilely
+#### M-4 [FIXED: d285848] — Trait `stamina_boost` uses post-modification fatigue and adds it back fragilely
 In racussy the `stamina_boost` effect (`racussy.go:434-442`) computes `adjustedFatigue := fatigue*(2-magnitude)` and does `deltaP += (oldFatigue - adjustedFatigue)`, but `fatigue` here has *already* been multiplied by `fatigue_resist` (×0.5, `racussy.go:379-384`) and `cursed_fatigue` (`racussy.go:388-392`). The interaction is order-dependent and fragile, though the trait **does** fire (contrary to the older REVIEW_FINDINGS claim that it's gated behind an early-exit — that gating is **not present** in current code).
+*Resolution:* all fatigue modifiers (fatigue_resist, cursed_fatigue, stamina_boost) now compose multiplicatively in one place before deltaP — arithmetically identical, no longer order-dependent.
 
-#### M-5 — Seasonal effects multiply `FitnessCeiling` but the clamp only caps the top, allowing slow ratchet within [x,1.0]
+#### M-5 [FIXED: 7d98ebc] — Seasonal effects multiply `FitnessCeiling` but the clamp only caps the top, allowing slow ratchet within [x,1.0]
 `ApplySeasonalEffect` multiplies `FitnessCeiling` by 1.02–1.05 for several events and clamps to 1.0 (`trainussy.go:1556-1560`, applied in each case). The clamp **is** present (contrary to the head-start hint about "no clamping") so the ceiling can't exceed 1.0 — but repeated favorable events still ratchet ceilings toward 1.0 for many horses, flattening genetic variance over a long-lived server. Balance concern, not an overflow.
+*Resolution:* seasonal ceiling boosts now scale with remaining headroom (`gain = pct × (1 − ceiling)`), so gains shrink asymptotically and the ceiling approaches but never reaches 1.0 — relative genetic ordering is preserved.
 
-#### M-6 — Aging "Youth" growth clamps ceiling but there is no clamp on `int_bonus`/`gen0_boost` stacking beyond 1.0 elsewhere
-`AgeHorse` Youth branch multiplies ceiling ×1.02 and clamps to 1.0 (`trainussy.go:1294-1300`) — correctly clamped. All seasonal ceiling boosts also clamp. Verified: no unclamped ceiling path remains in trainussy. (Documented to close the head-start hint: **not present**.)
+#### M-6 [ALREADY-FIXED] — Aging "Youth" growth clamps ceiling but there is no clamp on `int_bonus`/`gen0_boost` stacking beyond 1.0 elsewhere
+`AgeHorse` Youth branch multiplies ceiling ×1.02 and clamps to 1.0 (`trainussy.go:1294-1300`) — correctly clamped. All seasonal ceiling boosts also clamp. Verified: no unclamped ceiling path remains in trainussy. (Documented to close the head-start hint: **not present**.) *Resolution:* verification note only — nothing to fix.
 
-#### M-7 — Trade price is never validated (zero/negative accepted)
+#### M-7 [FIXED: f3ff747] — Trade price is never validated (zero/negative accepted)
 `handleCreateTrade` (`server.go:3340-3407`) does not validate `req.Price`. On accept, `if offer.Price > 0` (`server.go:3438`) skips the transfer, giving a free horse hand-off for price ≤ 0. Not money creation but an unvalidated economic input (most other endpoints validate: listing `marketussy.go:67`, bid `server.go:7292`, wager `casino.go:512`, exchange `casino.go:173`).
+*Resolution:* negative prices are rejected (400); zero remains allowed as an explicit gift (the accept path already skips the transfer). Creation also now validates the horse actually lives in the source stable, and acceptance compensates failed payments/moves (see Phase 3 section).
 
-#### M-8 — Casino chip exchange asymmetry is a large hidden haircut with no UI disclosure
+#### M-8 [FIXED: 06832d4] — Casino chip exchange asymmetry is a large hidden haircut with no UI disclosure
 Buy = 25 cummies/chip, cashout = 10 cummies/chip (`casino.go:192`,`205`) → 60% loss round-trip. Intended house edge, but the SPA shows no rate before the click (frontend §3). Also note this asymmetry means chips are a one-way sink except for winnings.
+*Resolution:* both rates now render next to the BUY/CASH OUT controls (live from the API) and the overview/exchange responses expose an additive `cashoutRate` field.
 
-#### M-9 — Hold'em auto-fold on timeout acts before verifying the caller
+#### M-9 [FIXED: f3ff747] — Hold'em auto-fold on timeout acts before verifying the caller
 `handleHoldemAction` auto-folds the current action seat when the deadline passed (`casino.go:1506-1509`) *before* the seat/identity check (later at `casino.go:1533`). Any request hitting the endpoint after a timeout forces the waiting player's fold; combined with C-1's lack of locking, timing races corrupt hand state.
+*Resolution:* the seat-membership check now runs before any table mutation — only seated players can trigger the timeout auto-fold (C-1's per-table lock already serialized it).
 
-#### M-10 — DNF horses win ELO in the CLI race path
+#### M-10 [FIXED: 31e7b86] — DNF horses win ELO in the CLI race path
 `RaceEntry.FinishPlace` is 0 until finished (`models.go:301`). The CLI pairwise ELO loop treats lower place as winner: `if entries[i].entry.FinishPlace < entries[j].entry.FinishPlace` (`main.go:1798`); an unfinished horse (place 0) satisfies `0 < anything` and gains ELO against every finisher (`main.go:1810`). (Server path sorts by FinishPlace where DNF horses are assigned real places at `racussy.go:759-770`, so the server is safe — CLI-only bug.)
+*Resolution:* place 0 now ranks worst-possible in the CLI pairwise loop (defensive — racussy currently always assigns places). The same fix also repaired a worse latent bug: pairs where the later slice entry finished better were silently skipped, halving CLI ELO movement.
 
-#### M-11 — CLI records every non-winner as a loss
+#### M-11 [WONTFIX: matches server semantics] — CLI records every non-winner as a loss
 `main.go:1835-1839`: `if FinishPlace == 1 { wins=1 } else { losses=1 }` — 2nd place in an 8-horse field counts as a loss, inflating Losses and skewing win-rate.
+*Resolution (WONTFIX):* the HTTP server applies identical winner-take-all semantics (`applyPostRaceEffects`/`runRace`), and the `Wins+Losses == Races` invariant is relied on by leaderboards and achievements — changing only the CLI would diverge from the server; changing both is a product decision, not a bug fix.
 
-#### M-12 — `player_progress` DB defaults contradict the model comments
+#### M-12 [FIXED: 7fdb38b] — `player_progress` DB defaults contradict the model comments
 Schema defaults `daily_trains_left`/`daily_races_left` to **6/6** (`migrations.go:202-203`) while the model comments say **5/10** (`models.go:637-638`). The runtime reset logic sets its own values, but a freshly-inserted row from a non-standard path uses 6/6.
+*Resolution:* the runtime constants (`defaultDailyTrains/Races`) are 6/6, matching the DB — the model comments were the outlier and now document the real values. No gameplay change.
 
-#### M-13 — `race_results` allows duplicate rows (double-counted history/earnings)
+#### M-13 [FIXED: 7fdb38b] — `race_results` allows duplicate rows (double-counted history/earnings)
 No unique index on `(race_id, horse_id)` (`migrations.go:86-104`); `RecordResult` is a plain INSERT (`postgres/races.go:66-72`). Re-running result recording double-counts earnings/history.
+*Resolution:* migration dedupes legacy rows (keeping the earliest), adds a unique index on `(race_id, horse_id)`, and `RecordResult` uses `ON CONFLICT DO NOTHING`.
 
-#### M-14 — No `UNIQUE` on `stables.owner_id`; `GetStableByOwner` returns an arbitrary row
+#### M-14 [FIXED: 7fdb38b] — No `UNIQUE` on `stables.owner_id`; `GetStableByOwner` returns an arbitrary row
 `stables` has no unique constraint on `owner_id` (`migrations.go:34-45`); `GetStableByOwner` uses `QueryRowContext` with no `LIMIT/ORDER BY` (`postgres/stables.go:77-81`). Multi-stable users get nondeterministic resolution, and duplicate-stable creation is unguarded at the schema level. The server only ever uses the first stable (`getStableForUser`, `server.go:1816-1822`).
+*Resolution:* `GetStableByOwner` now orders `created_at ASC, id ASC LIMIT 1` — the same oldest-first rule as the in-memory `getStablesForUser` — so DB and RAM agree deterministically. (A UNIQUE constraint was not added: legacy multi-stable owners may exist, and duplicate creation is already guarded at the handler.)
 
 ---
 
@@ -369,3 +384,42 @@ Systems spec'd in docs but not reachable / not real via HTTP:
 | tournussy round counter advances before results confirmed | **CONFIRMED — H-3.** `t.CurrentRound++` at `tournussy.go:632` precedes simulation/`RecordRoundResults`; record errors are only logged (`server.go:2987-2989`). |
 
 Net: of the eight hints, **two are confirmed as live bugs** (pointer divergence, tournament round counter), and **six describe issues that a prior fix pass already addressed** — but several of those fixes are undermined by persistence gaps (H-7, H-8) and the newly-found economic exploits (C-1 through C-3, C-6, H-5) that the hint list did not cover.
+
+---
+
+## Phase 3 — Wiring & Balance Pass
+
+Branch `fable/full-improvement-pass`, 2026-07-16. Beyond the M-* fixes annotated above, every gameplay action (race, breed, train, fight, bet, buy, sell, trade, tournament, casino) was traced HTTP handler → domain → repository. Changes:
+
+### Wiring gaps found & fixed
+
+- **Betting was functionally unwired over HTTP** `[1115c35]`. Races simulate synchronously with server-generated UUID race IDs, so a user-opened pool (`POST /api/betting/pools`) could never attach to a real race — every escrowed bet just waited for the stale-pool refund sweep. Tournament rounds opened and closed their pool in the same request (the L-2 stub), so nobody could ever bet on anything. Now: user-opened pools schedule a spectator **exhibition race** after a 60s window (real physics sim, zero stat/ELO/fatigue/earnings effects, pari-mutuel settlement, 10% cut to the House of USSY; pool refunded if the field collapses); tournament round races use deterministic IDs (`<tid>-round-<n>`) so the round-1 pool opens when the field reaches 2 horses and each finished round opens the next round's pool — the betting window is the gap between organizer actions. `openBettingPool` no longer clobbers an existing pool (that vaporized escrowed bets); opening a pool now requires auth. Settlement remains timing-safe: pools always close before simulation, `resolveBets` is idempotent. Note: the H-6 stale-pool sweep still refunds pools older than 15 minutes, so a tournament round left unrun for >15 min refunds its bets (safe, just no wagers).
+- **Trade acceptance charged the buyer before moving the horse** `[f3ff747]`. `handleCreateTrade` never verified the horse lived in the source stable; a failing `MoveHorse` on accept left the buyer paid-up with no horse and no refund. Creation now validates horse residence, acceptance re-validates before payment (cancelling stale offers), failed payments reopen the offer, failed moves refund and reopen (new `TradeManager.ReopenOffer`).
+- **Unobtainable achievements** `[23acda4]`. `tournament_winner`, `first_sale`, and `market_mogul` were defined but never granted by any handler (`first_trade`, `first_challenge`, `streak_7`, `betting_winner` were already wired). Now granted at prize distribution, listing creation, and the 10th stud-market transaction respectively.
+- **Breeder-program fee lost on failure** `[b91a1ad]`. `handleBreedWithStallion` paid the stallion owner before breeding; a nil foal or failed `AddHorseToStable` ate the fee. Both paths now reverse the payment.
+- **Tournament podium leak** `[1115c35]`. With fewer than 3 finishers, `distributeTournamentPrizes` silently dropped the unpaid podium shares — a 2-player tournament destroyed 10% of its pool beyond the declared 5% burn. Unclaimed shares now roll up to the champion.
+- **CLI pairwise ELO half-skip** `[31e7b86]`. Found while fixing M-10: the CLI ELO loop only updated pairs where the *earlier* slice entry finished better, silently skipping ~half of all pairwise exchanges.
+
+### Balance changes (before → after)
+
+- **Race outcomes now have meaningful variance** `[d285848]`. Per-tick chaos (σ≈0.3) grows as √ticks while stat gaps compound linearly, so outcomes were near-deterministic: a 5% weaker horse won <0.1% of head-to-heads. Each horse now rolls a whole-race "race-day form" multiplier N(1.0, 0.055) clamped [0.85, 1.15] (deterministic under seed; extreme rolls surface as GOOD OATS DAY / WOKE UP HAUNTED BY MONDAYS tick-1 events). Measured underdog win rates over 1000 head-to-heads: 6% gap 1%→28%, 11% gap 0%→9%, 22% gap stays ~0%. Upsets possible, coin-flips not.
+- **Training modes produce distinct effects** `[7d98ebc]`. All workouts previously fed one scalar (`CurrentFitness`) — Sprint- and Endurance-trained horses were identical at the ceiling. Each focused mode now builds a persisted discipline specialty consumed by the race sim (Sprint→SPD, Endurance→STM + slower in-race fatigue, MudRun→SZE on Mudussy, MentalRep→TMP + up to ~18% panic reduction; General a 35% sliver of each, RestDay none), +0.004/session (halved above 65 fatigue), capped 0.06/discipline. New `horses.training_specialty` JSONB column.
+- **Casino faucets closed** `[06832d4]`. Daily 40-chip grant: minted from nothing (400 cummies/day/user) → House-of-USSY-funded at cashout value, withheld (without consuming the day) if the house is broke. Jackpot: min-payout top-up and reseed minted → house-funded; pool now persisted (`casino_jackpot` table).
+- **Stud-market burn actually burns** `[23acda4]`. Buyer paid `price − burn` and seller received `price − burn` — the "2% deflationary burn" was a buyer discount; effective burn was 0. Buyer now pays full price; exactly 2% (min 1) leaves the economy.
+- **Glue factory bounded** `[23acda4]`. Fresh foal payout ~620 cummies minted from nothing (infinite breed→glue pump on a 4h cooldown) → 150 cummies, house-funded: under-age-2 horses render to 15 glue, the ELO bonus only counts rating proven above the 1200 start, and all payouts debit the house treasury.
+- **Seasonal ceiling ratchet removed** `[7d98ebc]` (M-5, see annotation).
+
+### Systems verified as already sound (no change)
+
+- Quick/challenge/bot races: purses house-funded (Phase 2 C-3/H-5), conservation verified by existing tests.
+- Tournament lifecycle core: create → register (fees counted once) → rounds (counter advances only on recorded results) → single final payout (Phase 2 C-2/H-3/H-4); Phase 3 added the full-lifecycle HTTP integration test with a burn-exact conservation assertion.
+- Fights: escrow, self-join guard, expiry refunds (Phase 2 C-6/H-6). Auctions: atomic settlement, escrowed bids, real 5% burn (Phase 2 H-1).
+- Bet settlement determinism: pools close before simulation everywhere, `resolveBets` idempotent, race sims reproducible under seed (new test).
+
+### Remaining known gaps (out of scope, LOW)
+
+- L-1…L-12 as documented above; the CASINO_DESIGN_SPEC/MULTIPLAYER_ENGAGEMENT_RESEARCH feature wishlists; market transaction history is not rehydrated from DB (the `market_mogul` counter counts since last restart — a floor, never an overcount); rivalries/challenges remain RAM-only (challenge escrow is refunded on expiry by the Phase 2 sweeps).
+
+### Phase 3 integration tests added (internal/server)
+
+`phase3_econ_test.go` (exchange round-trip with disclosed rates; house-funded daily grant incl. broke-house; house-bounded chip funding), `phase3_trade_test.go` (trade create→accept full path; negative price; foreign horse; failed-payment compensation; M-9 unseated auto-fold guard), `phase3_training_test.go` (4 distinct specialties over HTTP; specialty reaches `CalcBaseSpeed`; cap), `phase3_betting_test.go` (exhibition bet-and-settle loop with conservation and no-stat-mutation; full tournament lifecycle with burn-exact conservation; pool-clobber escrow guard), `phase3_market_test.go` (burn conservation on stud purchase + `first_sale`; house-funded glue with exact veteran/foal payouts; `tournament_winner`), plus `racussy` statistical variance bounds and same-seed determinism tests.
