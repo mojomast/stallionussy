@@ -1,0 +1,371 @@
+# FABLE FINDINGS
+
+Codebase archaeology of **STALLIONRUN / StallionUSSY** — a comedy horse breeding/racing/genetics/casino simulator in Go + PostgreSQL with a single-file terminal-themed SPA. This document is the sole authoritative reference for a later bug-fixing pass. Every finding cites exact `file:line`. Line numbers are as of the audited tree (branch `master`, HEAD `5b46250`).
+
+> Read-only audit. No code was modified.
+>
+> **Fix pass (branch `fable/full-improvement-pass`, 2026-07-16):** all CRITICAL and HIGH findings are fixed and annotated inline with `[FIXED: <sha>]`. Two related bugs discovered during fixing were folded into their parent findings: tournament registration double-counted every entry fee into the prize pool (fixed with C-2), and the betting house cut evaporated instead of going to the house (now banks into the House of USSY treasury, which funds the C-3 purses). MEDIUM/LOW findings remain open for a later pass.
+
+## Severity Summary
+
+| Severity | Count | Meaning |
+|---|---|---|
+| CRITICAL | 9 | Exploits, money duplication, data corruption, broken core loops |
+| HIGH | 11 | Clear logic bugs affecting gameplay outcomes / persistence loss |
+| MEDIUM | 14 | Balance issues, unclamped values, placeholder tuning, data races |
+| LOW | 12 | Code smells, dead code, minor issues |
+
+**Most urgent (fix first):**
+1. **C-1** Poker hold'em action is an unlocked read-modify-write → concurrent requests double-settle the pot / double-cashout (chip printing).
+2. **C-2** Tournament pays out its prize pool twice (per-round purses *and* final distribution) → ~2× cummies created from entry fees.
+3. **C-3** Quick races + challenge races mint their purse from nothing (no counterparty is debited).
+4. **C-4** DB-persisted trade acceptance always rolls back (`owner_id` column holds user IDs but the atomic query filters/writes stable IDs) → money "un-moves" across restart = duplication.
+5. **C-5** Breeding cooldown is bypassable in the running server due to pointer/value divergence (`LastBredAt` written to an orphaned copy).
+
+The single largest structural risk is that **in-memory maps are the source of truth and the DB is best-effort write-through with no `CHECK (cummies >= 0)` and only three atomic transactions (two of which are broken).** There is effectively no double-spend protection at the DB layer.
+
+---
+
+## Architecture Overview
+
+### Packages
+
+| Package | Responsibility |
+|---|---|
+| `internal/models` | All data types. `Horse`, `Stable` (holds `Cummies`/`CasinoChips`), `Genome`, `Race`, `StudListing`, `Tournament`, `Auction`, `Alliance`, `HorseFight`, `PokerTable`/`SlotSpin` (casino.go), etc. |
+| `internal/genussy` | Genetics: genome generation, Punnett-cross `Breed`, mutation, `CalcFitnessCeiling`, 12 canonical legendary horses. |
+| `internal/racussy` | Physics tick race simulator (`SimulateRaceWithWeather`), trait/weather/event application, narrative generation. |
+| `internal/trainussy` | Training XP/fitness/fatigue, injury rolls, trait pool + assignment, aging, retirement, seasonal events. |
+| `internal/fightussy` | Gladiatorial combat sim (`SimulateFight`): arenas, maces, rage/morale, KO/fatality. |
+| `internal/marketussy` | In-memory stud marketplace, Sappho score, ELO update, 2% burn. |
+| `internal/stableussy` | In-memory `StableManager`: stables + global horse registry, `TransferCummies`, `MoveHorse`, leaderboard. |
+| `internal/tournussy` | `RaceHistory`, weather roll, `TournamentManager`, achievement definitions + `CheckAchievements`. |
+| `internal/pedigreussy` | Pedigree tree, inbreeding coefficient, dynasty score, `TradeManager`. |
+| `internal/authussy` | bcrypt + JWT auth, middleware, register/login/me/refresh handlers. |
+| `internal/commussy` | WebSocket hub: chat, whispers, live race telemetry broadcasts. |
+| `internal/nameussy` | Random horse/stable name generator. |
+| `internal/server` | The monolith. `server.go` (10,364 lines) wires all managers + ~130 HTTP handlers; `casino.go` (2,461 lines) is slots + poker + chip exchange + departed-horse resurrection. |
+| `internal/repository` + `internal/repository/postgres` | Repository interfaces and their sole Postgres implementations; `migrations.go` runs the schema on every startup; `atomictx.go` holds the only DB transactions. |
+| `cmd/stallionussy/main.go` | `serve` mode (HTTP, requires DB) and `cli` mode (interactive, in-memory fallback). |
+
+### Data flow
+
+`main.go serve` → `connectDB` (runs migrations every start) → `server.NewServer(db)` wires repos + managers → `loadFromDB()` hydrates in-memory managers from Postgres → HTTP + WS serving. **All gameplay mutates in-memory manager state first; each handler then "write-through" persists** via `persistX` helpers that only log on error (server.go:6006-6122). The DB is a snapshot, not a transactional ledger.
+
+### Persistence: what is a table vs RAM-only
+
+**Postgres tables** (migrations.go): `users`, `stables`, `horses`, `race_results`, `stud_listings`, `tournaments`, `trade_offers`, `achievements`, `training_sessions`, `player_progress`, `seasons`, `poker_tables`, `slot_spins`, `departed_horses`, `market_transactions`, `auctions`, `race_replays`, `alliances`, `alliance_members`, `horse_fights`, `glue_factory`, `breeding_stallions`.
+
+**RAM-only (lost on restart)** — see the In-Memory State Inventory below: challenges, betting pools (with escrowed bets), rivalries, the progressive slot jackpot pool, pending fights (with deducted entry fees), the race-replay cache, and all `Race`/`RaceEntry`/`TickEvent` objects (only derived `race_results` + `race_replays` persist).
+
+---
+
+## Findings by Severity
+
+### CRITICAL
+
+#### C-1 [FIXED: fcb666e] — Poker action handler is an unlocked read-modify-write → pot double-settlement / double-cashout
+`getPokerTable` returns a **copy** of the table (`internal/server/casino.go:996-1010`, `clone := *table`), the caller mutates it, and `savePokerTable` (`casino.go:1012-1025`) writes it back — with `pokerMu` released in between. Two concurrent `POST /api/casino/poker/{id}/action` (or a `draw` + `action`) can each observe a not-yet-settled table, both run settlement/cashout (`settleHoldemTable`/`holdemCashOutPlayers`, `casino.go:1187+`, `1927-1950`), and pay the pot / return stacks twice. In DB mode `getPokerTable` reads a fresh row each call, so there is **no shared in-memory guard at all**. Chip-printing race.
+Fix: hold `pokerMu` (or a per-table lock) across the entire read→mutate→settle→save sequence, or make settlement idempotent (guard on a terminal status flag checked+set under lock). Note the clone is also *shallow* (`Seats`/`Log` slices are aliased), so mutations leak into shared state.
+
+#### C-2 [FIXED: da00a63] — Tournament prize pool is paid out twice (money creation)
+Each round distributes a per-round purse of `PrizePool/Rounds` to finishers via `applyPostRaceEffects` (`server.go:3126` `earnings = int64(float64(race.Purse) * share)`, credited at `server.go:3159`). `race.Purse` is `roundPurse = t.PrizePool / int64(t.Rounds)` (`internal/tournussy/tournussy.go:636`). Then on the final round `distributeTournamentPrizes` pays the **entire** `PrizePool` again (`server.go:3212-3248`). Net ≈ `PrizePool` (per-round purses summed) + `PrizePool` (final) ≈ **2× the collected entry fees**, created from nothing.
+Fix: choose one distribution model — either per-round purses that sum to the pool, or a single end-of-tournament distribution — not both.
+
+#### C-3 [FIXED: 9a7f1b5] — Quick races and challenge races mint their purse from nothing
+`handleQuickRace` passes `quickRacePurse` (=200, `server.go:5576`) to `runRace` with **no debit from anyone** (`server.go:1379-1381`, `1422-1426`); `runRace` credits finishers via `addEarningsToStable` (`server.go:1610`). Bot challenges use `challengeBasePurse`=250 (`server.go:5577`) and accepted challenges `basePurse`=500 (`server.go:4729`) the same way. Contrast `handleCreateRace`, which *does* deduct the purse (`server.go:1302`). These are pure faucets bounded only by the daily race cap.
+Fix: fund quick/challenge purses from a real source (entry fee, house sink budget) or set them to 0 and rely on betting.
+
+#### C-4 [FIXED: 867a5be] — DB trade acceptance always rolls back → money duplication across restart
+`AcceptTradeAtomically` moves the horse with `UPDATE horses SET owner_id = $1 WHERE id = $2 AND owner_id = $3` binding **stable IDs** (`internal/repository/postgres/atomictx.go:64-68`), but `horses.owner_id` stores **user IDs** (proven by hydration `ListHorsesByStable(ctx, stable.OwnerID)` at `server.go:6145` and auction settlement using `buyerStable.OwnerID` at `server.go:7562`). The horse UPDATE matches 0 rows, the guard at `atomictx.go:73-75` fires, and the **entire transaction (including the cummies transfer) rolls back**. The caller only logs it (`server.go:3456`) while the in-memory trade already completed. After a restart the DB shows the trade still "Pending", the buyer's cummies restored, and the horse unmoved — the buyer can accept again. Same column-semantics defect in `HorseRepo.MoveHorse` (`postgres/horses.go:339-340`), the non-DB fallback path.
+Fix: make the atomic query use the user-ID convention (resolve stable→owner) or add and use a real `stable_id` column consistently.
+
+#### C-5 [FIXED: f0a15c1] — Breeding cooldown bypassable via pointer/value divergence
+`handleBreed` calls `AddHorseToStable(req.StableID, foal)` (`server.go:1177`) which does `stable.Horses = append(stable.Horses, *horse)` (`internal/stableussy/stableussy.go:163`), **reallocating** the slice and re-registering all pointers into the new array. The `sire`/`mare` pointers obtained earlier (`server.go:1127`, `1132`) now point into the *old* array. Cooldown is then written to those orphaned pointers: `sire.LastBredAt = time.Now()` (`server.go:1205-1206`). `syncHorseToStable` only forwards ELO (`server.go:1809-1812` → `stableussy.UpdateHorseStats`, which copies Wins/Losses/Races/ELO only, `stableussy.go:264-267`), so `LastBredAt` never reaches the live registry horse. The next breed's cooldown check `!sire.LastBredAt.IsZero()` (`server.go:1140`) sees zero → **cooldown skipped**. `persistHorse` writes the stale-but-correct pointer to DB, so behavior differs pre/post restart. Same pattern in `handleBuyListing` (`server.go:2579` then `2583-2584`) and `handleBreedWithStallion` (`server.go:10010` then `10014-10015`).
+Fix: mutate through the live registry pointer (re-`GetHorse` after `AddHorseToStable`), or set cooldown *before* adding the foal, or have `syncHorseToStable` propagate all mutable fields.
+
+#### C-6 [FIXED: cfd8a91] — Buying your own listing / self-trade drains only the burn
+`handleBuyListing` never checks the buyer stable differs from the seller stable (`server.go:2432-2649`). A user who owns the listed stud pays `TransferCummies(buyer→seller)` to *themselves* (net cost = 2% burn) and still receives a foal. `PurchaseBreeding` rejects `buyerID == listing.OwnerID` (`marketussy.go:183`) but the server resolves the seller stable separately and can be the same stable under a different code path when a user owns multiple stables. Likewise `handleCreateTrade` has no `fromStable != toStable` guard (`server.go:3340-3407`).
+Fix: reject self-purchase/self-trade at the handler using stable identity, not just owner ID.
+
+#### C-7 [FIXED: cfd8a91] — Season-end soft-reset & other handlers read/write `stable.Horses` without the stable lock (data race + possible panic)
+`handleEndSeason` ranges and mutates `stable.Horses[i].ELO` (`server.go:3988-3998`) and `handleGetLeaderboard` ranges every `stable.Horses` (`server.go:3790+`) **without** holding `stableMu`, while `AddHorseToStable`/breeding `append` (reallocate) the same slice concurrently under `stableMu`. Ranging a slice that another goroutine reallocates is a genuine data race and can panic. `maybeGrantDailyCasinoChips` mutates `stable.CasinoChips` under `progressMu` not `stableMu` (`casino.go:949`), racing slot/exchange balance ops.
+Fix: standardize on `stableMu` for all reads/writes of `stable.Horses`/`Cummies`/`CasinoChips`, or snapshot under lock.
+
+#### C-8 [FIXED: 9a7f1b5] — `handleCreateRace` deducts the purse then aborts without refund
+Purse is deducted under lock (`server.go:1302`), but later failure paths `return` without refunding: invalid track (`server.go:1312`), unresolved horses (`~1318`), and hitting the daily race cap in `consumeDailyRace` (`~1325`). A user who supplies a bad track/horse or is at their daily cap permanently loses the deducted cummies.
+Fix: validate everything (including daily-cap consumption) *before* debiting, or refund on every error path.
+
+#### C-9 [FIXED: 867a5be] — No DB balance floor; absolute-value `UpdateStable` is the main money write
+`stables.cummies BIGINT NOT NULL DEFAULT 0` has **no `CHECK (cummies >= 0)`** (`migrations.go:38`), and the primary persistence primitive writes the absolute in-memory value (`UPDATE stables SET ... cummies = $4 ...`, `postgres/stables.go:140-143`). Every debit relies on an in-process check then blasts the value to the DB; a single missed check, a lost update between load and persist, or two processes persist a negative/duplicated balance. Only the three `atomictx.go` methods use real transactions, and C-4/H-2 show two of the three are broken.
+Fix: add `CHECK (cummies >= 0)` and `CHECK (casino_chips >= 0)`; route money movement through transactional `WHERE cummies >= amount` updates with RowsAffected checks.
+
+---
+
+### HIGH
+
+#### H-1 [FIXED: 867a5be] — Auction settlement credits the seller but never debits the buyer in the same transaction
+`SettleAuctionAtomically` does `UPDATE stables SET cummies = cummies + $1` for the seller (`atomictx.go:131-140`) and updates the horse owner (`atomictx.go:144-147`), but the buyer's escrow happened earlier in memory only (`bidderStable.Cummies -= req.Amount`, `server.go:7350`) with separate non-transactional persists. A crash between escrow-persist and settlement mints `sellerPayout` cummies from nothing. No `RowsAffected` checks on any of its three UPDATEs.
+Fix: include the buyer debit inside the same transaction; add RowsAffected guards.
+
+#### H-2 [FIXED: 867a5be] — Atomic trade transaction lacks guards on status/seller updates
+In `AcceptTradeAtomically` the status UPDATE (`atomictx.go:30-35`) has no `WHERE status='Pending'` and no RowsAffected check, and the seller credit (`atomictx.go:54-61`) has no RowsAffected check. A non-existent/already-accepted trade or a bad seller stable still moves the buyer's money.
+Fix: add `WHERE status='Pending'` and RowsAffected checks on all three statements.
+
+#### H-3 [FIXED: da00a63] — Tournament round counter advances before results are confirmed
+`RunNextRound` increments `t.CurrentRound++` (`tournussy.go:632`) *before* the race is simulated (`server.go:2977`) or recorded (`RecordRoundResults`, `server.go:2987`, whose error is only logged). Both `RunNextRound` (`tournussy.go:626`) and `RecordRoundResults` (`tournussy.go:703`) key "Finished" off `CurrentRound >= Rounds`, so a round that fails to record still consumed a round and the tournament can finish with fewer recorded results than rounds. (Matches head-start hint — **confirmed**.)
+Fix: increment the round only after results are successfully recorded, or roll back on record failure.
+
+#### H-4 [FIXED: da00a63] — `handleTournamentRace` has zero authorization
+`server.go:2922-2926` explicitly notes "any authenticated user can trigger tournament races" and performs no ownership/organizer check. Any caller can advance any tournament's rounds and trigger prize distribution (which is double-paying, see C-2).
+Fix: restrict to the tournament creator/admin.
+
+#### H-5 [FIXED: 9a7f1b5] — `runBotChallenge` pays a 2× pot from an unfunded bot
+Only the challenger's wager is escrowed (`server.go:4505`), but a win pays `payout := (wager*2) - 5%` (`server.go:4545-4546`). The bot never funds its half, so wins net ≈ +0.9·wager from nothing (a loss burns the wager). Asymmetric faucet.
+Fix: fund the bot side from a house budget or make bot challenges non-monetary.
+
+#### H-6 [FIXED: cfd8a91] — Betting escrow and pending-fight entry fees are lost on restart (no refund)
+`bettingPools` is RAM-only (`server.go:100`); `placeBet` deducts cummies at `server.go:6461`. `pendingFights` is RAM-only (`server.go:122`); create/join deduct entry fees at `server.go:9193`/`9331`. On restart all open pools and pending fights vanish and the deducted cummies are never refunded. A fight that never gets a joiner also has no refund path even without a restart.
+Fix: persist these (or refund on shutdown / on expiry sweeps).
+
+#### H-7 [FIXED: 867a5be] — Missing DB columns silently drop `LastBredAt` and `RetiredChampion` on restart
+`horseCols` and the schema omit `retired_champion` and `last_bred_at` (`postgres/horses.go:28-33`; `migrations.go:52-81`) even though `Horse.RetiredChampion`/`LastBredAt` exist (`models.go:134`,`138`). After a restart, breeding cooldowns reset to zero (compounding C-5) and champion flags (which drive the 5% foal bonus in `genussy.Breed`, `genussy.go:252-260`) are lost.
+Fix: add the columns and include them in scan/insert/update.
+
+#### H-8 [FIXED: 867a5be] — Stud `TimesUsed`/`MaxUses` never persisted → use-limits reset on restart
+`stud_listings` has no `times_used`/`max_uses` columns (`migrations.go:109-122`) and `MarketRepo` never writes them (`postgres/market.go:27-31`,`118-122`), while `PurchaseBreeding` relies on them to deactivate a listing (`marketussy.go:213-216`). After restart, a maxed-out stud is active again with `TimesUsed=0`.
+Fix: persist both fields.
+
+#### H-9 [FIXED: 867a5be] — `market_transactions.seller_payout` not persisted
+Schema and `SaveTransaction` omit `seller_payout` (`migrations.go:287-299`; `postgres/transactions.go:31-45`) though `MarketTransaction.SellerPayout` is set (`models.go:351`). Financial history is incomplete/unauditable.
+Fix: add the column and write it.
+
+#### H-10 [FIXED: 867a5be] — PokerTable Hold'em state truncated on every DB round-trip
+`UpdatePokerTable` writes only 13 legacy columns (`postgres/casino.go:138-146`) and the schema has none of the Hold'em fields (no `game_type`, `community_cards`, blinds, `dealer_seat`, `action_seat`, `min_raise`, `side_pots`, `round`, `action_deadline`; `migrations.go:228-245`). After a restart an in-progress Hold'em hand loads as a legacy draw table with player chips already deducted — corrupted mid-hand state.
+Fix: add columns + scan/write, or refuse to persist mid-hand and refund on shutdown.
+
+#### H-11 [FIXED: 8120ab0] — CLI trade acceptance moves money but never the horse
+`cmdAccept` (`cmd/stallionussy/main.go:1263-1293`) calls `AcceptOffer` (only flips status, `pedigreussy.go:479`) then `TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price)` (`main.go:1276`) with **no `MoveHorse` call**. The buyer pays full price and the seller keeps the horse. (The HTTP handler does call `MoveHorse`, `server.go:3445` — CLI diverges.)
+Fix: add `sm.MoveHorse(offer.HorseID, offer.FromStableID, offer.ToStableID)` to `cmdAccept`.
+
+---
+
+### MEDIUM
+
+#### M-1 — Casino daily chip grant is a free 400-cummies/day faucet
+`casinoDailyChipGrant` = 40 chips/day (`casino.go:23`), granted on casino overview/exchange (`casino.go:949`), cashable at 10 cummies/chip (`casino.go:205`) = 400 free cummies/day/user with zero play. Design faucet — flag for economy balance.
+
+#### M-2 — Slot jackpot pays at least 1000 chips from a pool seeded at 500 (can exceed contributions)
+`slotJackpotMinPayout`=1000 while `slotJackpotSeed`=500 (`casino.go:109`,`112`); the jackpot win path forces `pool = max(pool, 1000)` (`casino.go:653-656`). Immediately after a restart (pool=500) a jackpot mints 1000 from nothing. Also the jackpot pool is RAM-only (see In-Memory Inventory) so all accumulated 2% contributions are lost on restart.
+
+#### M-3 — Slot jackpot line win stacks with the jackpot on the same spin
+When the middle row is all `GOLDEN_STALLION`, payline #1 (index 0 = middle row, `casino.go:83`) also scores a 5-of-a-kind (100×wager) in the payline loop (`casino.go:601-620`) *and* the jackpot is added (`casino.go:648-662`); both accumulate into `totalPayout`. Worth confirming this stacking is intended for RTP.
+
+#### M-4 — Trait `stamina_boost` uses post-modification fatigue and adds it back fragilely
+In racussy the `stamina_boost` effect (`racussy.go:434-442`) computes `adjustedFatigue := fatigue*(2-magnitude)` and does `deltaP += (oldFatigue - adjustedFatigue)`, but `fatigue` here has *already* been multiplied by `fatigue_resist` (×0.5, `racussy.go:379-384`) and `cursed_fatigue` (`racussy.go:388-392`). The interaction is order-dependent and fragile, though the trait **does** fire (contrary to the older REVIEW_FINDINGS claim that it's gated behind an early-exit — that gating is **not present** in current code).
+
+#### M-5 — Seasonal effects multiply `FitnessCeiling` but the clamp only caps the top, allowing slow ratchet within [x,1.0]
+`ApplySeasonalEffect` multiplies `FitnessCeiling` by 1.02–1.05 for several events and clamps to 1.0 (`trainussy.go:1556-1560`, applied in each case). The clamp **is** present (contrary to the head-start hint about "no clamping") so the ceiling can't exceed 1.0 — but repeated favorable events still ratchet ceilings toward 1.0 for many horses, flattening genetic variance over a long-lived server. Balance concern, not an overflow.
+
+#### M-6 — Aging "Youth" growth clamps ceiling but there is no clamp on `int_bonus`/`gen0_boost` stacking beyond 1.0 elsewhere
+`AgeHorse` Youth branch multiplies ceiling ×1.02 and clamps to 1.0 (`trainussy.go:1294-1300`) — correctly clamped. All seasonal ceiling boosts also clamp. Verified: no unclamped ceiling path remains in trainussy. (Documented to close the head-start hint: **not present**.)
+
+#### M-7 — Trade price is never validated (zero/negative accepted)
+`handleCreateTrade` (`server.go:3340-3407`) does not validate `req.Price`. On accept, `if offer.Price > 0` (`server.go:3438`) skips the transfer, giving a free horse hand-off for price ≤ 0. Not money creation but an unvalidated economic input (most other endpoints validate: listing `marketussy.go:67`, bid `server.go:7292`, wager `casino.go:512`, exchange `casino.go:173`).
+
+#### M-8 — Casino chip exchange asymmetry is a large hidden haircut with no UI disclosure
+Buy = 25 cummies/chip, cashout = 10 cummies/chip (`casino.go:192`,`205`) → 60% loss round-trip. Intended house edge, but the SPA shows no rate before the click (frontend §3). Also note this asymmetry means chips are a one-way sink except for winnings.
+
+#### M-9 — Hold'em auto-fold on timeout acts before verifying the caller
+`handleHoldemAction` auto-folds the current action seat when the deadline passed (`casino.go:1506-1509`) *before* the seat/identity check (later at `casino.go:1533`). Any request hitting the endpoint after a timeout forces the waiting player's fold; combined with C-1's lack of locking, timing races corrupt hand state.
+
+#### M-10 — DNF horses win ELO in the CLI race path
+`RaceEntry.FinishPlace` is 0 until finished (`models.go:301`). The CLI pairwise ELO loop treats lower place as winner: `if entries[i].entry.FinishPlace < entries[j].entry.FinishPlace` (`main.go:1798`); an unfinished horse (place 0) satisfies `0 < anything` and gains ELO against every finisher (`main.go:1810`). (Server path sorts by FinishPlace where DNF horses are assigned real places at `racussy.go:759-770`, so the server is safe — CLI-only bug.)
+
+#### M-11 — CLI records every non-winner as a loss
+`main.go:1835-1839`: `if FinishPlace == 1 { wins=1 } else { losses=1 }` — 2nd place in an 8-horse field counts as a loss, inflating Losses and skewing win-rate.
+
+#### M-12 — `player_progress` DB defaults contradict the model comments
+Schema defaults `daily_trains_left`/`daily_races_left` to **6/6** (`migrations.go:202-203`) while the model comments say **5/10** (`models.go:637-638`). The runtime reset logic sets its own values, but a freshly-inserted row from a non-standard path uses 6/6.
+
+#### M-13 — `race_results` allows duplicate rows (double-counted history/earnings)
+No unique index on `(race_id, horse_id)` (`migrations.go:86-104`); `RecordResult` is a plain INSERT (`postgres/races.go:66-72`). Re-running result recording double-counts earnings/history.
+
+#### M-14 — No `UNIQUE` on `stables.owner_id`; `GetStableByOwner` returns an arbitrary row
+`stables` has no unique constraint on `owner_id` (`migrations.go:34-45`); `GetStableByOwner` uses `QueryRowContext` with no `LIMIT/ORDER BY` (`postgres/stables.go:77-81`). Multi-stable users get nondeterministic resolution, and duplicate-stable creation is unguarded at the schema level. The server only ever uses the first stable (`getStableForUser`, `server.go:1816-1822`).
+
+---
+
+### LOW
+
+#### L-1 — Dead code in casino.go
+`grantReturnLoreTrait` (`casino.go:2456`), `describeSpin` (`casino.go:2288`), `slotMultiplier`/`containsSymbol` (`casino.go:2254`,`2279`) — legacy 3-reel slot helpers and an abandoned lore-trait grant, never called by the live video-slot path (only by tests).
+
+#### L-2 — Stubbed / future-work comments (not literal TODOs)
+Tournament organizer auth "will be added in a future update" (`server.go:2925-2926`); tournament betting window "future async implementation" — pool opens and immediately closes so nobody can actually bet on tournament rounds (`server.go:2964-2967`); race-cache eviction "trim randomly … you'd want an LRU" (`server.go:2096-2105`).
+
+#### L-3 — `-X main.version=docker` ldflag targets a nonexistent variable
+Dockerfile sets `-X main.version=docker` (`Dockerfile:17`) but package `main` has no `version` variable — the ldflag is a silent no-op.
+
+#### L-4 — Docker Go toolchain mismatch
+`go.mod` declares `go 1.25.0` (`go.mod:3`) but the builder is `golang:1.24-alpine` (`Dockerfile:5`); with `GOTOOLCHAIN=local` the build fails, with `auto` it downloads 1.25 at build time.
+
+#### L-5 — systemd/nginx port contract is fragile
+`deploy/stallionussy.service:11-15` relies on `/etc/stallionussy/env` setting `STALLIONUSSY_PORT=4200`; nginx proxies `127.0.0.1:4200` (`deploy/nginx-horse.ussyco.de.conf:19`, just changed from 8080 per the uncommitted git diff). If the env file lacks the port the binary listens on 8080 → 502. `EnvironmentFile` has no `-` prefix, so a missing file blocks unit start.
+
+#### L-6 — Hardcoded DB password committed
+`defaultDatabaseURL` embeds `h0rs3ussy420` (`main.go:156`), matching `docker-compose.yml:13`/`32`; Postgres is also host-exposed on `5432:5432` (`docker-compose.yml:16-17`).
+
+#### L-7 — `sql.ErrNoRows` compared with `==` instead of `errors.Is`
+Throughout postgres/ (e.g. `users.go:60`, `horses.go:196-199`, `auctions.go:132`). Works today because errors aren't wrapped before the compare, but `scanHorse` wraps JSON errors, so any future wrap of the Scan error breaks not-found detection.
+
+#### L-8 — Inbreeding coefficient is a naive duplicate-count heuristic
+`CalcInbreedingCoefficient` counts duplicate ancestor appearances / total slots (`pedigreussy.go:117-161`), not Wright's coefficient. Functional but genetically inaccurate; drives the `InbreedingPenalty` ladder (`pedigreussy.go:185-196`).
+
+#### L-9 — CLI applies two contradictory fitness-ceiling caps
+`cmdBreed` first caps to 1.0 *only for non-legendary parents* (`main.go:716-718`) then unconditionally caps to 1.0 fifty lines later (`main.go:767-770`), nullifying the legendary exemption. CLI-only.
+
+#### L-10 — Weak CLI ID generator (collision-prone)
+`fmt.Sprintf("%x-%04x", time.Now().UnixNano(), rand.IntN(0xFFFF))` (`main.go:1945-1947`); same-nanosecond horses have a 1/65536 collision on a PRIMARY KEY. CLI-only.
+
+#### L-11 — `horses.stable_id` is a dead column
+Created and indexed (`migrations.go:55`,`80`) but never in `horseCols`, INSERT, or UPDATE (`postgres/horses.go`) — always `''`. Ownership is tracked only via `owner_id` (user ID), which is the root of C-4/H-2.
+
+#### L-12 — WebSocket `CheckOrigin` allows all origins
+`commussy.go:698-704` returns `true` for every origin ("Allow all origins during development"). CSWSH risk in production; the code comments acknowledge it.
+
+---
+
+## In-Memory State Inventory
+
+State held only in RAM on the `Server` struct (`server.go:48-145`) and elsewhere. "Persisted" means write-through to Postgres exists and `loadFromDB` rehydrates it; "RAM-only" means it is lost on restart.
+
+| Field / location | Type | Holds | On restart |
+|---|---|---|---|
+| `stables` (`server.go:50`) | `*stableussy.StableManager` | All stables + global horse registry (`stableussy.go:77-81`) | Rehydrated from `stables`/`horses` — **but** `LastBredAt`/`RetiredChampion` are dropped (H-7). |
+| `market` (`server.go:51`) | `*marketussy.Market` | Stud listings, transactions, `totalBurned` | Listings rehydrated; `TimesUsed`/`MaxUses`/`totalBurned` **lost** (H-8). |
+| `raceCache` (`server.go:61`) | `map[string]*raceResult` | Replay cache, cap 200 | Lost; DB `race_replays` fallback exists. |
+| `challenges` (`server.go:92`) | `map[string]*models.Challenge` | Head-to-head challenges + wager escrow state | **Lost.** Pending challenges vanish. |
+| `auctions` (`server.go:96`) | `map[string]*models.Auction` | Live auctions + bid history | Persisted (auctionRepo). |
+| `bettingPools` (`server.go:100`) | `map[string]*models.BettingPool` | Open/closed pools + escrowed bets | **Lost — escrowed cummies never refunded (H-6).** |
+| `currentSeason`/`pastSeasons` (`server.go:104-105`) | `*Season` / `[]Season` | Season state | Persisted (seasonRepo). |
+| `progress` (`server.go:109`) | `map[string]*PlayerProgress` | Daily limits, streaks, prestige | Persisted (progressRepo). |
+| `rivalries` (`server.go:114`) | `map[string]map[string]int` | Head-to-head meeting counts | **Lost.** |
+| `alliances` (`server.go:118`) | `map[string]*Alliance` | Guilds + treasury | Persisted (allianceRepo). |
+| `pendingFights` (`server.go:122`) | `map[string]*HorseFight` | Fights awaiting a joiner | **Lost — deducted entry fees never refunded (H-6).** Finished fights persisted. |
+| `pokerTables` (`server.go:126`) | `map[string]*PokerTable` | Poker/hold'em tables | Persisted, but Hold'em fields truncated (H-10). |
+| `departures` (`server.go:128`) | `map[string]*DepartureRecord` | Glue/fight departures + omen state | Persisted (departureRepo). |
+| `jackpotPool` / `jackpotLastWinner` / `jackpotLastAmount` (`server.go:132-134`) | `int64`/`string`/`int64` | Progressive slot jackpot | **Lost — resets to seed 500 (M-2); all 2%-of-wager contributions gone.** |
+| `stableMus` (`server.go:139`) | `map[string]*sync.Mutex` | Per-stable locks | Lost (fine). |
+| `trainer.sessions` (`trainussy.go:25`) | `map[string][]*TrainingSession` | Per-horse training history | Persisted separately via `persistTrainingSession`; in-memory copy lost. |
+| `raceHistory` (`tournussy.go:26-31`) | slices + maps | All race results (indexed) | Rehydrated from `race_results`. |
+| `trades` (`pedigreussy.go:424-427`) | `map[string]*TradeOffer` | Trade offers | Rehydrated from `trade_offers`. |
+| `tournaments` (`tournussy.go:384-388`) | `map[string]*Tournament` | Tournaments + standings | Rehydrated from `tournaments`. |
+| `hub.clients` (`commussy.go:29`) | `map[*Client]bool` | WS connections | Lost (correct). |
+| All `Race`/`RaceEntry`/`TickEvent` | — | Live race sim objects | No `races` table; only derived `race_results` + `race_replays` persist. |
+
+---
+
+## Unwired / Stubbed Systems
+
+Systems spec'd in docs but not reachable / not real via HTTP:
+
+- **Tournament round betting** — the pool is opened and immediately closed before simulation (`server.go:2964-2974`), so no one can bet on tournament rounds. Comment admits "future async implementation."
+- **`async_draw_poker` / `slot_machine` capabilities** — `TestHandleCapabilities` (`server_test.go:343-345`) asserts these are *not* advertised; they are intentionally unexposed.
+- **CASINO_DESIGN_SPEC.md vs shipped slots** — spec specifies **20 fixed paylines**, a YOGURT/GOLDEN-HORSESHOE/SEVEN symbol set, Yogurt Vault + Glue Factory Roulette + Photo Finish bonus rounds, SNG poker tournaments, 5% poker rake, daily spin/hand caps, "Touch Grass" wellness screen, table tiers, Wild-Stallion variant, and mascot perks. **None of these ship.** The live game is 9 paylines with a different symbol set (`casino.go:33-106`), free-spins only, no rake, no daily caps.
+- **MULTIPLAYER_ENGAGEMENT_RESEARCH.md** proposals not implemented: rivalries UI (map exists but no HTTP surface), spectator reactions, sponsorships, insurance, breeding contracts w/ escrow, daily-challenge templates, weekly seasons/championships, limited-time events, bounties, gifting/lending, sabotage items, mythic horses, dynasty-tier rewards, trait fusion, topic-based WS subscriptions.
+- **Dead handlers/helpers**: `grantReturnLoreTrait`, `describeSpin`, `slotMultiplier`, `containsSymbol` (L-1); `drawPoker()` frontend stub; `loreTooltip`/`loreText` frontend functions never invoked.
+- **Achievements meant to be granted by direct call are never granted**: `CheckAchievements` (`tournussy.go:1321+`) documents that `tournament_winner`, `first_sale`, `market_mogul`, `streak_7`, `first_trade`, `first_challenge` must be granted directly by handlers — searching server.go shows only `betting_winner` (`server.go:6562`) is granted this way; the others are effectively unobtainable unless the corresponding handler calls `grantAchievementToStable`.
+
+---
+
+## Economic Loop Analysis
+
+**Currency:** `cummies` (`Stable.Cummies`) is the primary currency; `casino_chips` is a secondary, largely one-way sink. Starting balance is 5000 cummies (`stableussy.go:105`).
+
+### Sources (create cummies)
+| Source | Where | Funded by |
+|---|---|---|
+| Custom race purse payout | `server.go:1610`,`3159` | The purse-funding stable (debited `server.go:1302`) — **balanced**. |
+| **Quick / challenge race purse** | `server.go:1381`,`4524`,`4762` | **Nobody — C-3, money from nothing.** |
+| **Tournament prizes (double)** | `server.go:3159` + `server.go:3248` | Entry fees, but paid ~2× — **C-2, net creation.** |
+| **Bot challenge 2× payout** | `server.go:4546` | Only challenger funds half — **H-5, net creation.** |
+| Season-end rewards | `server.go:4029` | House (design faucet). |
+| Daily login reward | `server.go:5910` | House (design faucet). |
+| Glue factory | `server.go:9610` (`glueProduced*10 + eloBonus`) | House (design sink-offset). |
+| **Daily casino chips → cashout** | `casino.go:949` → `casino.go:205` | House — 400 free cummies/day/user (**M-1**). |
+| Bet payout | `server.go:6557` | Betting pool (pari-mutuel, 10% house cut, **balanced**). |
+| Auction seller payout | `server.go:7540` | Buyer escrow — but **H-1** can mint if crash-timed. |
+| Fight purse | `server.go:9211`,`9393` (`EntryFee*2`) | Both fighters' fees — balanced, except unrefunded orphan pending fights (H-6). |
+| Alliance disband treasury split | `server.go:8427` | Prior donations — balanced. |
+
+### Sinks (burn / remove cummies)
+- Market 2% burn (`marketussy.go:192`), min 1.
+- Auction 5% Geoffrussy tax (`models.go:713`).
+- Tournament ~5% burn on prize distribution (`server.go:3215`).
+- Betting 10% house cut (`server.go:6525`).
+- Casino chip exchange 60% round-trip haircut (`casino.go:192`,`205`).
+- Slots/poker house edge.
+- Injury heal costs (`models.go:178-191`), alliance creation 500 (`server.go:8058`).
+
+### Where the loop breaks
+1. **Net inflation**: C-2 (tournament double), C-3 (unfunded quick/challenge purses), H-5 (bot 2×), plus C-1 poker double-settle and H-1 auction mint — these outpace the sinks and let a player farm cummies via the 6/day race cap and casino grinding.
+2. **Money duplication across restart**: C-4 (trade rollback restores buyer cummies while keeping the horse), H-6 (escrowed bets/fees lost but the in-memory game already paid out), M-2 (jackpot mint).
+3. **Negative balances possible**: C-9 (no DB floor + absolute-value writes + unlocked reads).
+4. **Free value leaks**: M-1 (400 free cummies/day), M-7 (free horse via ≤0-price trade), C-6 (self-purchase for only the burn), C-8 (purse lost, a *deflationary* leak that still frustrates players).
+
+---
+
+## Balance Parameter Inventory
+
+| Parameter | Value | file:line | Assessment |
+|---|---|---|---|
+| Starting stable cummies | 5000 | `stableussy.go:105` | Reasonable. |
+| Quick race purse | 200 | `server.go:5576` | **Unfunded (C-3).** |
+| Challenge base purse (bot) | 250 | `server.go:5577` | **Unfunded (C-3/H-5).** |
+| Challenge base purse (PvP) | 500 | `server.go:4729` | Unfunded (C-3). |
+| Breeding cooldown | 4 h | `server.go:5573` | Bypassable (C-5). |
+| Daily trains / races | 5 / 10 (model), 6 / 6 (DB) | `models.go:637-638` / `migrations.go:202-203` | **Mismatch (M-12).** |
+| Casino chip buy rate | 25 cummies/chip | `casino.go:21` | House edge. |
+| Casino chip cashout rate | 10 cummies/chip | `casino.go:205` | 60% haircut (M-8). |
+| Casino protected floor | 500 cummies | `casino.go:22` | Prevents casino bankruptcy. |
+| Daily casino chip grant | 40 chips | `casino.go:23` | 400 free cummies/day (M-1). |
+| Slot jackpot seed / min payout | 500 / 1000 | `casino.go:109`,`112` | **Min > seed → mint (M-2).** |
+| Slot jackpot contribution | 2% of wager | `casino.go:580` | RAM-only (M-2). |
+| Slot symbol weights | 60-stop reel, WILD×2…CHERRY×9 | `casino.go:56-72` | Targets ~94% RTP; unverified by Monte Carlo. |
+| Slot paylines | 9 (spec wants 20) | `casino.go:82-92` | Divergence from spec. |
+| Betting house cut | 10% | `server.go:6229` | Sink. |
+| Bet min / max / per-race cap | 10 / 100000 / 3 | `server.go:6407-6447` | Server-enforced (good). |
+| Market burn | 2%, min 1 | `marketussy.go:192` | Sink. |
+| Auction Geoffrussy tax | 5% | `models.go:713` | Sink. |
+| Tournament prize split | 60/25/10, ~5% burn | `server.go:3212-3215` | **Double-paid (C-2).** |
+| ELO K-factor / floor | 32 / 100 | `marketussy.go:344`,`355` | Standard. |
+| Gene scores | AA 1.0 / AB 0.65 / BB 0.30 | `models.go:89-98` | Tuned. |
+| Fitness-ceiling gene weights | SPD/STM 0.25, TMP 0.15, SZE/REC/INT 0.10, MUT 0.05 | `genussy.go:33-41` | Tuned, sums to 1.0. |
+| Breed ceiling jitter | ±5% | `genussy.go:218` | Clamped to [0,1]. |
+| Legendary ceiling override | 9.99 / 8.88 → clamped to 1.0 | `genussy.go:384`,`619-627` | **Clamp present — see hint verification.** |
+| speedScale (race) | 18.0 | `racussy.go:143` | Tuned; `CalcBaseSpeed` also clamps fitness to ≤1.0 (`racussy.go:161-166`). |
+| Track modifiers | 0.6–1.0 | `racussy.go:94-111` | Tuned per track. |
+| Training XP bases | Sprint 10 … MudRun 15 | `trainussy.go:43-50` | Tuned. |
+| Fatigue deltas | Sprint 15 … RestDay −24 | `trainussy.go:54-61` | Tuned. |
+| Base injury chance | 2% / 5% (>70) / 15% (>90) | `trainussy.go:341-346` | Tuned. |
+| Fight base HP/ATK/DEF | 150 / 20 / 10 × gene×fitness | `fightussy.go:149-151` | Tuned. |
+| Fight crit / dodge / mace-malfunction | 5% / 15% base / 2% | `fightussy.go:745`,`736`,`659` | Tuned. |
+| Glue payout | `50 + age*3 + races*2 + wins*5`, ×10 + ELO/10 | `server.go:9578-9582` | Uncapped house faucet. |
+
+---
+
+## Head-Start Hint Verification
+
+| Hint | Status | Evidence |
+|---|---|---|
+| marketussy purchase flow may not deactivate its listing | **Partially confirmed / by design.** `PurchaseBreeding` only deactivates when `MaxUses>0 && TimesUsed>=MaxUses` (`marketussy.go:213-216`); default `MaxUses=0` = unlimited, so a listing stays active after purchase (intentional per handoff.md BUG 2). **But** `TimesUsed`/`MaxUses` are never persisted (**H-8**), so any cap resets on restart. The server also sets `listing.Active=false` after a buy in DB write-through (`server.go:2595`) — inconsistent with the in-memory "persist" model. |
+| genussy/racussy legendary fitness outside 0–1 | **Not present (already fixed).** `CreateLegendary` clamps the 9.99/8.88 overrides to 1.0 (`genussy.go:619-627`); `CalcBaseSpeed` also clamps `CurrentFitness` to ≤1.0 (`racussy.go:161-166`). |
+| racussy trait comparison always true (fatigue vs distance in metres) | **Not present (already fixed).** `fatigue_resist` now compares `entry.Position < 0.8*distance` (both metres, `racussy.go:380`) — no fatigue-vs-distance comparison remains (grep confirmed). |
+| racussy trait never fires behind another trait's early-exit | **Not present (already fixed).** `stamina_boost` runs in its own loop (`racussy.go:434-442`), not gated by any `skipFatigue`/early-exit (grep confirmed). See **M-4** for the remaining fragility. |
+| fightussy "temporary" debuff with no restoration | **Not present (already fixed).** Mace malfunction now schedules restoration via a `tempEffect` after 3 ticks (`fightussy.go:659-673`, restored at `fightussy.go:529-532`). |
+| stableussy/server.go pointer-vs-value copy divergence | **CONFIRMED — C-5** (and root-caused in H-7). `LastBredAt` (and any non-ELO field) mutated on a GetHorse pointer after `AddHorseToStable` reallocates the slice is written to orphaned memory; `syncHorseToStable` only propagates ELO. |
+| trainussy seasonal effects push a stat ceiling above max without clamping | **Not present (already fixed).** `ApplySeasonalEffect` clamps ceiling to 1.0 in every boosting case (`trainussy.go:1556-1668`); `AgeHorse` Youth also clamps (`trainussy.go:1298-1300`). See **M-5/M-6** for the residual ratchet-toward-1.0 balance note. |
+| tournussy round counter advances before results confirmed | **CONFIRMED — H-3.** `t.CurrentRound++` at `tournussy.go:632` precedes simulation/`RecordRoundResults`; record errors are only logged (`server.go:2987-2989`). |
+
+Net: of the eight hints, **two are confirmed as live bugs** (pointer divergence, tournament round counter), and **six describe issues that a prior fix pass already addressed** — but several of those fixes are undermined by persistence gaps (H-7, H-8) and the newly-found economic exploits (C-1 through C-3, C-6, H-5) that the hint list did not cover.
