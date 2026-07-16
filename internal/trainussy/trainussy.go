@@ -424,6 +424,18 @@ func rollInjury(horse *models.Horse) (bool, string) {
 	return false, ""
 }
 
+// ImportSession appends an existing training session (e.g. loaded from DB)
+// to the in-memory per-horse history. Callers must import in chronological
+// order (oldest first) so GetTrainingHistory stays correctly ordered.
+func (t *Trainer) ImportSession(session *models.TrainingSession) {
+	if session == nil || session.HorseID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessions[session.HorseID] = append(t.sessions[session.HorseID], session)
+}
+
 // GetTrainingHistory returns all training sessions for a horse, ordered
 // chronologically (oldest first).
 func (t *Trainer) GetTrainingHistory(horseID string) []*models.TrainingSession {

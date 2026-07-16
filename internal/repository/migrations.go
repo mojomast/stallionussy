@@ -556,6 +556,60 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_player_id  ON sessions (player_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
 
+-- ===========================================================================
+-- Head-to-head challenges
+-- Previously RAM-only: pending challenges vanished on restart.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS challenges (
+    id                    TEXT PRIMARY KEY,
+    challenger_id         TEXT NOT NULL DEFAULT '',
+    challenger_name       TEXT NOT NULL DEFAULT '',
+    challenger_horse      TEXT NOT NULL DEFAULT '',
+    challenger_horse_name TEXT NOT NULL DEFAULT '',
+    defender_id           TEXT NOT NULL DEFAULT '',
+    defender_name         TEXT NOT NULL DEFAULT '',
+    defender_horse        TEXT NOT NULL DEFAULT '',
+    defender_horse_name   TEXT NOT NULL DEFAULT '',
+    wager                 BIGINT NOT NULL DEFAULT 0,
+    status                TEXT NOT NULL DEFAULT 'pending',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_challenges_status     ON challenges (status);
+CREATE INDEX IF NOT EXISTS idx_challenges_created_at ON challenges (created_at DESC);
+
+-- ===========================================================================
+-- Betting pools (pari-mutuel escrow + payout records)
+-- Previously RAM-only: escrowed bets evaporated on restart (H-6 refunded
+-- them at shutdown; now the pools themselves survive).
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS betting_pools (
+    race_id     TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'open',
+    kind        TEXT NOT NULL DEFAULT 'race',
+    horses      JSONB NOT NULL DEFAULT '[]',
+    bets        JSONB NOT NULL DEFAULT '[]',
+    total_pool  BIGINT NOT NULL DEFAULT 0,
+    house_cut   BIGINT NOT NULL DEFAULT 0,
+    opened_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    closed_at   TIMESTAMPTZ,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_betting_pools_status ON betting_pools (status);
+
+-- ===========================================================================
+-- Horse rivalries (head-to-head win counts)
+-- Previously RAM-only.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS rivalries (
+    winner_id TEXT NOT NULL,
+    loser_id  TEXT NOT NULL,
+    wins      INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (winner_id, loser_id)
+);
+
 UPDATE stables SET cummies = 0 WHERE cummies < 0;
 UPDATE stables SET casino_chips = 0 WHERE casino_chips < 0;
 DO $$

@@ -473,6 +473,56 @@ CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (o
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
 
 -- ===========================================================================
+-- Head-to-head challenges
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS challenges (
+    id                    TEXT PRIMARY KEY,
+    challenger_id         TEXT NOT NULL DEFAULT '',
+    challenger_name       TEXT NOT NULL DEFAULT '',
+    challenger_horse      TEXT NOT NULL DEFAULT '',
+    challenger_horse_name TEXT NOT NULL DEFAULT '',
+    defender_id           TEXT NOT NULL DEFAULT '',
+    defender_name         TEXT NOT NULL DEFAULT '',
+    defender_horse        TEXT NOT NULL DEFAULT '',
+    defender_horse_name   TEXT NOT NULL DEFAULT '',
+    wager                 BIGINT NOT NULL DEFAULT 0,
+    status                TEXT NOT NULL DEFAULT 'pending',
+    created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_challenges_status     ON challenges (status);
+CREATE INDEX IF NOT EXISTS idx_challenges_created_at ON challenges (created_at DESC);
+
+-- ===========================================================================
+-- Betting pools (pari-mutuel escrow + payout records)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS betting_pools (
+    race_id     TEXT PRIMARY KEY,
+    status      TEXT NOT NULL DEFAULT 'open',
+    kind        TEXT NOT NULL DEFAULT 'race',
+    horses      TEXT NOT NULL DEFAULT '[]',
+    bets        TEXT NOT NULL DEFAULT '[]',
+    total_pool  BIGINT NOT NULL DEFAULT 0,
+    house_cut   BIGINT NOT NULL DEFAULT 0,
+    opened_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at   TIMESTAMP,
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_betting_pools_status ON betting_pools (status);
+
+-- ===========================================================================
+-- Horse rivalries (head-to-head win counts)
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS rivalries (
+    winner_id TEXT NOT NULL,
+    loser_id  TEXT NOT NULL,
+    wins      INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (winner_id, loser_id)
+);
+
+-- ===========================================================================
 -- Server-side login sessions
 -- Sessions back the JWTs: a token is only honored while a matching,
 -- unexpired row exists here. Keyed by SHA-256(token) so a database leak

@@ -225,11 +225,11 @@ func TestOpenBettingPoolNeverClobbersEscrow(t *testing.T) {
 		horses = append(horses, h)
 	}
 
-	p1 := s.openBettingPool("race-x", horses)
+	p1 := s.openBettingPool("race-x", horses, models.PoolKindRace)
 	if _, msg := s.placeBet("race-x", "user-clb", "clb", horses[0].ID, 100); msg != "" {
 		t.Fatalf("placeBet: %s", msg)
 	}
-	p2 := s.openBettingPool("race-x", horses)
+	p2 := s.openBettingPool("race-x", horses, models.PoolKindRace)
 	if p1 != p2 {
 		t.Fatal("second open must return the existing pool, not a fresh one")
 	}

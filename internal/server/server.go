@@ -85,6 +85,9 @@ type Server struct {
 	breederRepo     repository.BreedingStallionRepository
 	casinoRepo      repository.CasinoRepository
 	departureRepo   repository.DepartureRepository
+	challengeRepo   repository.ChallengeRepository
+	bettingRepo     repository.BettingPoolRepository
+	rivalryRepo     repository.RivalryRepository
 
 	// Auth (nil when running without DB).
 	auth        *authussy.AuthService
@@ -307,6 +310,9 @@ func NewServer(db *postgres.DB) *Server {
 		s.breederRepo = postgres.NewBreedingStallionRepo(db)
 		s.casinoRepo = postgres.NewCasinoRepo(db)
 		s.departureRepo = postgres.NewDepartureRepo(db)
+		s.challengeRepo = postgres.NewChallengeRepo(db)
+		s.bettingRepo = postgres.NewBettingPoolRepo(db)
+		s.rivalryRepo = postgres.NewRivalryRepo(db)
 
 		// Create auth service.
 		// JWT_SECRET must be set in production (DB mode) — never fall back to a
@@ -1513,7 +1519,7 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 		// If the house can't cover the full purse, the race runs for less.
 		purse := s.debitHouseFunds(r.Context(), quickRacePurse)
 		race := racussy.NewRace(selected, trackType, purse)
-		s.openBettingPool(race.ID, selected)
+		s.openBettingPool(race.ID, selected, models.PoolKindRace)
 		result := s.runRace(selected, trackType, purse, race.ID)
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -1560,7 +1566,7 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	purse := int64(0)
 
 	race := racussy.NewRace(selected, trackType, purse)
-	s.openBettingPool(race.ID, selected)
+	s.openBettingPool(race.ID, selected, models.PoolKindRace)
 	result := s.runRace(selected, trackType, purse, race.ID)
 	writeJSON(w, http.StatusOK, result)
 }
@@ -1875,6 +1881,10 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 			s.rivalries[winnerID][entry.HorseID]++
 		}
 		s.rivalryMu.Unlock()
+		// Write-through so rivalries survive restarts.
+		for _, entry := range sorted[1:] {
+			s.persistRivalryWin(context.Background(), winnerID, entry.HorseID)
+		}
 	}
 
 	// Rivalry commentary: if two horses have raced 3+ times (combined head-to-head),
@@ -3188,7 +3198,7 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 					}
 				}
 				if len(fieldHorses) >= 2 {
-					s.openBettingPool(poolRaceID, fieldHorses)
+					s.openBettingPool(poolRaceID, fieldHorses, models.PoolKindTournament)
 				}
 			}
 		}
@@ -3284,7 +3294,7 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure a pool exists for this round (no-op returning the live pool if
 	// the pre-opened one is already there — never clobbers escrowed bets).
-	s.openBettingPool(race.ID, horses)
+	s.openBettingPool(race.ID, horses, models.PoolKindTournament)
 
 	// Generate weather.
 	weather := tournussy.RandomWeatherForTrack(tournament.TrackType)
@@ -3327,7 +3337,7 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 		// Open the next round's betting pool now — the window runs until the
 		// organizer triggers that round.
 		if updatedTournament.Status == "InProgress" && updatedTournament.CurrentRound < updatedTournament.Rounds {
-			s.openBettingPool(tournamentRoundRaceID(tournamentID, updatedTournament.CurrentRound+1), horses)
+			s.openBettingPool(tournamentRoundRaceID(tournamentID, updatedTournament.CurrentRound+1), horses, models.PoolKindTournament)
 		}
 	}
 
@@ -4872,6 +4882,7 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 	s.challengeMu.Lock()
 	s.challenges[challenge.ID] = challenge
 	s.challengeMu.Unlock()
+	s.persistChallenge(context.Background(), challenge)
 
 	// Broadcast the challenge to all connected clients.
 	wagerText := ""
@@ -4989,6 +5000,7 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 	s.challengeMu.Lock()
 	s.challenges[challenge.ID] = challenge
 	s.challengeMu.Unlock()
+	s.persistChallenge(context.Background(), challenge)
 
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type":       "challenge",
@@ -5024,6 +5036,7 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 	if time.Now().After(challenge.ExpiresAt) {
 		challenge.Status = models.ChallengeStatusExpired
 		s.challengeMu.Unlock()
+		s.persistChallenge(context.Background(), challenge)
 		return nil, "challenge has expired"
 	}
 
@@ -5214,6 +5227,7 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 	s.challengeMu.Lock()
 	challenge.Status = models.ChallengeStatusCompleted
 	s.challengeMu.Unlock()
+	s.persistChallenge(context.Background(), challenge)
 
 	// Broadcast the challenge result.
 	wagerText := ""
@@ -5261,6 +5275,7 @@ func (s *Server) declineChallenge(challengeID, userID string) string {
 	}
 
 	challenge.Status = models.ChallengeStatusDeclined
+	s.persistChallenge(context.Background(), challenge)
 
 	// No wager escrow to refund on decline (wager is only escrowed on accept).
 
@@ -5397,10 +5412,12 @@ func (s *Server) challengeExpiryLoop(ctx context.Context) {
 		case <-ticker.C:
 		}
 		now := time.Now()
+		var expired []*models.Challenge
 		s.challengeMu.Lock()
 		for _, c := range s.challenges {
 			if c.Status == models.ChallengeStatusPending && now.After(c.ExpiresAt) {
 				c.Status = models.ChallengeStatusExpired
+				expired = append(expired, c)
 				log.Printf("server: challenge %s expired (%s vs %s)",
 					c.ID, c.ChallengerName, c.DefenderName)
 
@@ -5419,6 +5436,9 @@ func (s *Server) challengeExpiryLoop(ctx context.Context) {
 			}
 		}
 		s.challengeMu.Unlock()
+		for _, c := range expired {
+			s.persistChallenge(context.Background(), c)
+		}
 	}
 }
 
@@ -6546,6 +6566,39 @@ func (s *Server) persistMarketTransaction(ctx context.Context, tx *models.Market
 	}
 }
 
+// persistChallenge writes a challenge (creation or status change) through to
+// the database. Safe to call when challengeRepo is nil.
+func (s *Server) persistChallenge(ctx context.Context, challenge *models.Challenge) {
+	if s.challengeRepo == nil || challenge == nil {
+		return
+	}
+	if err := s.challengeRepo.SaveChallenge(ctx, challenge); err != nil {
+		log.Printf("server: persistChallenge %s: %v", challenge.ID, err)
+	}
+}
+
+// persistBettingPool writes the full betting pool state (including escrowed
+// bets) through to the database. Safe to call when bettingRepo is nil.
+func (s *Server) persistBettingPool(ctx context.Context, pool *models.BettingPool) {
+	if s.bettingRepo == nil || pool == nil {
+		return
+	}
+	if err := s.bettingRepo.SavePool(ctx, pool); err != nil {
+		log.Printf("server: persistBettingPool %s: %v", pool.RaceID, err)
+	}
+}
+
+// persistRivalryWin increments a rivalry pair in the database. Safe to call
+// when rivalryRepo is nil.
+func (s *Server) persistRivalryWin(ctx context.Context, winnerID, loserID string) {
+	if s.rivalryRepo == nil {
+		return
+	}
+	if err := s.rivalryRepo.IncrementRivalry(ctx, winnerID, loserID); err != nil {
+		log.Printf("server: persistRivalryWin %s>%s: %v", winnerID, loserID, err)
+	}
+}
+
 // ===========================================================================
 // Database loading — hydrate in-memory state from PostgreSQL on startup
 // ===========================================================================
@@ -6776,6 +6829,127 @@ func (s *Server) loadFromDB() {
 			}
 		}
 	}
+
+	// 11. Rehydrate challenges: pending challenges resume, recent completed
+	// ones keep the history endpoint populated. A challenge caught mid-accept
+	// by a crash reloads as "pending" again — wager escrow only persists at
+	// settlement, so this matches the persisted stable balances.
+	if s.challengeRepo != nil {
+		dbChallenges, err := s.challengeRepo.ListChallenges(ctx, 500)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load challenges: %v", err)
+		} else {
+			now := time.Now()
+			s.challengeMu.Lock()
+			for _, c := range dbChallenges {
+				if c == nil {
+					continue
+				}
+				if c.Status == models.ChallengeStatusAccepted {
+					if now.After(c.ExpiresAt) {
+						c.Status = models.ChallengeStatusExpired
+					} else {
+						c.Status = models.ChallengeStatusPending
+					}
+				}
+				s.challenges[c.ID] = c
+			}
+			s.challengeMu.Unlock()
+			if len(dbChallenges) > 0 {
+				log.Printf("server: loadFromDB: restored %d challenges", len(dbChallenges))
+			}
+		}
+	}
+
+	// 12. Rehydrate unresolved betting pools — including their escrowed
+	// bets, which previously evaporated on restart (H-6). Exhibition pools
+	// get their resolution timers rescheduled in Start().
+	if s.bettingRepo != nil {
+		pools, err := s.bettingRepo.ListUnresolvedPools(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load betting pools: %v", err)
+		} else {
+			s.bettingMu.Lock()
+			for _, pool := range pools {
+				if pool != nil {
+					s.bettingPools[pool.RaceID] = pool
+				}
+			}
+			s.bettingMu.Unlock()
+			// Reschedule exhibition resolutions: an open exhibition pool
+			// resumes the remainder of its betting window (with a small
+			// grace period); one that was already closed — or whose window
+			// elapsed while the server was down — resolves right away.
+			// Tournament pools resume via organizer round advancement, and
+			// anything abandoned is refunded by the stale-pool sweep.
+			for _, pool := range pools {
+				if pool == nil || pool.Kind != models.PoolKindExhibition {
+					continue
+				}
+				window := s.bettingWindow
+				if window <= 0 {
+					window = defaultBettingWindow
+				}
+				remaining := time.Until(pool.OpenedAt.Add(window))
+				const grace = 5 * time.Second
+				if remaining < grace || pool.Status == "closed" {
+					remaining = grace
+				}
+				raceID := pool.RaceID
+				time.AfterFunc(remaining, func() { s.resolveExhibitionPool(raceID) })
+			}
+			if len(pools) > 0 {
+				log.Printf("server: loadFromDB: restored %d unresolved betting pools", len(pools))
+			}
+		}
+	}
+
+	// 13. Rehydrate horse rivalries.
+	if s.rivalryRepo != nil {
+		matrix, err := s.rivalryRepo.ListRivalries(ctx)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load rivalries: %v", err)
+		} else if len(matrix) > 0 {
+			s.rivalryMu.Lock()
+			s.rivalries = matrix
+			s.rivalryMu.Unlock()
+			log.Printf("server: loadFromDB: restored rivalries for %d horses", len(matrix))
+		}
+	}
+
+	// 14. Rehydrate market transaction history (and the burn total) so the
+	// market_mogul counter and transaction endpoints see the full record,
+	// not just transactions since the last restart. GetRecentTransactions
+	// returns newest first; import oldest first to preserve order.
+	if s.marketTxRepo != nil {
+		txs, err := s.marketTxRepo.GetRecentTransactions(ctx, 100000)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load market transactions: %v", err)
+		} else {
+			for i := len(txs) - 1; i >= 0; i-- {
+				s.market.ImportTransaction(txs[i])
+			}
+			if len(txs) > 0 {
+				log.Printf("server: loadFromDB: restored %d market transactions", len(txs))
+			}
+		}
+	}
+
+	// 15. Rehydrate per-horse training history. GetRecentSessions returns
+	// newest first; import oldest first so histories stay chronological.
+	if s.trainingRepo != nil {
+		sessions, err := s.trainingRepo.GetRecentSessions(ctx, 100000)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load training sessions: %v", err)
+		} else {
+			for i := len(sessions) - 1; i >= 0; i-- {
+				s.trainer.ImportSession(sessions[i])
+			}
+			if len(sessions) > 0 {
+				log.Printf("server: loadFromDB: restored %d training sessions", len(sessions))
+			}
+		}
+	}
 }
 
 // ===========================================================================
@@ -6798,11 +6972,12 @@ const bettingHouseCutPct = 0.10 // 10% house cut on betting pools.
 // ---------------------------------------------------------------------------
 // Escrow refunds (H-6)
 //
-// Betting pools are RAM-only and pending fights used to be: cummies escrowed
-// into either were simply lost if the pool never resolved, the fight never
-// found a challenger, or the process restarted. Pending fights are now
-// rehydrated from the DB on startup (see loadFromDB), and this sweep refunds
-// both kinds of stale escrow.
+// Betting pools and pending fights both used to be RAM-only: cummies
+// escrowed into either were simply lost if the pool never resolved, the
+// fight never found a challenger, or the process restarted. Both are now
+// persisted and rehydrated from the DB on startup (see loadFromDB), so a
+// restart preserves escrow; this sweep refunds escrow that goes stale while
+// the server is running (abandoned pools, unmatched fights).
 // ---------------------------------------------------------------------------
 
 const (
@@ -6810,18 +6985,16 @@ const (
 	bettingPoolMaxAge  = 15 * time.Minute // unresolved pools refund after this
 )
 
-// escrowRefundLoop periodically refunds stale escrows. On shutdown it
-// refunds every outstanding betting pool, since pools do not survive a
-// restart.
+// escrowRefundLoop periodically refunds stale escrows. Betting pools are
+// persisted and rehydrated across restarts, so shutdown no longer refunds
+// them — an open pool (and its escrowed bets) simply resumes when the
+// server comes back.
 func (s *Server) escrowRefundLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			// Graceful shutdown: refund all unresolved pools before the
-			// escrowed bets vanish with the process.
-			s.refundStaleBettingPools(0)
 			return
 		case <-ticker.C:
 			s.expirePendingFights(pendingFightMaxAge)
@@ -6869,7 +7042,7 @@ func (s *Server) expirePendingFights(maxAge time.Duration) int {
 }
 
 // refundStaleBettingPools refunds every bet in unresolved pools older than
-// maxAge. A maxAge of 0 refunds ALL outstanding pools (shutdown path).
+// maxAge. A maxAge of 0 refunds ALL outstanding pools.
 // Returns the number of bets refunded.
 func (s *Server) refundStaleBettingPools(maxAge time.Duration) int {
 	now := time.Now()
@@ -6892,6 +7065,7 @@ func (s *Server) refundStaleBettingPools(maxAge time.Duration) int {
 	refunded := 0
 	for _, pool := range stale {
 		refunded += s.refundPoolBets(pool)
+		s.persistBettingPool(context.Background(), pool)
 	}
 	return refunded
 }
@@ -6909,7 +7083,9 @@ func (s *Server) refundBettingPool(raceID string) int {
 	delete(s.bettingPools, raceID)
 	s.bettingMu.Unlock()
 
-	return s.refundPoolBets(pool)
+	refunded := s.refundPoolBets(pool)
+	s.persistBettingPool(context.Background(), pool)
+	return refunded
 }
 
 // refundPoolBets returns every escrowed bet in an already-detached pool.
@@ -6949,8 +7125,10 @@ func (s *Server) refundPoolBets(pool *models.BettingPool) int {
 // ---------------------------------------------------------------------------
 
 // openBettingPool creates a new betting pool for a race. The horses slice
-// defines which horses can be bet on. Returns the created pool.
-func (s *Server) openBettingPool(raceID string, horses []*models.Horse) *models.BettingPool {
+// defines which horses can be bet on; kind classifies the pool (race /
+// exhibition / tournament) so rehydration knows how to resume it after a
+// restart. Returns the created pool.
+func (s *Server) openBettingPool(raceID string, horses []*models.Horse, kind string) *models.BettingPool {
 	s.bettingMu.Lock()
 	defer s.bettingMu.Unlock()
 
@@ -6969,13 +7147,18 @@ func (s *Server) openBettingPool(raceID string, horses []*models.Horse) *models.
 		}
 	}
 
+	if kind == "" {
+		kind = models.PoolKindRace
+	}
 	pool := &models.BettingPool{
 		RaceID:   raceID,
 		Status:   "open",
+		Kind:     kind,
 		Horses:   bettingHorses,
 		OpenedAt: time.Now(),
 	}
 	s.bettingPools[raceID] = pool
+	s.persistBettingPool(context.Background(), pool)
 
 	// Broadcast pool opened event.
 	s.hub.BroadcastJSON(map[string]interface{}{
@@ -7018,6 +7201,7 @@ func (s *Server) addHorseToBettingPool(raceID string, horse *models.Horse) {
 		HorseName: horse.Name,
 	})
 	s.calcOddsLocked(pool)
+	s.persistBettingPool(context.Background(), pool)
 }
 
 // closeBettingPool marks a pool as "closed" so no more bets are accepted.
@@ -7034,6 +7218,7 @@ func (s *Server) closeBettingPool(raceID string) {
 
 	// Recalculate final odds before closing.
 	s.calcOddsLocked(pool)
+	s.persistBettingPool(context.Background(), pool)
 
 	// Broadcast pool closed event.
 	s.hub.BroadcastJSON(map[string]interface{}{
@@ -7137,6 +7322,10 @@ func (s *Server) placeBet(raceID, userID, username, horseID string, amount int64
 	// Recalculate odds.
 	s.calcOddsLocked(pool)
 
+	// Persist the pool with its new escrowed bet: the stable was already
+	// debited above, so the escrow must survive a restart.
+	s.persistBettingPool(context.Background(), pool)
+
 	// Broadcast bet update.
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type":      "betting_update",
@@ -7173,6 +7362,7 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 	if len(pool.Bets) == 0 {
 		// No bets placed — nothing to resolve.
 		delete(s.bettingPools, raceID)
+		s.persistBettingPool(context.Background(), pool)
 		return 0
 	}
 
@@ -7273,6 +7463,10 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 
 	log.Printf("server: betting resolved for race %s — %d winners, pool: ₵%d, house cut: ₵%d",
 		raceID, winnerCount, pool.TotalPool, houseCut)
+
+	// Persist the resolved pool (with per-bet payout/won flags) as the
+	// permanent payout record.
+	s.persistBettingPool(context.Background(), pool)
 
 	// Clean up old pools after a delay (keep for 5 minutes for queries).
 	go func() {
@@ -7391,7 +7585,7 @@ func (s *Server) handleOpenBettingPool(w http.ResponseWriter, r *http.Request) {
 		horses = append(horses, h)
 	}
 
-	pool := s.openBettingPool(req.RaceID, horses)
+	pool := s.openBettingPool(req.RaceID, horses, models.PoolKindExhibition)
 
 	// Wiring fix (Part B.1/B.5): user-opened pools previously never resolved
 	// — races run synchronously with server-generated UUIDs, so no future

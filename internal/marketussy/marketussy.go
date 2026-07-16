@@ -50,6 +50,16 @@ func (m *Market) ImportListing(listing *models.StudListing) {
 	m.listings[listing.ID] = listing
 }
 
+// ImportTransaction appends an existing transaction (e.g. loaded from DB) to
+// the in-memory history and folds its burn into the running total. Callers
+// must import in chronological order (oldest first).
+func (m *Market) ImportTransaction(tx *models.MarketTransaction) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.transactions = append(m.transactions, tx)
+	m.totalBurned += tx.BurnAmount
+}
+
 // ---------------------------------------------------------------------------
 // Listing CRUD
 // ---------------------------------------------------------------------------

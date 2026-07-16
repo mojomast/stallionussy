@@ -567,7 +567,8 @@ type Bet struct {
 // BettingPool tracks all bets for a single race.
 type BettingPool struct {
 	RaceID    string         `json:"raceID"`
-	Status    string         `json:"status"` // open, closed, resolved
+	Status    string         `json:"status"`         // open, closed, resolved, refunded
+	Kind      string         `json:"kind,omitempty"` // race, exhibition, tournament
 	Horses    []BettingHorse `json:"horses"`
 	TotalPool int64          `json:"totalPool"`
 	Bets      []Bet          `json:"bets"`
@@ -575,6 +576,15 @@ type BettingPool struct {
 	OpenedAt  time.Time      `json:"openedAt"`
 	ClosedAt  time.Time      `json:"closedAt"`
 }
+
+// BettingPool kinds. Exhibition pools are user-opened and self-resolve on a
+// timer after the betting window; race/tournament pools are opened and
+// resolved by their race flow.
+const (
+	PoolKindRace       = "race"
+	PoolKindExhibition = "exhibition"
+	PoolKindTournament = "tournament"
+)
 
 // BettingHorse represents a horse's odds and total bet amount in a betting pool.
 type BettingHorse struct {

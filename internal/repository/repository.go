@@ -417,6 +417,53 @@ type GlueFactoryRepository interface {
 }
 
 // ---------------------------------------------------------------------------
+// ChallengeRepository — head-to-head challenges
+// ---------------------------------------------------------------------------
+
+// ChallengeRepository persists head-to-head race challenges so pending
+// challenges (and recent history) survive server restarts.
+type ChallengeRepository interface {
+	// SaveChallenge upserts a challenge (created or status change).
+	SaveChallenge(ctx context.Context, challenge *models.Challenge) error
+
+	// ListChallenges returns the most recent challenges, newest first.
+	ListChallenges(ctx context.Context, limit int) ([]*models.Challenge, error)
+}
+
+// ---------------------------------------------------------------------------
+// BettingPoolRepository — pari-mutuel betting pools
+// ---------------------------------------------------------------------------
+
+// BettingPoolRepository persists betting pools (including their escrowed
+// bets) so open pools — and the cummies escrowed into them — survive server
+// restarts. Resolved/refunded pools are kept as payout records.
+type BettingPoolRepository interface {
+	// SavePool upserts the full pool state (horses, bets, status, totals).
+	SavePool(ctx context.Context, pool *models.BettingPool) error
+
+	// GetPool retrieves a pool by race ID. Returns nil, nil when absent.
+	GetPool(ctx context.Context, raceID string) (*models.BettingPool, error)
+
+	// ListUnresolvedPools returns every pool still in "open" or "closed"
+	// status (i.e. carrying live escrow), for startup rehydration.
+	ListUnresolvedPools(ctx context.Context) ([]*models.BettingPool, error)
+}
+
+// ---------------------------------------------------------------------------
+// RivalryRepository — head-to-head horse rivalry counts
+// ---------------------------------------------------------------------------
+
+// RivalryRepository persists horse rivalry win counts.
+type RivalryRepository interface {
+	// IncrementRivalry adds one win for winnerID over loserID (upsert).
+	IncrementRivalry(ctx context.Context, winnerID, loserID string) error
+
+	// ListRivalries returns the full rivalry matrix:
+	// map[winnerID]map[loserID]wins.
+	ListRivalries(ctx context.Context) (map[string]map[string]int, error)
+}
+
+// ---------------------------------------------------------------------------
 // BreedingStallionRepository — permanent stud duty records
 // ---------------------------------------------------------------------------
 
