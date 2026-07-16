@@ -2546,8 +2546,31 @@ func (s *Server) handleCreateListing(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
+	// Achievement wiring (Phase 3): first_sale ("List your first horse on
+	// the stud market") was defined but never granted by any handler.
+	if listerStable := s.getStableForHorse(horse.ID); listerStable != nil {
+		s.grantAchievementToStable(listerStable, "first_sale")
+	}
+
 	log.Printf("server: listed horse %q (%s) on stud market for %d cummies", horse.Name, horse.ID, req.Price)
 	writeJSON(w, http.StatusCreated, listing)
+}
+
+// countMarketTransactionsForUser counts stud-market transactions where the
+// user was buyer or seller. In-memory history (rehydration of historical
+// transactions is not wired), so the market_mogul counter effectively counts
+// transactions since the last restart — a floor, never an overcount.
+func (s *Server) countMarketTransactionsForUser(userID string) int {
+	if userID == "" {
+		return 0
+	}
+	count := 0
+	for _, tx := range s.market.GetTransactionHistory() {
+		if tx.BuyerID == userID || tx.SellerID == userID {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
@@ -2682,11 +2705,26 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Transfer cummies from buyer to seller (minus burn).
-	transferAmount := listing.Price - tx.BurnAmount
-	if err := s.stables.TransferCummies(req.BuyerStableID, sellerStableID, transferAmount); err != nil {
+	// Transfer the seller's payout, then destroy the burn. Leak fix
+	// (Phase 3): the buyer used to pay only price-burn, so the "2%
+	// deflationary burn" was really a buyer discount — no cummies ever left
+	// the economy. The buyer now pays the full price: sellerPayout moves to
+	// the seller and burnAmount is removed from the buyer's balance.
+	if err := s.stables.TransferCummies(req.BuyerStableID, sellerStableID, tx.SellerPayout); err != nil {
 		writeError(w, http.StatusBadRequest, "payment failed: "+err.Error())
 		return
+	}
+	if tx.BurnAmount > 0 {
+		burnMu := s.stableMu(req.BuyerStableID)
+		burnMu.Lock()
+		if buyerStable.Cummies >= tx.BurnAmount {
+			buyerStable.Cummies -= tx.BurnAmount
+		} else {
+			// PurchaseBreeding verified the buyer could afford the full
+			// price; this only triggers on a concurrent spend mid-purchase.
+			buyerStable.Cummies = 0
+		}
+		burnMu.Unlock()
 	}
 
 	// Write-through: persist updated balances for both buyer and seller stables.
@@ -2730,6 +2768,17 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 
 	// Write-through: persist the market transaction to DB.
 	s.persistMarketTransaction(r.Context(), tx)
+
+	// Achievement wiring (Phase 3): market_mogul ("Complete 10 stud market
+	// transactions") was defined but never granted by any handler.
+	if s.countMarketTransactionsForUser(buyerStable.OwnerID) >= 10 {
+		s.grantAchievementToStable(buyerStable, "market_mogul")
+	}
+	if sellerStable, err := s.stables.GetStable(sellerStableID); err == nil {
+		if s.countMarketTransactionsForUser(sellerStable.OwnerID) >= 10 {
+			s.grantAchievementToStable(sellerStable, "market_mogul")
+		}
+	}
 
 	log.Printf("server: stud purchase — %s bought breeding from %s, foal %q (%s) for %d cummies (burned %d)",
 		buyerStable.OwnerID, listing.OwnerID, foal.Name, foal.ID, listing.Price, tx.BurnAmount)
@@ -3461,6 +3510,12 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 
 		log.Printf("server: tournament %s — %s place: %s (%s) receives %d cummies",
 			tournament.Name, ordinal(i+1), stable.Name, stable.ID, prize)
+	}
+
+	// Achievement wiring (Phase 3): tournament_winner ("Win a tournament")
+	// was defined but never granted by any handler.
+	if championStable != nil {
+		s.grantAchievementToStable(championStable, "tournament_winner")
 	}
 
 	// Leak fix (Phase 3): with fewer than 3 finishers (or an unresolvable
@@ -10190,9 +10245,26 @@ func (s *Server) handleSendToGlue(w http.ResponseWriter, r *http.Request) {
 	// Base glue = 50 + (age * 3) + (races * 2) + (wins * 5)
 	glueProduced := int64(50) + int64(horse.Age)*3 + int64(horse.Races)*2 + int64(horse.Wins)*5
 
-	// Cummies earned = glue * 10 + ELO bonus
-	eloBonus := int64(horse.ELO / 10.0)
+	// Balance fix (Phase 3): a freshly bred foal (free to produce, 4h
+	// cooldown) yielded 500+ cummies at the factory — an infinite
+	// breed-to-glue money pump. Foals under age 2 are barely weaned and
+	// render down to almost nothing.
+	if horse.Age < 2 {
+		glueProduced = 15 // mostly hoof trimmings and existential regret
+	}
+
+	// Cummies earned = glue * 10 + ELO bonus. The ELO bonus only counts
+	// rating PROVEN above the 1200 starting value — an unraced foal used to
+	// mint 120 cummies from its default rating alone.
+	eloBonus := int64((horse.ELO - 1200) / 10.0)
+	if eloBonus < 0 {
+		eloBonus = 0
+	}
 	cummiesEarned := glueProduced*10 + eloBonus
+
+	// The factory pays from the House of USSY treasury (bounded), not from
+	// thin air. If the house runs dry the payout shrinks to what it has.
+	cummiesEarned = s.debitHouseFunds(r.Context(), cummiesEarned)
 
 	// Random bonus material.
 	bonusMaterial := glueBonusMaterials[rand.IntN(len(glueBonusMaterials))]
