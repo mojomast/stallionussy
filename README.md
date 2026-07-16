@@ -138,6 +138,18 @@ postgres://stallionussy:h0rs3ussy420@localhost/stallionussy?sslmode=disable
 
 Override with `DATABASE_URL`.
 
+### Sessions
+
+Logins are backed by a server-side session store (`sessions` table): every
+issued JWT gets a session row (keyed by the token's SHA-256 hash), each
+authenticated request refreshes the session's `last_seen`, and expired or
+revoked sessions are rejected and purged hourly. Because sessions live in the
+database, players stay logged in across server restarts.
+
+Session lifetime is configurable via `STALLION_SESSION_TTL` (Go duration
+syntax, e.g. `24h`, `720h`). Default: `168h` (one week). The JWT expiry always
+matches the session TTL so both age out together.
+
 ## Run
 
 ```bash

@@ -473,6 +473,24 @@ CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (o
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
 
 -- ===========================================================================
+-- Server-side login sessions
+-- Sessions back the JWTs: a token is only honored while a matching,
+-- unexpired row exists here. Keyed by SHA-256(token) so a database leak
+-- never exposes replayable credentials. Rows survive restarts, so valid
+-- logins do too.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    player_id   TEXT NOT NULL,
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at  TIMESTAMP NOT NULL,
+    last_seen   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_player_id  ON sessions (player_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+
+-- ===========================================================================
 -- Progressive slot jackpot (M-2)
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS casino_jackpot (

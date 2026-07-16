@@ -68,6 +68,18 @@ type AuthService struct {
 	// token_version from the DB for a given user ID. When set, the auth
 	// middleware will reject tokens whose version doesn't match.
 	GetTokenVersion func(ctx context.Context, userID string) (int, error)
+
+	// CreateSession is an optional callback invoked whenever a token is
+	// issued (login/register/refresh). When set, the server records a
+	// server-side session for the token so logins survive restarts and can
+	// be revoked.
+	CreateSession func(ctx context.Context, userID, token string) error
+
+	// ValidateSession is an optional callback invoked by the middleware
+	// after JWT validation. When set, a structurally valid JWT is only
+	// honored while its server-side session exists and has not expired;
+	// the callback also refreshes the session's last_seen timestamp.
+	ValidateSession func(ctx context.Context, token string) error
 }
 
 // NewAuthService creates a new AuthService. If expiration is 0, it defaults
@@ -235,6 +247,16 @@ func (a *AuthService) AuthMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
+		// Check the server-side session store: a token is only honored while
+		// its session row exists and has not expired. This also bumps the
+		// session's last_seen timestamp.
+		if a.ValidateSession != nil {
+			if err := a.ValidateSession(r.Context(), tokenString); err != nil {
+				writeJSONError(w, http.StatusUnauthorized, "session expired or revoked — please log in again")
+				return
+			}
+		}
+
 		// Store claims in request context and continue.
 		ctx := context.WithValue(r.Context(), UserContextKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -266,6 +288,15 @@ func NewAuthHandler(auth *AuthService, users repository.UserRepository, createSt
 		users:        users,
 		createStable: createStableFn,
 	}
+}
+
+// issueSession records a server-side session for a freshly minted token.
+// A nil CreateSession callback (in-memory mode) makes this a no-op.
+func (h *AuthHandler) issueSession(ctx context.Context, userID, token string) error {
+	if h.auth.CreateSession == nil {
+		return nil
+	}
+	return h.auth.CreateSession(ctx, userID, token)
 }
 
 // usernameRegex validates usernames: 3-32 chars, alphanumeric + underscore.
@@ -373,6 +404,11 @@ func (h *AuthHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.issueSession(r.Context(), user.ID, token); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to create session")
+		return
+	}
+
 	writeJSON(w, http.StatusCreated, authResponse{
 		Token: token,
 		User:  user,
@@ -414,6 +450,11 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	token, err := h.auth.GenerateToken(user)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	if err := h.issueSession(r.Context(), user.ID, token); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 
@@ -481,6 +522,13 @@ func (h *AuthHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	token, err := h.auth.GenerateToken(user)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to generate token")
+		return
+	}
+
+	// Register a session for the fresh token. The old token's session is
+	// left to age out at its original expiry.
+	if err := h.issueSession(r.Context(), user.ID, token); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 

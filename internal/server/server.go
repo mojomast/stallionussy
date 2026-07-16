@@ -8,6 +8,8 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -88,6 +90,11 @@ type Server struct {
 	auth        *authussy.AuthService
 	authHandler *authussy.AuthHandler
 
+	// Server-side session store (nil when running without DB). Sessions
+	// back the JWTs so logins survive restarts and can be revoked.
+	sessionRepo repository.SessionRepository
+	sessionTTL  time.Duration
+
 	// Head-to-head challenges (in-memory store).
 	challenges  map[string]*models.Challenge
 	challengeMu sync.RWMutex
@@ -156,6 +163,59 @@ type Server struct {
 }
 
 const starterHorseCount = 2
+
+// defaultSessionTTL is how long a login session (and its JWT) stays valid
+// when STALLION_SESSION_TTL is not set: one week.
+const defaultSessionTTL = 168 * time.Hour
+
+// resolveSessionTTL reads STALLION_SESSION_TTL (Go duration syntax, e.g.
+// "24h", "720h") and falls back to defaultSessionTTL when unset or invalid.
+func resolveSessionTTL() time.Duration {
+	raw := os.Getenv("STALLION_SESSION_TTL")
+	if raw == "" {
+		return defaultSessionTTL
+	}
+	ttl, err := time.ParseDuration(raw)
+	if err != nil || ttl <= 0 {
+		log.Printf("server: invalid STALLION_SESSION_TTL %q (%v) — using default %s", raw, err, defaultSessionTTL)
+		return defaultSessionTTL
+	}
+	return ttl
+}
+
+// hashSessionToken derives the storage key for a session from its JWT.
+// Only this SHA-256 hash ever touches the database, never the raw token.
+func hashSessionToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// sessionPurgeLoop periodically deletes expired session rows so the table
+// doesn't accumulate dead logins. Runs hourly; also sweeps once at startup.
+func (s *Server) sessionPurgeLoop(ctx context.Context) {
+	if s.sessionRepo == nil {
+		return
+	}
+	purge := func() {
+		n, err := s.sessionRepo.DeleteExpiredSessions(ctx, time.Now().UTC())
+		if err != nil {
+			log.Printf("server: session purge failed: %v", err)
+		} else if n > 0 {
+			log.Printf("server: purged %d expired session(s)", n)
+		}
+	}
+	purge()
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
+}
 
 // stableMu returns the per-stable mutex for the given stableID, creating one
 // lazily if it doesn't exist yet. This must be used to serialize any
@@ -257,11 +317,45 @@ func NewServer(db *postgres.DB) *Server {
 				"Refusing to start in database mode with an empty secret. " +
 				"Set JWT_SECRET to a strong random value before running.")
 		}
-		s.auth = authussy.NewAuthService(jwtSecret, 1*time.Hour)
+
+		// Session lifetime — also the JWT expiry, so the token and its
+		// server-side session always age out together. Configurable via
+		// STALLION_SESSION_TTL (Go duration syntax, e.g. "24h", "720h").
+		s.sessionTTL = resolveSessionTTL()
+		log.Printf("server: session TTL set to %s (STALLION_SESSION_TTL)", s.sessionTTL)
+
+		s.auth = authussy.NewAuthService(jwtSecret, s.sessionTTL)
 
 		// Wire up token version checking so the auth middleware can reject
 		// tokens that were issued before a password change.
 		s.auth.GetTokenVersion = s.userRepo.GetTokenVersion
+
+		// Wire the server-side session store into the auth flow: every
+		// issued token gets a session row, and every authenticated request
+		// must match a live (unexpired) session — which also bumps
+		// last_seen. Sessions live in the database, so a restart does not
+		// log anyone out.
+		s.sessionRepo = postgres.NewSessionRepo(db)
+		s.auth.CreateSession = func(ctx context.Context, userID, token string) error {
+			now := time.Now().UTC()
+			return s.sessionRepo.CreateSession(ctx, &models.Session{
+				TokenHash: hashSessionToken(token),
+				PlayerID:  userID,
+				CreatedAt: now,
+				ExpiresAt: now.Add(s.sessionTTL),
+				LastSeen:  now,
+			})
+		}
+		s.auth.ValidateSession = func(ctx context.Context, token string) error {
+			ok, err := s.sessionRepo.TouchSession(ctx, hashSessionToken(token), time.Now().UTC())
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("session not found or expired")
+			}
+			return nil
+		}
 
 		// Create auth handler with stable creation callback.
 		s.authHandler = authussy.NewAuthHandler(s.auth, s.userRepo, func(name, ownerID string) *models.Stable {
@@ -604,6 +698,7 @@ func (s *Server) Start(addr string) error {
 	go rateLimiterCleanupLoop(ctx, rl)
 	go s.pokerTableCleanupLoop(ctx)
 	go s.escrowRefundLoop(ctx)
+	go s.sessionPurgeLoop(ctx)
 
 	// Signal handling: trap SIGINT and SIGTERM for graceful shutdown.
 	sigCh := make(chan os.Signal, 1)

@@ -40,6 +40,38 @@ type UserRepository interface {
 }
 
 // ---------------------------------------------------------------------------
+// SessionRepository — server-side login sessions
+// ---------------------------------------------------------------------------
+
+// SessionRepository persists login sessions so that valid logins survive
+// server restarts and can be revoked server-side. Sessions are keyed by a
+// SHA-256 hash of the JWT (the raw token is never stored).
+type SessionRepository interface {
+	// CreateSession inserts a new session row.
+	CreateSession(ctx context.Context, session *models.Session) error
+
+	// GetSession retrieves a session by token hash. Returns nil, nil when
+	// no such session exists.
+	GetSession(ctx context.Context, tokenHash string) (*models.Session, error)
+
+	// TouchSession validates a session and updates last_seen in one
+	// statement: it returns true when a session with the given hash exists
+	// and has not expired as of now, false otherwise.
+	TouchSession(ctx context.Context, tokenHash string, now time.Time) (bool, error)
+
+	// DeleteSession removes a single session (logout / revocation).
+	DeleteSession(ctx context.Context, tokenHash string) error
+
+	// DeleteSessionsForPlayer removes every session belonging to a player
+	// (e.g. after a password change).
+	DeleteSessionsForPlayer(ctx context.Context, playerID string) error
+
+	// DeleteExpiredSessions purges all sessions whose expiry has passed,
+	// returning the number of rows removed.
+	DeleteExpiredSessions(ctx context.Context, now time.Time) (int64, error)
+}
+
+// ---------------------------------------------------------------------------
 // StableRepository — stables and their metadata
 // ---------------------------------------------------------------------------
 

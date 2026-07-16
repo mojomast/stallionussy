@@ -538,6 +538,24 @@ CREATE TABLE IF NOT EXISTS casino_jackpot (
 -- balance. Floor any legacy negatives, then enforce non-negativity at the
 -- database layer as a last line of defense against double spends.
 -- ===========================================================================
+-- ===========================================================================
+-- Server-side login sessions
+-- Sessions back the JWTs: a token is only honored while a matching,
+-- unexpired row exists here. Keyed by SHA-256(token) so a database leak
+-- never exposes replayable credentials. Rows survive restarts, so valid
+-- logins do too.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    player_id   TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_player_id  ON sessions (player_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
+
 UPDATE stables SET cummies = 0 WHERE cummies < 0;
 UPDATE stables SET casino_chips = 0 WHERE casino_chips < 0;
 DO $$

@@ -670,3 +670,152 @@ func TestWriteJSONError_Format(t *testing.T) {
 		t.Errorf("error = %q, want %q", body.Error, "something broke")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Server-side session enforcement
+// ---------------------------------------------------------------------------
+
+// TestMiddleware_SessionValidation verifies that when a ValidateSession
+// callback is wired, a structurally valid JWT is only honored while its
+// server-side session is alive, and that the raw token reaches the callback.
+func TestMiddleware_SessionValidation(t *testing.T) {
+	svc := newTestService(1 * time.Hour)
+	user := testUser()
+	token, _ := svc.GenerateToken(user)
+
+	sessionAlive := true
+	var seenToken string
+	svc.ValidateSession = func(ctx context.Context, tok string) error {
+		seenToken = tok
+		if !sessionAlive {
+			return fmt.Errorf("session not found or expired")
+		}
+		return nil
+	}
+
+	handler := svc.AuthMiddleware(dummyHandler())
+	do := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/stables", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Live session: request passes and the callback saw the raw token.
+	if rec := do(); rec.Code != http.StatusOK {
+		t.Fatalf("live session: got status %d, want 200", rec.Code)
+	}
+	if seenToken != token {
+		t.Fatalf("ValidateSession received %q, want the raw bearer token", seenToken)
+	}
+
+	// Dead session: the same (still structurally valid) JWT is rejected.
+	sessionAlive = false
+	rec := do()
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("dead session: got status %d, want 401", rec.Code)
+	}
+	if msg := decodeJSONError(t, rec.Result()); !strings.Contains(msg, "session") {
+		t.Errorf("expected a session-related error, got %q", msg)
+	}
+}
+
+// fakeUserRepo is a minimal in-memory repository.UserRepository for handler
+// tests.
+type fakeUserRepo struct {
+	byID       map[string]*models.User
+	byUsername map[string]*models.User
+}
+
+func newFakeUserRepo() *fakeUserRepo {
+	return &fakeUserRepo{
+		byID:       make(map[string]*models.User),
+		byUsername: make(map[string]*models.User),
+	}
+}
+
+func (f *fakeUserRepo) CreateUser(_ context.Context, u *models.User) error {
+	f.byID[u.ID] = u
+	f.byUsername[strings.ToLower(u.Username)] = u
+	return nil
+}
+
+func (f *fakeUserRepo) GetUserByID(_ context.Context, id string) (*models.User, error) {
+	return f.byID[id], nil
+}
+
+func (f *fakeUserRepo) GetUserByUsername(_ context.Context, username string) (*models.User, error) {
+	return f.byUsername[strings.ToLower(username)], nil
+}
+
+func (f *fakeUserRepo) UpdateUser(_ context.Context, u *models.User) error {
+	f.byID[u.ID] = u
+	return nil
+}
+
+func (f *fakeUserRepo) GetTokenVersion(_ context.Context, userID string) (int, error) {
+	if u := f.byID[userID]; u != nil {
+		return u.TokenVersion, nil
+	}
+	return 0, fmt.Errorf("user not found")
+}
+
+func (f *fakeUserRepo) IncrementTokenVersion(_ context.Context, userID string) error {
+	if u := f.byID[userID]; u != nil {
+		u.TokenVersion++
+		return nil
+	}
+	return fmt.Errorf("user not found")
+}
+
+// TestHandlers_CreateSessionCalledOnLogin verifies the login handler records
+// a server-side session for every issued token, and fails closed when the
+// session store errors.
+func TestHandlers_CreateSessionCalledOnLogin(t *testing.T) {
+	svc := newTestService(1 * time.Hour)
+	users := newFakeUserRepo()
+	handler := NewAuthHandler(svc, users, nil)
+
+	// Register a user first (also exercises CreateSession on register).
+	var created []string
+	svc.CreateSession = func(ctx context.Context, userID, token string) error {
+		created = append(created, userID+":"+token)
+		return nil
+	}
+
+	regBody := `{"username":"sessionussy","password":"password123"}`
+	req := httptest.NewRequest("POST", "/api/auth/register", strings.NewReader(regBody))
+	rec := httptest.NewRecorder()
+	handler.HandleRegister(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("register: got status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(created) != 1 {
+		t.Fatalf("register created %d sessions, want 1", len(created))
+	}
+
+	// Login mints a second session.
+	loginBody := `{"username":"sessionussy","password":"password123"}`
+	req = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(loginBody))
+	rec = httptest.NewRecorder()
+	handler.HandleLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: got status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(created) != 2 {
+		t.Fatalf("after login: %d sessions, want 2", len(created))
+	}
+
+	// A failing session store must fail the login (fail closed) — otherwise
+	// the client would receive a token the middleware immediately rejects.
+	svc.CreateSession = func(ctx context.Context, userID, token string) error {
+		return fmt.Errorf("db is on fire")
+	}
+	req = httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(loginBody))
+	rec = httptest.NewRecorder()
+	handler.HandleLogin(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("login with broken session store: got status %d, want 500", rec.Code)
+	}
+}
