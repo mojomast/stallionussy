@@ -1791,10 +1791,11 @@ func TestTournament_PrizePoolPaidExactlyOnce(t *testing.T) {
 		t.Fatalf("tournament status = %q after %d rounds, want Finished", tournament.Status, rounds)
 	}
 
-	// With 2 entrants the payout is 60%% + 25%% of the pool; the rest
-	// (3rd-place share + burn) is removed from the economy.
+	// With 2 entrants the payout is 60% + 25% of the pool, plus the
+	// unclaimed 3rd-place share which rolls up to the champion (Phase 3
+	// leak fix) — only the declared ~5% burn leaves the economy.
 	pool := 2 * entryFee
-	expectedPayout := pool*60/100 + pool*25/100
+	expectedPayout := pool*60/100 + pool*25/100 + pool*10/100
 	sumAfter := st1.Cummies + st2.Cummies
 	if got, want := sumAfter, sumBefore+expectedPayout; got != want {
 		t.Fatalf("combined balance after tournament = %d, want %d (paid %d from a %d pool; double payout?)",

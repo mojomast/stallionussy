@@ -100,6 +100,11 @@ type Server struct {
 	bettingPools map[string]*models.BettingPool // raceID -> pool
 	bettingMu    sync.RWMutex
 
+	// bettingWindow is how long a user-opened exhibition betting pool stays
+	// open before the exhibition race runs and settles it. Overridable in
+	// tests; defaults to defaultBettingWindow.
+	bettingWindow time.Duration
+
 	// Seasonal competition tracking (in-memory store).
 	currentSeason *models.Season
 	pastSeasons   []models.Season
@@ -203,6 +208,7 @@ func NewServer(db *postgres.DB) *Server {
 		departures:    make(map[string]*models.DepartureRecord),
 		jackpotPool:   slotJackpotSeed,
 		stableMus:     make(map[string]*sync.Mutex),
+		bettingWindow: defaultBettingWindow,
 	}
 
 	// Read the allowed CORS origin once at startup. In production, set
@@ -3016,6 +3022,32 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 	// Write-through: persist updated tournament (with new registration + prize pool) to DB.
 	if updatedTournament, err := s.tournaments.GetTournament(tournamentID); err == nil {
 		s.persistTournament(r.Context(), updatedTournament)
+
+		// Wiring fix (Part B): tournament round betting used to be a stub —
+		// the pool opened and closed in the same request, so nobody could
+		// ever bet. Round races now use deterministic IDs, and the round-1
+		// pool opens as soon as the field has 2 horses; the betting window
+		// is the whole time between registration and the organizer running
+		// the round. Later registrants join the pool's field.
+		if updatedTournament.Status == "Open" && len(updatedTournament.Standings) >= 2 {
+			poolRaceID := tournamentRoundRaceID(tournamentID, 1)
+			s.bettingMu.RLock()
+			_, poolExists := s.bettingPools[poolRaceID]
+			s.bettingMu.RUnlock()
+			if poolExists {
+				s.addHorseToBettingPool(poolRaceID, horse)
+			} else {
+				var fieldHorses []*models.Horse
+				for _, e := range updatedTournament.Standings {
+					if h, err := s.stables.GetHorse(e.HorseID); err == nil {
+						fieldHorses = append(fieldHorses, h)
+					}
+				}
+				if len(fieldHorses) >= 2 {
+					s.openBettingPool(poolRaceID, fieldHorses)
+				}
+			}
+		}
 	}
 
 	// Broadcast horse registration via WebSocket.
@@ -3100,16 +3132,21 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-open a betting pool for this tournament race so spectators
-	// who have been waiting can place bets. In a future async implementation,
-	// this would have a timed betting window. For now, the pool is opened
-	// and immediately closed before simulation.
+	// Deterministic round race ID (Part B betting wiring): the pool for this
+	// round was opened in advance — at registration for round 1, or when the
+	// previous round completed — so spectators had a real window to bet.
+	// Overriding the race ID attaches this simulation to that pool.
+	race.ID = tournamentRoundRaceID(tournamentID, tournament.CurrentRound+1)
+
+	// Ensure a pool exists for this round (no-op returning the live pool if
+	// the pre-opened one is already there — never clobbers escrowed bets).
 	s.openBettingPool(race.ID, horses)
 
 	// Generate weather.
 	weather := tournussy.RandomWeatherForTrack(tournament.TrackType)
 
-	// Close betting pool before simulation starts.
+	// Close betting pool before simulation starts (bets after this point are
+	// rejected, so outcomes can never be bet on once knowable).
 	s.closeBettingPool(race.ID)
 
 	// Simulate the race with weather.
@@ -3142,6 +3179,12 @@ func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	updatedTournament, _ := s.tournaments.GetTournament(tournamentID)
 	if updatedTournament != nil {
 		s.persistTournament(r.Context(), updatedTournament)
+
+		// Open the next round's betting pool now — the window runs until the
+		// organizer triggers that round.
+		if updatedTournament.Status == "InProgress" && updatedTournament.CurrentRound < updatedTournament.Rounds {
+			s.openBettingPool(tournamentRoundRaceID(tournamentID, updatedTournament.CurrentRound+1), horses)
+		}
 	}
 
 	// Broadcast replay.
@@ -3372,6 +3415,8 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 
 	// Award prizes to top 3 (or fewer if less than 3 entries).
 	prizeAmounts := []int64{firstPrize, secondPrize, thirdPrize}
+	var totalPaid int64
+	var championStable *models.Stable
 	for i := 0; i < len(standings) && i < 3; i++ {
 		entry := standings[i]
 		stable := findStable(entry.StableID)
@@ -3388,6 +3433,10 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 		stable.TotalEarnings += prize
 		s.persistStable(ctx, stable)
 		mu.Unlock()
+		totalPaid += prize
+		if championStable == nil {
+			championStable = stable
+		}
 
 		prizes = append(prizes, prizeInfo{
 			place:    i + 1,
@@ -3412,6 +3461,25 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 
 		log.Printf("server: tournament %s — %s place: %s (%s) receives %d cummies",
 			tournament.Name, ordinal(i+1), stable.Name, stable.ID, prize)
+	}
+
+	// Leak fix (Phase 3): with fewer than 3 finishers (or an unresolvable
+	// stable) the unpaid podium shares used to silently vanish — a 2-player
+	// tournament destroyed 10% of its pool beyond the declared 5% burn.
+	// Unclaimed shares now roll up to the champion.
+	if leftover := prizePool - burnAmount - totalPaid; leftover > 0 && championStable != nil {
+		mu := s.stableMu(championStable.ID)
+		mu.Lock()
+		championStable.Cummies += leftover
+		championStable.TotalEarnings += leftover
+		s.persistStable(ctx, championStable)
+		mu.Unlock()
+		totalPaid += leftover
+		if len(prizes) > 0 {
+			prizes[0].amount += leftover
+		}
+		log.Printf("server: tournament %s — %d cummies of unclaimed podium shares roll up to champion %s",
+			tournament.Name, leftover, championStable.Name)
 	}
 
 	log.Printf("server: tournament %s — %d cummies burned (5%% tax)", tournament.Name, burnAmount)
@@ -3447,6 +3515,13 @@ func (s *Server) distributeTournamentPrizes(ctx context.Context, tournament *mod
 			"status":    tournament.Status,
 		},
 	})
+}
+
+// tournamentRoundRaceID returns the deterministic race ID for a tournament
+// round (1-based). Deterministic IDs let betting pools open BEFORE the round
+// race exists, giving spectators a real betting window (Part B wiring).
+func tournamentRoundRaceID(tournamentID string, round int) string {
+	return fmt.Sprintf("%s-round-%d", tournamentID, round)
 }
 
 // ordinal returns the English ordinal suffix for an integer (1st, 2nd, 3rd, etc.).
@@ -6664,32 +6739,57 @@ func (s *Server) refundStaleBettingPools(maxAge time.Duration) int {
 	}
 	s.bettingMu.Unlock()
 
-	ctx := context.Background()
 	refunded := 0
 	for _, pool := range stale {
-		for i := range pool.Bets {
-			bet := &pool.Bets[i]
-			if bet.Amount <= 0 {
-				continue
-			}
-			stable, err := s.stables.GetStable(bet.StableID)
-			if err != nil || stable == nil {
-				stable = s.getStableForUser(bet.UserID)
-			}
-			if stable == nil {
-				continue
-			}
-			mu := s.stableMu(stable.ID)
-			mu.Lock()
-			stable.Cummies += bet.Amount
-			mu.Unlock()
-			s.persistStable(ctx, stable)
-			refunded++
+		refunded += s.refundPoolBets(pool)
+	}
+	return refunded
+}
+
+// refundBettingPool refunds a single unresolved pool by race ID (e.g. an
+// exhibition pool whose field collapsed below 2 horses).
+func (s *Server) refundBettingPool(raceID string) int {
+	s.bettingMu.Lock()
+	pool, ok := s.bettingPools[raceID]
+	if !ok || pool.Status == "resolved" || pool.Status == "refunded" {
+		s.bettingMu.Unlock()
+		return 0
+	}
+	pool.Status = "refunded"
+	delete(s.bettingPools, raceID)
+	s.bettingMu.Unlock()
+
+	return s.refundPoolBets(pool)
+}
+
+// refundPoolBets returns every escrowed bet in an already-detached pool.
+// The pool must have been removed from bettingPools with status "refunded"
+// before calling.
+func (s *Server) refundPoolBets(pool *models.BettingPool) int {
+	ctx := context.Background()
+	refunded := 0
+	for i := range pool.Bets {
+		bet := &pool.Bets[i]
+		if bet.Amount <= 0 {
+			continue
 		}
-		if len(pool.Bets) > 0 {
-			log.Printf("server: refunded %d escrowed bets from stale betting pool for race %s",
-				len(pool.Bets), pool.RaceID)
+		stable, err := s.stables.GetStable(bet.StableID)
+		if err != nil || stable == nil {
+			stable = s.getStableForUser(bet.UserID)
 		}
+		if stable == nil {
+			continue
+		}
+		mu := s.stableMu(stable.ID)
+		mu.Lock()
+		stable.Cummies += bet.Amount
+		mu.Unlock()
+		s.persistStable(ctx, stable)
+		refunded++
+	}
+	if len(pool.Bets) > 0 {
+		log.Printf("server: refunded %d escrowed bets from betting pool for race %s",
+			len(pool.Bets), pool.RaceID)
 	}
 	return refunded
 }
@@ -6703,6 +6803,13 @@ func (s *Server) refundStaleBettingPools(maxAge time.Duration) int {
 func (s *Server) openBettingPool(raceID string, horses []*models.Horse) *models.BettingPool {
 	s.bettingMu.Lock()
 	defer s.bettingMu.Unlock()
+
+	// Never clobber an existing pool: overwriting the map entry would
+	// destroy already-escrowed bets. Callers that might race an existing
+	// pool (tournament rounds) get the live pool back instead.
+	if existing, ok := s.bettingPools[raceID]; ok {
+		return existing
+	}
 
 	bettingHorses := make([]models.BettingHorse, len(horses))
 	for i, h := range horses {
@@ -6735,6 +6842,32 @@ func (s *Server) openBettingPool(raceID string, horses []*models.Horse) *models.
 
 	log.Printf("server: betting pool opened for race %s with %d horses", raceID, len(horses))
 	return pool
+}
+
+// addHorseToBettingPool appends a horse to a still-open pool (used when a
+// tournament registration lands after the round-1 pool opened). No-op if the
+// pool is missing, closed, or already lists the horse.
+func (s *Server) addHorseToBettingPool(raceID string, horse *models.Horse) {
+	if horse == nil {
+		return
+	}
+	s.bettingMu.Lock()
+	defer s.bettingMu.Unlock()
+
+	pool, ok := s.bettingPools[raceID]
+	if !ok || pool.Status != "open" {
+		return
+	}
+	for _, bh := range pool.Horses {
+		if bh.HorseID == horse.ID {
+			return
+		}
+	}
+	pool.Horses = append(pool.Horses, models.BettingHorse{
+		HorseID:   horse.ID,
+		HorseName: horse.Name,
+	})
+	s.calcOddsLocked(pool)
 }
 
 // closeBettingPool marks a pool as "closed" so no more bets are accepted.
@@ -7068,6 +7201,13 @@ func (s *Server) findHorseInPool(pool *models.BettingPool, name string) (string,
 // handleOpenBettingPool creates a betting pool for a given race.
 // POST /api/betting/pools  { raceID, horseIDs: [] }
 func (s *Server) handleOpenBettingPool(w http.ResponseWriter, r *http.Request) {
+	// Opening a pool schedules a real exhibition race (and its settlement),
+	// so it is an authenticated action like betting itself.
+	if _, ok := authussy.GetUserFromContext(r.Context()); !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
 	var req struct {
 		RaceID   string   `json:"raceID"`
 		HorseIDs []string `json:"horseIDs"`
@@ -7102,7 +7242,92 @@ func (s *Server) handleOpenBettingPool(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pool := s.openBettingPool(req.RaceID, horses)
+
+	// Wiring fix (Part B.1/B.5): user-opened pools previously never resolved
+	// — races run synchronously with server-generated UUIDs, so no future
+	// race could ever match the client-chosen raceID, and every escrowed bet
+	// just waited for the stale-pool refund sweep. Each pool now schedules a
+	// spectator EXHIBITION race after the betting window: the pool closes,
+	// the race simulates (no stat/ELO/fatigue changes — pure spectacle), and
+	// bets settle pari-mutuel. Timing-exploit-safe: the pool always closes
+	// before the simulation begins, and resolveBets is idempotent.
+	window := s.bettingWindow
+	if window <= 0 {
+		window = defaultBettingWindow
+	}
+	time.AfterFunc(window, func() { s.resolveExhibitionPool(req.RaceID) })
+
 	writeJSON(w, http.StatusCreated, pool)
+}
+
+// defaultBettingWindow is how long exhibition betting pools accept bets.
+const defaultBettingWindow = 60 * time.Second
+
+// resolveExhibitionPool closes a user-opened pool, runs a non-mutating
+// exhibition race between the pool's horses, and settles the bets. Horses
+// that departed (glue, fights) since the pool opened are skipped; if fewer
+// than 2 remain the pool is refunded by the stale-pool sweep semantics.
+func (s *Server) resolveExhibitionPool(raceID string) {
+	s.bettingMu.RLock()
+	pool, ok := s.bettingPools[raceID]
+	var horseIDs []string
+	if ok && (pool.Status == "open" || pool.Status == "closed") {
+		for _, bh := range pool.Horses {
+			horseIDs = append(horseIDs, bh.HorseID)
+		}
+	}
+	s.bettingMu.RUnlock()
+	if len(horseIDs) == 0 {
+		return // already resolved/refunded
+	}
+
+	s.closeBettingPool(raceID)
+
+	var horses []*models.Horse
+	for _, id := range horseIDs {
+		if h, err := s.stables.GetHorse(id); err == nil {
+			horses = append(horses, h)
+		}
+	}
+	if len(horses) < 2 {
+		// Not enough surviving horses for a race: give everyone their money back.
+		s.refundBettingPool(raceID)
+		return
+	}
+
+	// Exhibition simulation: reuses the real physics sim but applies NO
+	// post-race effects — no ELO, fatigue, earnings, or history. The ponies
+	// are essentially doing it for the love of the game.
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+	trackType := tracks[rand.IntN(len(tracks))]
+	weather := tournussy.RandomWeatherForTrack(trackType)
+	race := racussy.NewRace(horses, trackType, 0)
+	race.ID = raceID
+	race = racussy.SimulateRaceWithWeather(race, horses, weather)
+
+	var winnerID, winnerName string
+	for _, entry := range race.Entries {
+		if entry.FinishPlace == 1 {
+			winnerID = entry.HorseID
+			winnerName = entry.HorseName
+			break
+		}
+	}
+	if winnerID == "" {
+		s.refundBettingPool(raceID)
+		return
+	}
+
+	s.hub.BroadcastJSON(map[string]interface{}{
+		"type": "chat_system",
+		"text": fmt.Sprintf("🏁 EXHIBITION RACE on %s (%s)! %s takes it at the wire!",
+			trackType, weather, winnerName),
+		"ts": time.Now().Unix(),
+	})
+	s.resolveBets(raceID, winnerID)
 }
 
 // handleGetBettingPool returns the betting pool for a specific race.
