@@ -213,7 +213,13 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*model
 	}
 
 	// ---- Injury check ----
-	injured, injuryNote := rollInjury(horse)
+	// Recovery workouts never injure: a rest day is the safe option by
+	// design (a horse pulling a hamstring while napping also failed the
+	// vibe check). Everything else rolls the fatigue-scaled injury dice.
+	injured, injuryNote := false, ""
+	if workout != models.WorkoutRecovery {
+		injured, injuryNote = rollInjury(horse)
+	}
 
 	// BUG FIX: When an injury occurs, create and assign an Injury struct so
 	// the injury system is actually connected to the horse model. Previously

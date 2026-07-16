@@ -467,8 +467,8 @@ type Tournament struct {
 	EntryFee     int64             `json:"entry_fee"`
 	PrizePool    int64             `json:"prize_pool"`
 	Standings    []TournamentEntry `json:"standings"`
-	Races        []string          `json:"races"`  // race IDs
-	Status       string            `json:"status"` // "Open", "InProgress", "Finished"
+	Races        []string          `json:"races"`                // race IDs
+	Status       string            `json:"status"`               // "Open", "InProgress", "Finished"
 	CreatedBy    string            `json:"created_by,omitempty"` // user ID of the organizer ("" = legacy/system)
 	CreatedAt    time.Time         `json:"created_at"`
 }

@@ -24,11 +24,18 @@ func NewSessionRepo(db *DB) *SessionRepo {
 	return &SessionRepo{db: db}
 }
 
-// CreateSession inserts a new session row.
+// CreateSession inserts a new session row. Upsert: JWTs carry second-granular
+// iat/exp claims, so two logins by the same player within the same second
+// issue byte-identical tokens — the same token_hash must refresh the existing
+// row instead of failing the primary-key constraint (works on both PostgreSQL
+// and SQLite).
 func (r *SessionRepo) CreateSession(ctx context.Context, session *models.Session) error {
 	_, err := r.db.db.ExecContext(ctx, `
 		INSERT INTO sessions (token_hash, player_id, created_at, expires_at, last_seen)
-		VALUES ($1, $2, $3, $4, $5)`,
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (token_hash) DO UPDATE SET
+			expires_at = excluded.expires_at,
+			last_seen = excluded.last_seen`,
 		session.TokenHash,
 		session.PlayerID,
 		session.CreatedAt,

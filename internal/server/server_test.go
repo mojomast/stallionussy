@@ -14,6 +14,7 @@ import (
 
 	"github.com/mojomast/stallionussy/internal/authussy"
 	"github.com/mojomast/stallionussy/internal/models"
+	"github.com/mojomast/stallionussy/internal/racussy"
 )
 
 func TestCreateOwnedStableSeedsStarterHorses(t *testing.T) {
@@ -1875,12 +1876,72 @@ func TestQuickRace_PurseFundedByHouse(t *testing.T) {
 		t.Fatalf("quick race: status = %d\nbody: %s", rr.Code, rr.Body.String())
 	}
 
-	if got := house.Cummies; got != houseBefore-quickRacePurse {
-		t.Fatalf("house treasury = %d, want %d (purse must be debited from the house, not minted)",
-			got, houseBefore-quickRacePurse)
+	// The house funds the full purse up front. A random mid-race event may
+	// move a bit more house money (house-funded purse boosts) or return some
+	// (the Geoffrussey garnish banks at most 30% of the purse back), so the
+	// house must end down by at least 70% of the purse.
+	minDebit := quickRacePurse * 7 / 10
+	if got := house.Cummies; got > houseBefore-minDebit {
+		t.Fatalf("house treasury = %d, want at most %d (purse must be debited from the house, not minted)",
+			got, houseBefore-minDebit)
 	}
 	if sumAfter := totalCummies(s); sumAfter > sumBefore {
 		t.Fatalf("total cummies grew from %d to %d — quick race minted money (C-3)", sumBefore, sumAfter)
+	}
+}
+
+// TestRandomPurseEvents_HouseFundedAndConserved: mid-race purse events
+// (sponsor double, treasure chest, tax audit) must never create money — purse
+// increases come out of the House of USSY treasury and the tax garnish is
+// banked back into it, and a zero-purse (guest/exhibition) race stays
+// money-free no matter which event fires.
+func TestRandomPurseEvents_HouseFundedAndConserved(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Event Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+	horses := []*models.Horse{&stable.Horses[0], &stable.Horses[1]}
+	race := racussy.NewRace(horses, models.TrackSprintussy, 0)
+
+	eventByID := func(id string) *models.RandomEvent {
+		for i := range allRandomEvents {
+			if allRandomEvents[i].ID == id {
+				ev := allRandomEvents[i]
+				return &ev
+			}
+		}
+		t.Fatalf("unknown event %q", id)
+		return nil
+	}
+
+	for _, id := range []string{"evt_sponsor_bonus", "evt_treasure_chest", "evt_tax_collector"} {
+		// Funded race: the purse was debited from the house (C-3 rule), so
+		// (economy total + in-flight purse) must be invariant across the event.
+		purse := s.debitHouseFunds(context.Background(), 200)
+		if purse != 200 {
+			t.Fatalf("house could not fund the test purse (got %d)", purse)
+		}
+		invariant := totalCummies(s) + purse
+		s.applyRandomEvent(eventByID(id), horses, race, &purse)
+		if purse < 0 {
+			t.Fatalf("%s produced a negative purse: %d", id, purse)
+		}
+		if got := totalCummies(s) + purse; got != invariant {
+			t.Fatalf("%s broke conservation: economy+purse went from %d to %d", id, invariant, got)
+		}
+		s.creditHouseFunds(context.Background(), purse) // return the purse for the next iteration
+
+		// Zero-purse race: nothing may move.
+		zero := int64(0)
+		before := totalCummies(s)
+		s.applyRandomEvent(eventByID(id), horses, race, &zero)
+		if zero != 0 {
+			t.Fatalf("%s changed a zero purse to %d (guest races must stay money-free)", id, zero)
+		}
+		if got := totalCummies(s); got != before {
+			t.Fatalf("%s moved money on a zero-purse race: %d -> %d", id, before, got)
+		}
 	}
 }
 
@@ -2145,10 +2206,10 @@ func TestSettleHoldemTable_Idempotent(t *testing.T) {
 // the stored table (the old shallow clone aliased Seats/Log).
 func TestClonePokerTable_DeepCopy(t *testing.T) {
 	orig := &models.PokerTable{
-		ID:     "t1",
-		Log:    []string{"opened"},
-		Seats:  []models.PokerSeat{{UserID: "u1", Hand: []models.PokerCard{{Rank: "A", Suit: "S"}}}},
-		SidePots: []models.SidePot{{Amount: 10, Eligible: []string{"u1"}}},
+		ID:             "t1",
+		Log:            []string{"opened"},
+		Seats:          []models.PokerSeat{{UserID: "u1", Hand: []models.PokerCard{{Rank: "A", Suit: "S"}}}},
+		SidePots:       []models.SidePot{{Amount: 10, Eligible: []string{"u1"}}},
 		CommunityCards: []models.PokerCard{{Rank: "2", Suit: "H"}},
 	}
 	clone := clonePokerTable(orig)

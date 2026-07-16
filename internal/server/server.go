@@ -147,8 +147,8 @@ type Server struct {
 	// requests can't both observe an unsettled table and double-pay the pot.
 	pokerTableMus   map[string]*sync.Mutex
 	pokerTableMusMu sync.Mutex
-	departures  map[string]*models.DepartureRecord
-	departMu    sync.RWMutex
+	departures      map[string]*models.DepartureRecord
+	departMu        sync.RWMutex
 
 	// Progressive slot jackpot pool.
 	jackpotPool       int64 // accumulated progressive jackpot (Casino Chips)
@@ -1695,7 +1695,7 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 	randomEvent := rollRandomEvent(horses, race, weather)
 	if randomEvent != nil {
 		// Apply the event effects and add to narrative.
-		eventNarrative := applyRandomEvent(randomEvent, horses, race, &purse)
+		eventNarrative := s.applyRandomEvent(randomEvent, horses, race, &purse)
 		narrative = append(narrative, eventNarrative...)
 
 		// Broadcast the random event via WebSocket.
@@ -9997,7 +9997,11 @@ func rollRandomEvent(horses []*models.Horse, race *models.Race, weather models.W
 }
 
 // applyRandomEvent applies an event's effects to the race and returns narrative lines.
-func applyRandomEvent(event *models.RandomEvent, horses []*models.Horse, race *models.Race, purse *int64) []string {
+// Purse-increasing events are funded by the House of USSY treasury (no minting,
+// same C-3 rule as quick-race purses) and only fire on races that already carry
+// a purse, so guest/exhibition zero-purse races stay money-free. The Geoffrussey
+// tax garnish is banked into the treasury rather than evaporating.
+func (s *Server) applyRandomEvent(event *models.RandomEvent, horses []*models.Horse, race *models.Race, purse *int64) []string {
 	narrative := []string{
 		fmt.Sprintf("⚡ RANDOM EVENT: %s", event.Name),
 		fmt.Sprintf("   %s", event.Description),
@@ -10025,16 +10029,43 @@ func applyRandomEvent(event *models.RandomEvent, horses []*models.Horse, race *m
 		narrative = append(narrative, fmt.Sprintf("   🌀 All horses affected! Speed reduced to %.0f%%", event.Magnitude*100))
 
 	case "purse_double":
-		*purse *= 2
-		narrative = append(narrative, fmt.Sprintf("   💰 PURSE DOUBLED to ₵%d!", *purse))
+		if *purse > 0 {
+			// The "sponsor" pays out of the house treasury; a broke house
+			// means the check bounces (partially or entirely).
+			extra := s.debitHouseFunds(context.Background(), *purse)
+			*purse += extra
+			if extra > 0 {
+				narrative = append(narrative, fmt.Sprintf("   💰 PURSE BOOSTED to ₵%d!", *purse))
+			} else {
+				narrative = append(narrative, "   💸 CummiesCorp™'s check bounced. The purse is unchanged.")
+			}
+		} else {
+			narrative = append(narrative, "   💸 There is no purse to double. CummiesCorp™ doubles the vibes instead.")
+		}
 
 	case "purse_reduce":
-		*purse = int64(float64(*purse) * event.Magnitude)
-		narrative = append(narrative, fmt.Sprintf("   📉 Purse reduced to ₵%d!", *purse))
+		garnished := *purse - int64(float64(*purse)*event.Magnitude)
+		if garnished > 0 {
+			*purse -= garnished
+			// The tax authority banks its cut instead of vaporizing it.
+			s.creditHouseFunds(context.Background(), garnished)
+			narrative = append(narrative, fmt.Sprintf("   📉 Purse reduced to ₵%d!", *purse))
+		} else {
+			narrative = append(narrative, "   📉 The auditors found nothing worth garnishing.")
+		}
 
 	case "purse_bonus":
-		*purse += int64(event.Magnitude)
-		narrative = append(narrative, fmt.Sprintf("   💎 Bonus ₵%.0f added to the purse! Now ₵%d!", event.Magnitude, *purse))
+		if *purse > 0 {
+			bonus := s.debitHouseFunds(context.Background(), int64(event.Magnitude))
+			*purse += bonus
+			if bonus > 0 {
+				narrative = append(narrative, fmt.Sprintf("   💎 Bonus ₵%d added to the purse! Now ₵%d!", bonus, *purse))
+			} else {
+				narrative = append(narrative, "   💎 The chest was full of IOUs. The purse is unchanged.")
+			}
+		} else {
+			narrative = append(narrative, "   💎 The chest was empty except for a note that says 'gottem'.")
+		}
 
 	case "cosmetic":
 		// Pure lore — no mechanical effect.

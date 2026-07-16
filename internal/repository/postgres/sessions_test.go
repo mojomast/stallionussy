@@ -42,9 +42,21 @@ func TestSQLiteSessionCRUD(t *testing.T) {
 		t.Fatalf("GetSession(unknown) = %+v, %v; want nil, nil", got, err)
 	}
 
-	// Duplicate insert must fail (primary key).
-	if err := repo.CreateSession(ctx, sess); err == nil {
-		t.Fatal("duplicate CreateSession succeeded")
+	// Re-creating the same token is an upsert, not an error: register+login
+	// in the same second mint byte-identical JWTs (second-granular iat), so
+	// the same token_hash arrives twice and must refresh the row.
+	sess2 := *sess
+	sess2.ExpiresAt = now.Add(2 * time.Hour)
+	sess2.LastSeen = now.Add(time.Minute)
+	if err := repo.CreateSession(ctx, &sess2); err != nil {
+		t.Fatalf("same-token CreateSession should upsert, got error: %v", err)
+	}
+	got, err = repo.GetSession(ctx, "hash-1")
+	if err != nil || got == nil {
+		t.Fatalf("GetSession after upsert: %+v, %v", got, err)
+	}
+	if !got.ExpiresAt.Equal(sess2.ExpiresAt) {
+		t.Fatalf("upsert did not refresh expiry: got %v, want %v", got.ExpiresAt, sess2.ExpiresAt)
 	}
 
 	// Delete.
