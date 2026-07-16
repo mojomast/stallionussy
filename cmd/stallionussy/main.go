@@ -1815,23 +1815,41 @@ func updatePostRaceStats(state *cliState, race *models.Race, horses []*models.Ho
 	}
 
 	// Pairwise ELO calculation using ORIGINAL ratings for expected score.
+	// M-10: treat an unset FinishPlace (0) as worst-possible so a DNF entry
+	// can never "win" a pairwise comparison. (racussy assigns real places to
+	// tick-cap DNFs, but this guards any future path that leaves 0.)
+	placeOf := func(e *models.RaceEntry) int {
+		if e.FinishPlace <= 0 {
+			return math.MaxInt
+		}
+		return e.FinishPlace
+	}
 	for i := 0; i < len(entries); i++ {
 		for j := i + 1; j < len(entries); j++ {
-			if entries[i].entry.FinishPlace < entries[j].entry.FinishPlace {
-				wID := entries[i].horse.ID
-				lID := entries[j].horse.ID
-
-				// Calculate expected scores from original ELOs.
-				wELO := eloBefore[wID]
-				lELO := eloBefore[lID]
-
-				expW := 1.0 / (1.0 + math.Pow(10.0, (lELO-wELO)/400.0))
-				expL := 1.0 / (1.0 + math.Pow(10.0, (wELO-lELO)/400.0))
-
-				k := 32.0
-				eloDelta[wID] += k * (1.0 - expW)
-				eloDelta[lID] += k * (0.0 - expL)
+			pi, pj := placeOf(entries[i].entry), placeOf(entries[j].entry)
+			if pi == pj {
+				continue // ties (both DNF-at-0) exchange no ELO
 			}
+			// BUG FIX: the loop previously only updated ELO when entries[i]
+			// beat entries[j]; pairs where the later slice entry finished
+			// better were silently skipped, halving ELO movement on average.
+			wIdx, lIdx := i, j
+			if pj < pi {
+				wIdx, lIdx = j, i
+			}
+			wID := entries[wIdx].horse.ID
+			lID := entries[lIdx].horse.ID
+
+			// Calculate expected scores from original ELOs.
+			wELO := eloBefore[wID]
+			lELO := eloBefore[lID]
+
+			expW := 1.0 / (1.0 + math.Pow(10.0, (lELO-wELO)/400.0))
+			expL := 1.0 / (1.0 + math.Pow(10.0, (wELO-lELO)/400.0))
+
+			k := 32.0
+			eloDelta[wID] += k * (1.0 - expW)
+			eloDelta[lID] += k * (0.0 - expL)
 		}
 	}
 
