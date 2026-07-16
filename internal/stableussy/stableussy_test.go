@@ -756,3 +756,78 @@ func TestSyncHorse_NotFound(t *testing.T) {
 		t.Fatal("expected error for nil horse")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SnapshotHorses / ForEachHorse — lock-safe accessors (C-7)
+// ---------------------------------------------------------------------------
+
+func TestSnapshotHorses(t *testing.T) {
+	sm := NewStableManager()
+	stable := sm.CreateStable("Snap Ranch", "owner-1")
+	for i := 0; i < 3; i++ {
+		if err := sm.AddHorseToStable(stable.ID, makeTestHorse("H", 1200)); err != nil {
+			t.Fatalf("AddHorseToStable: %v", err)
+		}
+	}
+	snap := sm.SnapshotHorses(stable.ID)
+	if len(snap) != 3 {
+		t.Fatalf("snapshot length = %d, want 3", len(snap))
+	}
+	// The snapshot must be detached: mutating it must not affect the manager.
+	snap[0].ELO = 9999
+	live, _ := sm.GetHorse(snap[0].ID)
+	if live.ELO == 9999 {
+		t.Fatal("snapshot aliases the live roster")
+	}
+	if got := sm.SnapshotHorses("nope"); got != nil {
+		t.Fatalf("snapshot of unknown stable = %v, want nil", got)
+	}
+}
+
+// TestSnapshotHorses_ConcurrentWithAppends is the C-7 regression: reading a
+// stable's roster while another goroutine appends horses must be safe (run
+// with -race to see the old failure mode).
+func TestSnapshotHorses_ConcurrentWithAppends(t *testing.T) {
+	sm := NewStableManager()
+	stable := sm.CreateStable("Race Ranch", "owner-1")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			_ = sm.AddHorseToStable(stable.ID, makeTestHorse("H", 1200))
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		snap := sm.SnapshotHorses(stable.ID)
+		var sum float64
+		for _, h := range snap {
+			sum += h.ELO
+		}
+		_ = sum
+	}
+	<-done
+}
+
+func TestForEachHorse_MutatesLiveRegistry(t *testing.T) {
+	sm := NewStableManager()
+	stable := sm.CreateStable("Reset Ranch", "owner-1")
+	h := makeTestHorse("Champ", 2000)
+	if err := sm.AddHorseToStable(stable.ID, h); err != nil {
+		t.Fatalf("AddHorseToStable: %v", err)
+	}
+
+	// Season-end style soft reset.
+	sm.ForEachHorse(func(horse *models.Horse) {
+		horse.ELO = horse.ELO + (1200-horse.ELO)*0.5
+	})
+
+	live, _ := sm.GetHorse(h.ID)
+	if live.ELO != 1600 {
+		t.Fatalf("live ELO = %v, want 1600", live.ELO)
+	}
+	snap := sm.SnapshotHorses(stable.ID)
+	if snap[0].ELO != 1600 {
+		t.Fatalf("stable roster ELO = %v, want 1600", snap[0].ELO)
+	}
+}

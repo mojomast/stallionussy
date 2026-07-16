@@ -833,9 +833,10 @@ type HorseFight struct {
 }
 
 const (
-	FightStatusPending  = "pending"
-	FightStatusFighting = "fighting"
-	FightStatusFinished = "finished"
+	FightStatusPending   = "pending"
+	FightStatusFighting  = "fighting"
+	FightStatusFinished  = "finished"
+	FightStatusCancelled = "cancelled" // expired with no challenger — entry fee refunded (H-6)
 )
 
 // GlueFactoryResult represents the outcome of sending a horse to the glue factory.

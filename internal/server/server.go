@@ -597,6 +597,7 @@ func (s *Server) Start(addr string) error {
 	go s.replayCleanupLoop(ctx)
 	go rateLimiterCleanupLoop(ctx, rl)
 	go s.pokerTableCleanupLoop(ctx)
+	go s.escrowRefundLoop(ctx)
 
 	// Signal handling: trap SIGINT and SIGTERM for graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
@@ -2661,6 +2662,13 @@ func (s *Server) handleBuyListing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Self-dealing guard (C-6): a stable can't buy a breeding from itself —
+	// that would only cost the 2% burn while producing a free foal.
+	if sellerStableID == req.BuyerStableID {
+		writeError(w, http.StatusBadRequest, "you cannot buy a breeding from your own stable — Geoffrussy audits self-dealing")
+		return
+	}
+
 	// Process the purchase (economic side).
 	tx, err := s.market.PurchaseBreeding(listingID, buyerStable.OwnerID, buyerStable.Cummies)
 	if err != nil {
@@ -3483,6 +3491,12 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "horseID, fromStable, and toStable are required")
 		return
 	}
+	// Self-trade guard (C-6): trading a horse to the same stable is
+	// nonsensical and only exists to launder state.
+	if req.FromStable == req.ToStable {
+		writeError(w, http.StatusBadRequest, "source and destination stables must be different")
+		return
+	}
 
 	// If authenticated, verify the user owns the source stable (fromStable).
 	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
@@ -3923,7 +3937,10 @@ func (s *Server) handleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
 			bestStreak  int
 		)
 
-		for _, h := range stable.Horses {
+		// Snapshot under the manager lock (C-7): ranging stable.Horses
+		// directly races with concurrent appends that reallocate the slice.
+		horses := s.stables.SnapshotHorses(stable.ID)
+		for _, h := range horses {
 			totalWins += h.Wins
 			totalLosses += h.Losses
 			totalRaces += h.Races
@@ -3942,8 +3959,8 @@ func (s *Server) handleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		}
 
 		avgELO := 0.0
-		if len(stable.Horses) > 0 {
-			avgELO = totalELO / float64(len(stable.Horses))
+		if len(horses) > 0 {
+			avgELO = totalELO / float64(len(horses))
 		}
 
 		winRate := 0.0
@@ -4117,14 +4134,16 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 		var totalELO float64
 		var wins int
 		var earnings int64
-		for _, h := range stable.Horses {
+		// Snapshot under the manager lock (C-7).
+		horses := s.stables.SnapshotHorses(stable.ID)
+		for _, h := range horses {
 			totalELO += h.ELO
 			wins += h.Wins
 			earnings += h.TotalEarnings
 		}
 		avgELO := 0.0
-		if len(stable.Horses) > 0 {
-			avgELO = totalELO / float64(len(stable.Horses))
+		if len(horses) > 0 {
+			avgELO = totalELO / float64(len(horses))
 		}
 		ranks = append(ranks, stableRank{
 			stable:   stable,
@@ -4179,16 +4198,15 @@ func (s *Server) handleEndSeason(w http.ResponseWriter, r *http.Request) {
 	endedSeason := *s.currentSeason
 	s.pastSeasons = append(s.pastSeasons, endedSeason)
 
+	// Soft-reset every horse's ELO 50% toward the baseline. ForEachHorse runs
+	// under the stable manager's write lock (C-7): the old direct iteration
+	// over stable.Horses raced with concurrent roster appends. The registry
+	// pointers point into the stable slices, so this updates both views.
 	const baseline = 1200.0
+	s.stables.ForEachHorse(func(h *models.Horse) {
+		h.ELO = h.ELO + (baseline-h.ELO)*0.5
+	})
 	for _, stable := range allStables {
-		for i := range stable.Horses {
-			oldELO := stable.Horses[i].ELO
-			newELO := oldELO + (baseline-oldELO)*0.5
-			stable.Horses[i].ELO = newELO
-			// Also sync the soft-reset ELO to the global pointer registry
-			// so in-memory lookups (races, leaderboard) see the new value.
-			_ = s.stables.UpdateHorseStats(stable.Horses[i].ID, 0, 0, 0, newELO)
-		}
 		s.persistStable(r.Context(), stable)
 	}
 
@@ -6450,6 +6468,31 @@ func (s *Server) loadFromDB() {
 
 	// 9. Load casino tables and departed horse records.
 	loadCasinoState(s, ctx)
+
+	// 10. Rehydrate pending fights (H-6). Fights are persisted at creation
+	// with their entry fee already deducted; before this, a restart dropped
+	// them from the RAM-only pendingFights map and the fee was never
+	// refunded. Reloading them keeps the escrow honest — the expiry sweep
+	// refunds any that never find a challenger.
+	if s.fightRepo != nil {
+		dbFights, err := s.fightRepo.ListRecentFights(ctx, 1000)
+		if err != nil {
+			log.Printf("server: loadFromDB: failed to load fights: %v", err)
+		} else {
+			restored := 0
+			s.fightMu.Lock()
+			for _, f := range dbFights {
+				if f != nil && f.Status == models.FightStatusPending {
+					s.pendingFights[f.ID] = f
+					restored++
+				}
+			}
+			s.fightMu.Unlock()
+			if restored > 0 {
+				log.Printf("server: loadFromDB: restored %d pending fights", restored)
+			}
+		}
+	}
 }
 
 // ===========================================================================
@@ -6468,6 +6511,130 @@ func (s *Server) loadFromDB() {
 //   4. After the race, resolveBets pays out winners from the pool.
 
 const bettingHouseCutPct = 0.10 // 10% house cut on betting pools.
+
+// ---------------------------------------------------------------------------
+// Escrow refunds (H-6)
+//
+// Betting pools are RAM-only and pending fights used to be: cummies escrowed
+// into either were simply lost if the pool never resolved, the fight never
+// found a challenger, or the process restarted. Pending fights are now
+// rehydrated from the DB on startup (see loadFromDB), and this sweep refunds
+// both kinds of stale escrow.
+// ---------------------------------------------------------------------------
+
+const (
+	pendingFightMaxAge = 30 * time.Minute // pending fights refund after this
+	bettingPoolMaxAge  = 15 * time.Minute // unresolved pools refund after this
+)
+
+// escrowRefundLoop periodically refunds stale escrows. On shutdown it
+// refunds every outstanding betting pool, since pools do not survive a
+// restart.
+func (s *Server) escrowRefundLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// Graceful shutdown: refund all unresolved pools before the
+			// escrowed bets vanish with the process.
+			s.refundStaleBettingPools(0)
+			return
+		case <-ticker.C:
+			s.expirePendingFights(pendingFightMaxAge)
+			s.refundStaleBettingPools(bettingPoolMaxAge)
+		}
+	}
+}
+
+// expirePendingFights cancels pending fights older than maxAge, refunding the
+// creator's entry fee. Returns the number of fights cancelled.
+func (s *Server) expirePendingFights(maxAge time.Duration) int {
+	now := time.Now()
+	var expired []*models.HorseFight
+
+	s.fightMu.Lock()
+	for id, fight := range s.pendingFights {
+		if fight.Status == models.FightStatusPending && now.Sub(fight.CreatedAt) > maxAge {
+			fight.Status = models.FightStatusCancelled
+			delete(s.pendingFights, id)
+			expired = append(expired, fight)
+		}
+	}
+	s.fightMu.Unlock()
+
+	ctx := context.Background()
+	for _, fight := range expired {
+		if fight.EntryFee > 0 {
+			if stable := s.getStableForUser(fight.Horse1OwnerID); stable != nil {
+				mu := s.stableMu(stable.ID)
+				mu.Lock()
+				stable.Cummies += fight.EntryFee
+				mu.Unlock()
+				s.persistStable(ctx, stable)
+			}
+		}
+		if s.fightRepo != nil {
+			if err := s.fightRepo.UpdateFight(ctx, fight); err != nil {
+				log.Printf("server: failed to persist cancelled fight %s: %v", fight.ID, err)
+			}
+		}
+		log.Printf("server: pending fight %s expired with no challenger — refunded %d cummies to %s",
+			fight.ID, fight.EntryFee, fight.Horse1OwnerID)
+	}
+	return len(expired)
+}
+
+// refundStaleBettingPools refunds every bet in unresolved pools older than
+// maxAge. A maxAge of 0 refunds ALL outstanding pools (shutdown path).
+// Returns the number of bets refunded.
+func (s *Server) refundStaleBettingPools(maxAge time.Duration) int {
+	now := time.Now()
+	var stale []*models.BettingPool
+
+	s.bettingMu.Lock()
+	for raceID, pool := range s.bettingPools {
+		if pool.Status == "resolved" || pool.Status == "refunded" {
+			continue
+		}
+		if maxAge > 0 && now.Sub(pool.OpenedAt) <= maxAge {
+			continue
+		}
+		pool.Status = "refunded"
+		delete(s.bettingPools, raceID)
+		stale = append(stale, pool)
+	}
+	s.bettingMu.Unlock()
+
+	ctx := context.Background()
+	refunded := 0
+	for _, pool := range stale {
+		for i := range pool.Bets {
+			bet := &pool.Bets[i]
+			if bet.Amount <= 0 {
+				continue
+			}
+			stable, err := s.stables.GetStable(bet.StableID)
+			if err != nil || stable == nil {
+				stable = s.getStableForUser(bet.UserID)
+			}
+			if stable == nil {
+				continue
+			}
+			mu := s.stableMu(stable.ID)
+			mu.Lock()
+			stable.Cummies += bet.Amount
+			mu.Unlock()
+			s.persistStable(ctx, stable)
+			refunded++
+		}
+		if len(pool.Bets) > 0 {
+			log.Printf("server: refunded %d escrowed bets from stale betting pool for race %s",
+				len(pool.Bets), pool.RaceID)
+		}
+	}
+	return refunded
+}
 
 // ---------------------------------------------------------------------------
 // Core betting logic (not HTTP-specific)

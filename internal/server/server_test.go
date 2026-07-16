@@ -2174,3 +2174,197 @@ func TestClonePokerTable_DeepCopy(t *testing.T) {
 		t.Fatal("CommunityCards aliased between clone and original")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Self-dealing guards (C-6)
+// ---------------------------------------------------------------------------
+
+func TestCreateTrade_RejectsSameStable(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Solo Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	body := jsonBody(map[string]interface{}{
+		"horseID":    stable.Horses[0].ID,
+		"fromStable": stable.ID,
+		"toStable":   stable.ID,
+		"price":      100,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/trades", body)
+	req = injectAuth(req, "user-1", "solo")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("self-trade: status = %d, want 400 (C-6)\nbody: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestBuyListing_RejectsOwnListing(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Stud Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	// List the first horse at stud.
+	body := jsonBody(map[string]interface{}{
+		"horseID": stable.Horses[0].ID,
+		"price":   100,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/market", body)
+	req = injectAuth(req, "user-1", "studmaster")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create listing: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	var listing models.StudListing
+	decodeJSON(t, rr, &listing)
+
+	balanceBefore := stable.Cummies
+
+	// Try to buy the own listing with the own mare — must be rejected and no
+	// cummies may move (previously only cost the 2% burn and yielded a foal).
+	body = jsonBody(map[string]interface{}{
+		"buyerStableID": stable.ID,
+		"mareID":        stable.Horses[1].ID,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/market/"+listing.ID+"/buy", body)
+	req = injectAuth(req, "user-1", "studmaster")
+	rr = httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("self-purchase: status = %d, want 400 (C-6)\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if stable.Cummies != balanceBefore {
+		t.Fatalf("balance changed from %d to %d on rejected self-purchase", balanceBefore, stable.Cummies)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Escrow refunds (H-6)
+// ---------------------------------------------------------------------------
+
+func TestExpirePendingFights_RefundsEntryFee(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Arena Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	const fee = int64(300)
+	balanceBefore := stable.Cummies
+	// Simulate a fight created an hour ago whose fee was escrowed.
+	stable.Cummies -= fee
+	fight := &models.HorseFight{
+		ID:            "fight-old",
+		Horse1ID:      stable.Horses[0].ID,
+		Horse1OwnerID: "user-1",
+		EntryFee:      fee,
+		Purse:         fee * 2,
+		Status:        models.FightStatusPending,
+		CreatedAt:     time.Now().Add(-time.Hour),
+	}
+	fresh := &models.HorseFight{
+		ID:            "fight-fresh",
+		Horse1ID:      stable.Horses[1].ID,
+		Horse1OwnerID: "user-1",
+		EntryFee:      fee,
+		Status:        models.FightStatusPending,
+		CreatedAt:     time.Now(),
+	}
+	s.fightMu.Lock()
+	s.pendingFights[fight.ID] = fight
+	s.pendingFights[fresh.ID] = fresh
+	s.fightMu.Unlock()
+
+	if n := s.expirePendingFights(30 * time.Minute); n != 1 {
+		t.Fatalf("expired %d fights, want 1", n)
+	}
+	if stable.Cummies != balanceBefore {
+		t.Fatalf("balance = %d after refund, want %d — entry fee not refunded (H-6)", stable.Cummies, balanceBefore)
+	}
+	if fight.Status != models.FightStatusCancelled {
+		t.Fatalf("fight status = %q, want cancelled", fight.Status)
+	}
+	s.fightMu.RLock()
+	_, oldStillPending := s.pendingFights[fight.ID]
+	_, freshStillPending := s.pendingFights[fresh.ID]
+	s.fightMu.RUnlock()
+	if oldStillPending {
+		t.Fatal("expired fight still in pendingFights")
+	}
+	if !freshStillPending {
+		t.Fatal("fresh fight was wrongly expired")
+	}
+}
+
+func TestRefundStaleBettingPools_RefundsEscrowedBets(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Bettor Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	const wager = int64(150)
+	balanceBefore := stable.Cummies
+	stable.Cummies -= wager // escrowed at bet time
+	pool := &models.BettingPool{
+		RaceID:    "race-orphan",
+		Status:    "open",
+		TotalPool: wager,
+		OpenedAt:  time.Now().Add(-time.Hour),
+		Bets: []models.Bet{{
+			ID: "bet-1", RaceID: "race-orphan", UserID: "user-1",
+			StableID: stable.ID, Amount: wager,
+		}},
+	}
+	s.bettingMu.Lock()
+	s.bettingPools[pool.RaceID] = pool
+	s.bettingMu.Unlock()
+
+	if n := s.refundStaleBettingPools(15 * time.Minute); n != 1 {
+		t.Fatalf("refunded %d bets, want 1", n)
+	}
+	if stable.Cummies != balanceBefore {
+		t.Fatalf("balance = %d after refund, want %d — escrowed bet lost (H-6)", stable.Cummies, balanceBefore)
+	}
+	s.bettingMu.RLock()
+	_, stillThere := s.bettingPools[pool.RaceID]
+	s.bettingMu.RUnlock()
+	if stillThere {
+		t.Fatal("refunded pool still registered")
+	}
+}
+
+func TestRefundStaleBettingPools_ShutdownRefundsEverything(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Bettor Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+	const wager = int64(75)
+	balanceBefore := stable.Cummies
+	stable.Cummies -= wager
+	pool := &models.BettingPool{
+		RaceID:   "race-live",
+		Status:   "open",
+		OpenedAt: time.Now(), // brand new — only the shutdown path refunds it
+		Bets: []models.Bet{{
+			ID: "bet-1", RaceID: "race-live", UserID: "user-1",
+			StableID: stable.ID, Amount: wager,
+		}},
+	}
+	s.bettingMu.Lock()
+	s.bettingPools[pool.RaceID] = pool
+	s.bettingMu.Unlock()
+
+	if n := s.refundStaleBettingPools(0); n != 1 {
+		t.Fatalf("refunded %d bets on shutdown, want 1", n)
+	}
+	if stable.Cummies != balanceBefore {
+		t.Fatalf("balance = %d, want %d after shutdown refund", stable.Cummies, balanceBefore)
+	}
+}

@@ -210,6 +210,38 @@ func (sm *StableManager) ListHorses(stableID string) []*models.Horse {
 	return result
 }
 
+// SnapshotHorses returns a copy of the stable's horse roster taken under the
+// read lock. Callers that iterate horses outside the manager (leaderboards,
+// season rollups) must use this instead of ranging stable.Horses directly:
+// concurrent AddHorseToStable calls append to (and reallocate) that slice,
+// which is a data race and can panic mid-range (C-7).
+func (sm *StableManager) SnapshotHorses(stableID string) []models.Horse {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	stable, ok := sm.stables[stableID]
+	if !ok {
+		return nil
+	}
+	out := make([]models.Horse, len(stable.Horses))
+	copy(out, stable.Horses)
+	return out
+}
+
+// ForEachHorse runs fn on every registered horse while holding the write
+// lock. Used for bulk mutations (e.g. season-end ELO soft resets) that would
+// otherwise race with concurrent roster changes (C-7).
+func (sm *StableManager) ForEachHorse(fn func(h *models.Horse)) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	for _, stable := range sm.stables {
+		for i := range stable.Horses {
+			fn(&stable.Horses[i])
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Economy
 // ---------------------------------------------------------------------------

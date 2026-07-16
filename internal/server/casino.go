@@ -186,7 +186,7 @@ func (s *Server) handleExchangeCasinoChips(w http.ResponseWriter, r *http.Reques
 	mu.Lock()
 	defer mu.Unlock()
 
-	s.maybeGrantDailyCasinoChips(r.Context(), claims.UserID, stable)
+	s.maybeGrantDailyCasinoChipsLocked(r.Context(), claims.UserID, stable)
 
 	switch strings.ToLower(strings.TrimSpace(req.Direction)) {
 	case "buy", "to_chips":
@@ -948,17 +948,42 @@ func (s *Server) withdrawCasinoStake(stable *models.Stable, currency string, amo
 	return nil
 }
 
+// maybeGrantDailyCasinoChips grants the daily chip allowance. It acquires the
+// stable's mutex for the balance mutation (C-7): progressMu does not protect
+// CasinoChips against concurrent slot spins / exchange operations on the same
+// stable. Callers must NOT already hold the stable mutex — those use
+// maybeGrantDailyCasinoChipsLocked.
 func (s *Server) maybeGrantDailyCasinoChips(ctx context.Context, userID string, stable *models.Stable) bool {
 	if stable == nil || userID == "" {
 		return false
 	}
+	return s.grantDailyCasinoChips(ctx, userID, stable, false)
+}
+
+// maybeGrantDailyCasinoChipsLocked is the variant for callers that already
+// hold s.stableMu(stable.ID) (e.g. the chip exchange handler).
+func (s *Server) maybeGrantDailyCasinoChipsLocked(ctx context.Context, userID string, stable *models.Stable) bool {
+	if stable == nil || userID == "" {
+		return false
+	}
+	return s.grantDailyCasinoChips(ctx, userID, stable, true)
+}
+
+func (s *Server) grantDailyCasinoChips(ctx context.Context, userID string, stable *models.Stable, stableLockHeld bool) bool {
 	today := time.Now().UTC().Format("2006-01-02")
 	granted := false
 	s.progressMu.Lock()
 	p := s.getOrCreateProgress(userID)
 	resetDailyLimitsIfNeeded(p)
 	if p.LastCasinoGrantDate != today {
-		stable.CasinoChips += casinoDailyChipGrant
+		if stableLockHeld {
+			stable.CasinoChips += casinoDailyChipGrant
+		} else {
+			mu := s.stableMu(stable.ID)
+			mu.Lock()
+			stable.CasinoChips += casinoDailyChipGrant
+			mu.Unlock()
+		}
 		p.LastCasinoGrantDate = today
 		granted = true
 		progressSnapshot := clonePlayerProgress(p)
