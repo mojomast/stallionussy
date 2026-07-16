@@ -23,3 +23,8 @@ Thumbs.db
 
 # Docker
 .docker/
+
+# Offline-mode embedded database (make offline)
+/stallionussy.db
+/stallionussy.db-wal
+/stallionussy.db-shm
