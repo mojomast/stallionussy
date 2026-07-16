@@ -1427,10 +1427,24 @@ func TestHTTP_ListMarket_Empty(t *testing.T) {
 		t.Fatalf("GET /api/market: status = %d, want 200\nbody: %s", rr.Code, rr.Body.String())
 	}
 
+	// S-3: the market is never empty any more — the house keeps a rotating
+	// stud catalogue listed. With no players there must be exactly those.
 	var listings []models.StudListing
 	decodeJSON(t, rr, &listings)
-	if len(listings) != 0 {
-		t.Fatalf("expected 0 listings, got %d", len(listings))
+	playerListings := 0
+	houseListings := 0
+	for _, l := range listings {
+		if l.OwnerID == "system" {
+			houseListings++
+		} else {
+			playerListings++
+		}
+	}
+	if playerListings != 0 {
+		t.Fatalf("expected 0 player listings, got %d", playerListings)
+	}
+	if houseListings != houseStudListingTarget {
+		t.Fatalf("expected %d house listings, got %d", houseStudListingTarget, houseListings)
 	}
 }
 
@@ -1453,11 +1467,17 @@ func TestHTTP_ListMarket_WithListings(t *testing.T) {
 
 	var listings []models.StudListing
 	decodeJSON(t, rr, &listings)
-	if len(listings) != 1 {
-		t.Fatalf("expected 1 listing, got %d", len(listings))
+	var mine []models.StudListing
+	for _, l := range listings {
+		if l.OwnerID == "user-1" {
+			mine = append(mine, l)
+		}
 	}
-	if listings[0].Price != 200 {
-		t.Fatalf("listing price = %d, want 200", listings[0].Price)
+	if len(mine) != 1 {
+		t.Fatalf("expected 1 player listing, got %d (of %d total)", len(mine), len(listings))
+	}
+	if mine[0].Price != 200 {
+		t.Fatalf("listing price = %d, want 200", mine[0].Price)
 	}
 }
 
@@ -1876,14 +1896,14 @@ func TestQuickRace_PurseFundedByHouse(t *testing.T) {
 		t.Fatalf("quick race: status = %d\nbody: %s", rr.Code, rr.Body.String())
 	}
 
-	// The house funds the full purse up front. A random mid-race event may
-	// move a bit more house money (house-funded purse boosts) or return some
-	// (the Geoffrussey garnish banks at most 30% of the purse back), so the
-	// house must end down by at least 70% of the purse.
-	minDebit := quickRacePurse * 7 / 10
-	if got := house.Cummies; got > houseBefore-minDebit {
-		t.Fatalf("house treasury = %d, want at most %d (purse must be debited from the house, not minted)",
-			got, houseBefore-minDebit)
+	// The house funds the full purse up front, but purse shares placed by
+	// bot clones now flow BACK to the treasury (S-3) — so the house ends
+	// down by exactly what real players earned (plus/minus random-event
+	// movement), and never up. The hard invariant is conservation: quick
+	// races must not mint money.
+	if got := house.Cummies; got > houseBefore {
+		t.Fatalf("house treasury GREW from %d to %d — sponsoring a race can never profit the house",
+			houseBefore, got)
 	}
 	if sumAfter := totalCummies(s); sumAfter > sumBefore {
 		t.Fatalf("total cummies grew from %d to %d — quick race minted money (C-3)", sumBefore, sumAfter)
@@ -1990,6 +2010,11 @@ func TestBotChallenge_NeverMintsCummies(t *testing.T) {
 		}
 		if sumAfter := totalCummies(s); sumAfter > sumBefore {
 			t.Fatalf("bot challenge %d minted cummies: total went from %d to %d (H-5)", i, sumBefore, sumAfter)
+		}
+		// A post-race injury roll would (correctly, R-9) block the next
+		// challenge — heal it, this test is about money conservation.
+		if h, err := s.stables.GetHorse(stable.Horses[0].ID); err == nil {
+			h.Injury = nil
 		}
 	}
 }

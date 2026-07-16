@@ -3093,6 +3093,12 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
         <button class="term-btn" id="btn-start-race">START RACE</button>
         <button class="term-btn amber" id="btn-quick-race">QUICK RACE</button>
       </div>
+      <div class="form-row" style="gap:8px;">
+        <span class="has-tooltip">
+          <button class="term-btn danger" id="btn-cpu-arena">⚔ CPU ARENA</button>
+          <span class="tooltip-text">Head-to-head against a house-fielded opponent matched to your horse. House-funded purse plus optional wager — the always-available duel for when the humans are asleep.</span>
+        </span>
+      </div>
     </div>
   </div>
 
@@ -11679,6 +11685,7 @@ function bindEvents() {
   $('#btn-start-race').addEventListener('click', startRace);
   $('#btn-quick-race').addEventListener('click', quickRace);
   $('#btn-open-exhibition').addEventListener('click', openExhibitionPool);
+  $('#btn-cpu-arena').addEventListener('click', () => challengeStable('bot', 'CPU Arena'));
 
   // Market
   $('#btn-create-listing').addEventListener('click', createListing);

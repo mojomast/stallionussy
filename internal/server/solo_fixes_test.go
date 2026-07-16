@@ -6,12 +6,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/mojomast/stallionussy/internal/models"
+	"github.com/mojomast/stallionussy/internal/racussy"
 )
 
 // getJSONReq performs an authenticated (or anonymous when userID is empty)
@@ -393,6 +395,192 @@ func TestQuickRace_AllHorsesInjured_NoTurnBurned(t *testing.T) {
 	}
 	if got := dailyRacesLeft(s, "user-ward"); got != defaultDailyRaces {
 		t.Fatalf("rejected quick race consumed a daily entry: %d left, want %d", got, defaultDailyRaces)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S-1 — bot matchmaking scales to the player's horse
+// ---------------------------------------------------------------------------
+
+// TestBotMatchmaking_FreshPlayerWinRate: a fresh starter horse (fitness
+// ~0.42) should win roughly 40-60% of quick-race-shaped bot fields. Before
+// the fix it lost essentially every race to full-spec legendary clones
+// (measured live: 0 wins in 6, E-008's Chosen winning all six).
+func TestBotMatchmaking_FreshPlayerWinRate(t *testing.T) {
+	s := NewServer(nil)
+
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+
+	// Aggregate over several fresh starters: individual starter genomes vary
+	// (a stall-prone stamina-BB starter measurably underperforms its trial),
+	// but the aggregate must land near the 40-60% target.
+	const starters = 3
+	const racesPer = 140
+	totalRaces, totalWins := 0, 0
+	for p := 0; p < starters; p++ {
+		userID := fmt.Sprintf("user-fresh-%d", p)
+		stable, err := s.createOwnedStable(context.Background(), fmt.Sprintf("Fresh Ranch %d", p), userID, true)
+		if err != nil {
+			t.Fatalf("create stable: %v", err)
+		}
+		player, err := s.stables.GetHorse(stable.Horses[0].ID)
+		if err != nil {
+			t.Fatalf("get player horse: %v", err)
+		}
+
+		wins := 0
+		for i := 0; i < racesPer; i++ {
+			track := tracks[i%len(tracks)]
+			opponents := s.pickBotOpponents(player, 3+i%3, track) // quick-race field sizes
+			if len(opponents) == 0 {
+				t.Fatal("no bot opponents produced")
+			}
+			for _, o := range opponents {
+				if o.OwnerID == player.OwnerID && !isBotHorse(o) {
+					t.Fatal("player's own horse cloned as opponent (S-1)")
+				}
+			}
+			horses := append([]*models.Horse{player}, opponents...)
+			race := racussy.NewRace(horses, track, 0)
+			race = racussy.SimulateRace(race, horses)
+			for _, e := range race.Entries {
+				if e.HorseID == player.ID && e.FinishPlace == 1 {
+					wins++
+				}
+			}
+		}
+		t.Logf("starter %d (fitness %.2f): win rate %.1f%% over %d races",
+			p, player.CurrentFitness, float64(wins)/float64(racesPer)*100, racesPer)
+		totalRaces += racesPer
+		totalWins += wins
+	}
+
+	rate := float64(totalWins) / float64(totalRaces)
+	t.Logf("aggregate fresh-player win rate over %d races: %.1f%%", totalRaces, rate*100)
+	// Target band is 40-60%; the assertion is slightly looser to absorb
+	// residual genome variance across the randomly generated starters.
+	if rate < 0.32 || rate > 0.70 {
+		t.Fatalf("fresh player win rate = %.1f%%, want roughly 40-60%% (S-1)", rate*100)
+	}
+}
+
+// TestBotOpponents_ExcludePlayersOwnHorses: only the player's horses are
+// excluded from the template pool — house horses still serve as templates.
+func TestBotOpponents_ExcludePlayersOwnHorses(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Own Ranch", "user-own", true)
+	if err != nil {
+		t.Fatalf("create stable: %v", err)
+	}
+	player, err := s.stables.GetHorse(stable.Horses[0].ID)
+	if err != nil {
+		t.Fatalf("get horse: %v", err)
+	}
+	ownNames := map[string]bool{}
+	for _, h := range stable.Horses {
+		ownNames[h.Name] = true
+	}
+
+	for i := 0; i < 20; i++ {
+		for _, o := range s.pickBotOpponents(player, 5, models.TrackSprintussy) {
+			if ownNames[o.Name] {
+				t.Fatalf("opponent %q is a clone of the player's own horse", o.Name)
+			}
+		}
+	}
+}
+
+// TestQuickRace_NoBotStatLogSpam is covered implicitly: UpdateHorseStats is
+// skipped for bot clones, and unclaimed bot purse shares return to the house
+// treasury — asserted here by conservation.
+func TestQuickRace_BotPurseSharesReturnToHouse(t *testing.T) {
+	s := NewServer(nil)
+	if _, err := s.createOwnedStable(context.Background(), "Purse Ranch", "user-purse", true); err != nil {
+		t.Fatalf("create stable: %v", err)
+	}
+
+	totalBefore := totalCummies(s)
+	rr := postJSON(t, s, "/api/races/quick", map[string]any{}, "user-purse", "purse")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("quick race: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	totalAfter := totalCummies(s)
+	// Player-side multipliers (streak/prestige/traits) can only ADD to the
+	// total; bot shares must no longer vanish. Allow growth, forbid leaks.
+	if totalAfter < totalBefore {
+		t.Fatalf("cummies leaked out of the economy: before %d, after %d (S-3 bot-share leak)",
+			totalBefore, totalAfter)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S-2/S-3 — solo loop: raised caps and the house stud catalogue
+// ---------------------------------------------------------------------------
+
+func TestDailyCaps_RaisedForLongerLoop(t *testing.T) {
+	if defaultDailyRaces < 10 || defaultDailyTrains < 10 {
+		t.Fatalf("daily caps = %d races / %d trains; S-2 raised both to 10",
+			defaultDailyRaces, defaultDailyTrains)
+	}
+}
+
+// TestHouseStudCatalogue_SeededAndBuyable: the stud market must never be
+// empty for a solo player — the House of USSY keeps legendaries listed, and
+// a player can actually buy a cover.
+func TestHouseStudCatalogue_SeededAndBuyable(t *testing.T) {
+	s := NewServer(nil)
+
+	houseListings := []*models.StudListing{}
+	for _, l := range s.market.ListActiveListings() {
+		if l.OwnerID == "system" {
+			houseListings = append(houseListings, l)
+		}
+	}
+	if len(houseListings) != houseStudListingTarget {
+		t.Fatalf("house stud listings at boot = %d, want %d (S-3)",
+			len(houseListings), houseStudListingTarget)
+	}
+	for _, l := range houseListings {
+		if l.Price <= 0 {
+			t.Fatalf("house listing %q has non-positive price %d", l.HorseName, l.Price)
+		}
+		if l.MaxUses != houseStudMaxUses {
+			t.Fatalf("house listing %q MaxUses = %d, want %d", l.HorseName, l.MaxUses, houseStudMaxUses)
+		}
+	}
+
+	// A solo player with starter funds can buy a breeding from the house.
+	buyer, err := s.createOwnedStable(context.Background(), "Buyer Ranch", "user-buyer", true)
+	if err != nil {
+		t.Fatalf("create buyer stable: %v", err)
+	}
+	// Top up so even the priciest legendary is affordable in-test.
+	buyer.Cummies = 20000
+	listing := houseListings[0]
+	mareID := buyer.Horses[0].ID
+
+	rr := postJSON(t, s, "/api/market/"+listing.ID+"/buy",
+		map[string]any{"mareID": mareID}, "user-buyer", "buyer")
+	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
+		t.Fatalf("buy house stud: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if got := len(buyer.Horses); got != 3 {
+		t.Fatalf("buyer has %d horses after stud purchase, want 3 (foal delivered)", got)
+	}
+
+	// ensureHouseStudListings is idempotent — no over-listing.
+	s.ensureHouseStudListings(context.Background())
+	active := 0
+	for _, l := range s.market.ListActiveListings() {
+		if l.OwnerID == "system" {
+			active++
+		}
+	}
+	if active > houseStudListingTarget {
+		t.Fatalf("house over-listed: %d active house studs, target %d", active, houseStudListingTarget)
 	}
 }
 

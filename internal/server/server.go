@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -504,6 +505,10 @@ func NewServer(db *postgres.DB) *Server {
 		s.persistStable(context.Background(), house)
 	}
 
+	// S-3/S-4: keep a rotating catalogue of house legendaries at stud so the
+	// market is never empty for a solo player.
+	s.ensureHouseStudListings(context.Background())
+
 	// Backfill starter horses for any persisted user stables that are still empty.
 	for _, stable := range s.stables.ListStables() {
 		if stable.OwnerID == "" || stable.OwnerID == "system" || len(stable.Horses) > 0 {
@@ -752,6 +757,7 @@ func (s *Server) Start(addr string) error {
 	go s.pokerTableCleanupLoop(ctx)
 	go s.escrowRefundLoop(ctx)
 	go s.sessionPurgeLoop(ctx)
+	go s.houseStudRotationLoop(ctx)
 
 	// Signal handling: trap SIGINT and SIGTERM for graceful shutdown.
 	sigCh := make(chan os.Signal, 1)
@@ -1523,7 +1529,7 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 			if playerHorse != nil {
 				needed := 4 - len(horses)
 				if needed > 0 {
-					horses = append(horses, s.pickBotOpponents(playerHorse, needed)...)
+					horses = append(horses, s.pickBotOpponents(playerHorse, needed, req.TrackType)...)
 				}
 			}
 		}
@@ -1560,7 +1566,7 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 			models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
 		}
 		trackType := tracks[rand.IntN(len(tracks))]
-		opponents := s.pickBotOpponents(playerHorse, 3+rand.IntN(3))
+		opponents := s.pickBotOpponents(playerHorse, 3+rand.IntN(3), trackType)
 		selected := append([]*models.Horse{playerHorse}, opponents...)
 		// C-3: fund the purse from the house treasury instead of minting it.
 		// If the house can't cover the full purse, the race runs for less.
@@ -1759,9 +1765,13 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 			losses = 1
 		}
 
-		// Update stats via stable manager.
-		if err := s.stables.UpdateHorseStats(horse.ID, wins, losses, 1, newELO); err != nil {
-			log.Printf("server: failed to update stats for horse %s: %v", horse.ID, err)
+		// Update stats via stable manager. Bot clones exist only for this
+		// race — writing their stats just logged a "not found" for every
+		// quick race entrant.
+		if !isBotHorse(horse) {
+			if err := s.stables.UpdateHorseStats(horse.ID, wins, losses, 1, newELO); err != nil {
+				log.Printf("server: failed to update stats for horse %s: %v", horse.ID, err)
+			}
 		}
 
 		// Track peak ELO.
@@ -1773,6 +1783,15 @@ func (s *Server) runRace(horses []*models.Horse, trackType models.TrackType, pur
 		earnings := int64(0)
 		if share, ok := purseDistribution[entry.FinishPlace]; ok {
 			earnings = int64(float64(purse) * share)
+		}
+
+		// S-3: purse shares "won" by bot clones used to be destroyed —
+		// with a mostly-losing player, ~₵160 of every ₵200 house-sponsored
+		// quick-race purse evaporated. Unclaimed shares now flow back to
+		// the House of USSY treasury (before any player-only multipliers).
+		if earnings > 0 && isBotHorse(horse) {
+			s.creditHouseFunds(context.Background(), earnings)
+			earnings = 0
 		}
 
 		// Trait: earnings_boost (e.g. Cummies Magnet) — multiply earnings by magnitude.
@@ -2086,6 +2105,110 @@ func (s *Server) debitHouseFunds(ctx context.Context, amount int64) int64 {
 	s.persistStable(ctx, house)
 	mu.Unlock()
 	return funded
+}
+
+// ---------------------------------------------------------------------------
+// House stud catalogue (S-3/S-4)
+//
+// The stud market was structurally empty for a solo player: the House of
+// USSY owns 12 legendaries and never listed any of them, so earned cummies
+// had nothing to buy. The house now keeps a small rotating catalogue of its
+// legendaries at stud — the one persistent, solo-viable money sink that
+// converts race/daily income into better genomes.
+// ---------------------------------------------------------------------------
+
+// houseStudListingTarget is how many house studs are kept listed at once.
+const houseStudListingTarget = 2
+
+// houseStudMaxUses rotates the catalogue: after this many covers a listing
+// deactivates (H-8 use limits) and the next ensure pass lists a different
+// legendary.
+const houseStudMaxUses = 3
+
+// houseStudPrice prices a house stud off its Sappho score (~₵1,900-2,600 for
+// the legendary roster: a few days of solo play, not a lifetime). E-008's
+// Chosen has no calculable value, so B.U.R.P. set one.
+func houseStudPrice(h *models.Horse) int64 {
+	score := marketussy.CalcSapphoScore(h)
+	if h.LotNumber == 6 || math.IsNaN(score) {
+		return 6666
+	}
+	return 800 + int64(score*150)
+}
+
+// ensureHouseStudListings tops the house stud catalogue back up to the
+// target. Idempotent; called at boot and hourly.
+func (s *Server) ensureHouseStudListings(ctx context.Context) {
+	house := s.houseStable()
+	if house == nil {
+		return
+	}
+
+	active := 0
+	listedHorse := map[string]bool{}
+	for _, l := range s.market.ListActiveListings() {
+		listedHorse[l.HorseID] = true
+		if l.OwnerID == house.OwnerID {
+			active++
+		}
+	}
+	if active >= houseStudListingTarget {
+		return
+	}
+
+	candidates := make([]*models.Horse, 0, 12)
+	for _, h := range s.stables.ListHorses(house.ID) {
+		if h == nil || h.Retired || listedHorse[h.ID] {
+			continue
+		}
+		candidates = append(candidates, h)
+	}
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
+	})
+
+	for _, h := range candidates {
+		if active >= houseStudListingTarget {
+			break
+		}
+		price := houseStudPrice(h)
+		listing, err := s.market.CreateListing(h, house.OwnerID, price)
+		if err != nil {
+			continue
+		}
+		listing.MaxUses = houseStudMaxUses
+		s.persistListing(ctx, listing)
+		active++
+
+		s.hub.BroadcastJSON(map[string]interface{}{
+			"type":   "market_update",
+			"action": "listed",
+			"listing": map[string]interface{}{
+				"id":        listing.ID,
+				"horseName": listing.HorseName,
+				"ownerID":   listing.OwnerID,
+				"price":     listing.Price,
+			},
+		})
+		log.Printf("server: House of USSY listed %q at stud for %d cummies (%d covers)",
+			h.Name, price, houseStudMaxUses)
+	}
+}
+
+// houseStudRotationLoop re-stocks the house stud catalogue once an hour so
+// exhausted listings are replaced without a restart.
+func (s *Server) houseStudRotationLoop(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("server: houseStudRotationLoop shutting down")
+			return
+		case <-ticker.C:
+			s.ensureHouseStudListings(context.Background())
+		}
+	}
 }
 
 // creditHouseFunds deposits amount into the house treasury (e.g. the betting
@@ -5031,7 +5154,13 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 		mu.Unlock()
 	}
 
-	bots := s.pickBotOpponents(challengerHorse, 1)
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+	trackType := tracks[rand.IntN(len(tracks))]
+
+	bots := s.pickBotOpponents(challengerHorse, 1, trackType)
 	if len(bots) == 0 {
 		return nil, "no CPU arena entrant available"
 	}
@@ -5039,12 +5168,6 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 	challenge.DefenderHorse = defenderHorse.ID
 	challenge.DefenderHorseName = defenderHorse.Name
 	challenge.Status = models.ChallengeStatusCompleted
-
-	tracks := []models.TrackType{
-		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
-		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
-	}
-	trackType := tracks[rand.IntN(len(tracks))]
 	// C-3: fund the bot-challenge purse from the house treasury.
 	botPurse := s.debitHouseFunds(context.Background(), challengeBasePurse)
 	result := s.runRace([]*models.Horse{challengerHorse, defenderHorse}, trackType, botPurse)
@@ -6131,8 +6254,14 @@ var prestigeTiers = []models.PrestigeTier{
 
 // breedingCooldownHours is the minimum time between breeds for a single horse.
 const breedingCooldownHours = 4
-const defaultDailyTrains = 6
-const defaultDailyRaces = 6
+
+// Daily action caps (S-2). Raised 6 -> 10: with six of each, a solo player's
+// entire day of racing+training fit in ~10 minutes. Ten keeps the caps as a
+// pacing mechanism (and a bound on house-sponsored purse outflow) while
+// leaving room for a session that actually feels like a session; tournaments
+// and exhibition betting remain uncapped verbs on top.
+const defaultDailyTrains = 10
+const defaultDailyRaces = 10
 const quickRacePurse = int64(200)
 const challengeBasePurse = int64(250)
 
@@ -6248,7 +6377,88 @@ func isBotHorse(h *models.Horse) bool {
 	return h.OwnerID == "bot" || strings.HasPrefix(h.ID, "bot:")
 }
 
-func cloneBotHorse(src *models.Horse, targetELO float64) *models.Horse {
+// botStrength estimates a horse's raw pace potential (fitness × genetics via
+// CalcBaseSpeed, averaged across every track). Used only to pick which
+// templates get cloned — the clone itself is handicapped by time trial.
+func botStrength(h *models.Horse) float64 {
+	tracks := []models.TrackType{
+		models.TrackSprintussy, models.TrackGrindussy, models.TrackMudussy,
+		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
+	}
+	total := 0.0
+	for _, t := range tracks {
+		total += racussy.CalcBaseSpeed(h, t)
+	}
+	return total / float64(len(tracks))
+}
+
+// botTrialPace runs deterministic single-horse time trials on the given
+// track and returns the average pace in metres/second. Because it uses the
+// real race simulator, it prices in EVERYTHING that decides races —
+// genome-dependent fatigue drain, panic frequency, traits, track quirks —
+// not just base speed. Pace (distance covered / time) rather than finish
+// time keeps the measurement meaningful even for horses so weak they stall
+// before the line and DNF at the tick cap.
+func botTrialPace(h *models.Horse, trackType models.TrackType) float64 {
+	// A single fixed seed keeps trials comparable between the player and the
+	// probes (both get the same race-day form roll, which cancels out) while
+	// keeping matchmaking latency low — every extra seed costs one full solo
+	// simulation per bisection step.
+	seeds := []uint64{0xA11CE}
+	total := 0.0
+	samples := 0
+	for _, seed := range seeds {
+		trial := *h
+		trial.Fatigue = 0
+		horses := []*models.Horse{&trial}
+		race := racussy.NewRace(horses, trackType, 0)
+		race = racussy.SimulateRace(race, horses, seed)
+		if len(race.Entries) != 1 {
+			continue
+		}
+		entry := race.Entries[0]
+		secs := entry.FinalTime.Seconds()
+		if secs <= 0 {
+			continue
+		}
+		// Use the PEAK distance reached, not the final position: a stalled
+		// horse's position regresses once per-tick fatigue exceeds its base
+		// speed (it drifts backwards until the tick cap), which would make
+		// the measured pace negative and nonsensical.
+		pos := 0.0
+		for _, te := range entry.TickLog {
+			if te.Position > pos {
+				pos = te.Position
+			}
+		}
+		if pos > float64(race.Distance) {
+			pos = float64(race.Distance)
+		}
+		if pos <= 0 {
+			continue
+		}
+		total += pos / secs
+		samples++
+	}
+	if samples == 0 {
+		return 0
+	}
+	return total / float64(samples)
+}
+
+// botHandicapMin/Max bound the pace band bot clones race in, relative to the
+// requesting player's horse (1.0 = exactly as fast over a time trial).
+// Clones roll a uniform multiplier in this band and have their fitness
+// binary-searched until their trial time matches. Tuned empirically (see
+// TestBotMatchmaking_FreshPlayerWinRate) so a fresh starter horse wins
+// roughly half of its early quick races instead of 0/6 against full-spec
+// fitness-1.0 legendaries.
+const (
+	botHandicapMin = 0.82
+	botHandicapMax = 0.97
+)
+
+func cloneBotHorse(src, player *models.Horse, trackType models.TrackType, playerTrialPace float64) *models.Horse {
 	if src == nil {
 		return nil
 	}
@@ -6260,10 +6470,43 @@ func cloneBotHorse(src *models.Horse, targetELO float64) *models.Horse {
 	clone.TotalEarnings = 0
 	clone.TrainingXP = 0
 	clone.PeakELO = maxFloat64(clone.PeakELO, clone.ELO)
-	clone.ELO = (clone.ELO*0.7 + targetELO*0.3)
 	clone.Fatigue = minFloat64(clone.Fatigue*0.35, 35)
 	clone.Lore = "House entrant deployed by the circuit office when the real stables are asleep."
 	clone.Injury = nil
+
+	if player != nil {
+		// S-1: handicap the clone toward the player's effective strength.
+		// Templates used to be copied with fitness/genome untouched and only
+		// their ELO blended — so the 12 seeded legendaries (fitness up to
+		// 1.00) crushed every 0.43-fitness starter forever, and the stat gap
+		// never narrowed because house horses never race themselves.
+		if playerTrialPace > 0 {
+			targetPace := playerTrialPace * (botHandicapMin + rand.Float64()*(botHandicapMax-botHandicapMin))
+			lo, hi := 0.05, 1.0
+			for i := 0; i < 6; i++ {
+				mid := (lo + hi) / 2
+				clone.CurrentFitness = mid
+				p := botTrialPace(&clone, trackType)
+				if p <= 0 || p < targetPace {
+					lo = mid // too slow (or broken trial) — more fitness
+				} else {
+					hi = mid // too fast — less fitness
+				}
+			}
+			clone.CurrentFitness = (lo + hi) / 2
+		} else {
+			// Trial failed (a horse that can't move at all): fall back to a
+			// crude fitness match rather than leaving the clone at full spec.
+			clone.CurrentFitness = minFloat64(maxFloat64(player.CurrentFitness, 0.05), 1.0)
+		}
+		if clone.CurrentFitness < src.CurrentFitness {
+			clone.Lore = "House entrant running at reduced spec per circuit fairness regulations (a condition of the yogurt settlement)."
+		}
+		// Pin the clone's ELO near the player's so rating exchanges stay
+		// fair — house registry entries never race, so their permanent 1200
+		// used to drag a losing player's ELO into the basement.
+		clone.ELO = maxFloat64(player.ELO+(rand.Float64()*80-40), 100)
+	}
 	return &clone
 }
 
@@ -6281,7 +6524,7 @@ func minFloat64(a, b float64) float64 {
 	return b
 }
 
-func (s *Server) pickBotOpponents(playerHorse *models.Horse, count int) []*models.Horse {
+func (s *Server) pickBotOpponents(playerHorse *models.Horse, count int, trackType models.TrackType) []*models.Horse {
 	if playerHorse == nil || count <= 0 {
 		return nil
 	}
@@ -6291,22 +6534,42 @@ func (s *Server) pickBotOpponents(playerHorse *models.Horse, count int) []*model
 		if h == nil || h.Retired || h.ID == playerHorse.ID || isBotHorse(h) {
 			continue
 		}
+		// S-1: never clone the requesting player's OTHER horses as opponents
+		// — "I'm racing against my own horse" reads as a bug.
+		if playerHorse.OwnerID != "" && h.OwnerID == playerHorse.OwnerID {
+			continue
+		}
 		candidates = append(candidates, h)
+	}
+	if len(candidates) == 0 {
+		// Fallback for worlds with no other stables at all (bare test
+		// setups): stablemate clones beat no race whatsoever.
+		for _, h := range board {
+			if h == nil || h.Retired || h.ID == playerHorse.ID || isBotHorse(h) {
+				continue
+			}
+			candidates = append(candidates, h)
+		}
 	}
 	if len(candidates) == 0 {
 		return nil
 	}
+	// S-1: matchmake on expected pace (fitness × genetics), not raw ELO.
+	// Every horse on a fresh server sits at ELO 1200, so ELO distance used
+	// to hand a new player the full legendary roster as "nearest peers".
+	playerStrength := botStrength(playerHorse)
 	sort.Slice(candidates, func(i, j int) bool {
-		return absFloat64(candidates[i].ELO-playerHorse.ELO) < absFloat64(candidates[j].ELO-playerHorse.ELO)
+		return absFloat64(botStrength(candidates[i])-playerStrength) < absFloat64(botStrength(candidates[j])-playerStrength)
 	})
 	window := candidates
 	if len(window) > 8 {
 		window = window[:8]
 	}
+	playerTrialPace := botTrialPace(playerHorse, trackType)
 	chosen := make([]*models.Horse, 0, count)
 	for i := 0; i < count; i++ {
 		template := window[i%len(window)]
-		chosen = append(chosen, cloneBotHorse(template, playerHorse.ELO))
+		chosen = append(chosen, cloneBotHorse(template, playerHorse, trackType, playerTrialPace))
 	}
 	return chosen
 }

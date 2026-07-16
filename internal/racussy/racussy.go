@@ -808,17 +808,27 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 		}
 	}
 
-	// DNF any horses that didn't finish within the tick cap.
+	// DNF any horses that didn't finish within the tick cap. Rank them by
+	// distance covered — they used to be placed in ENTRY ORDER, which meant
+	// the first horse in the slice (the requesting player's, in every quick
+	// race) "won" any race where the whole field stalled before the line.
 	if finishedCount < totalEntries {
 		gameTime := time.Duration(tick) * tickInterval
+		var unfinished []int
 		for i := range race.Entries {
 			if !race.Entries[i].Finished {
-				race.Entries[i].Finished = true
-				race.Entries[i].FinishPlace = nextPlace
-				race.Entries[i].FinalTime = gameTime
-				nextPlace++
-				finishedCount++
+				unfinished = append(unfinished, i)
 			}
+		}
+		sort.Slice(unfinished, func(a, b int) bool {
+			return race.Entries[unfinished[a]].Position > race.Entries[unfinished[b]].Position
+		})
+		for _, i := range unfinished {
+			race.Entries[i].Finished = true
+			race.Entries[i].FinishPlace = nextPlace
+			race.Entries[i].FinalTime = gameTime
+			nextPlace++
+			finishedCount++
 		}
 	}
 
