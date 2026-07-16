@@ -1273,9 +1273,26 @@ func cmdAccept(state *cliState, args []string) {
 	}
 
 	// Transfer cummies from the accepting stable to the offering stable.
-	transferErr := state.sm.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price)
-	if transferErr != nil {
-		fmt.Printf("Trade accepted but currency transfer failed: %v\n", transferErr)
+	if offer.Price > 0 {
+		if transferErr := state.sm.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price); transferErr != nil {
+			fmt.Printf("Trade accepted but currency transfer failed: %v\n", transferErr)
+			return
+		}
+	}
+
+	// BUG FIX (H-11): actually hand over the horse. The CLI used to move the
+	// money and stop there — the buyer paid full price while the seller kept
+	// the horse (the HTTP handler always called MoveHorse; the CLI diverged).
+	if moveErr := state.sm.MoveHorse(offer.HorseID, offer.FromStableID, offer.ToStableID); moveErr != nil {
+		fmt.Printf("Payment made but horse transfer failed: %v\n", moveErr)
+		// Undo the payment so money and horse stay together.
+		if offer.Price > 0 {
+			if refundErr := state.sm.TransferCummies(offer.FromStableID, offer.ToStableID, offer.Price); refundErr != nil {
+				fmt.Printf("  (refund also failed: %v — call Geoffrussy support)\n", refundErr)
+			} else {
+				fmt.Println("  Payment refunded.")
+			}
+		}
 		return
 	}
 
@@ -1283,12 +1300,15 @@ func cmdAccept(state *cliState, args []string) {
 	fmt.Printf("  Horse:       %s\n", offer.HorseName)
 	fmt.Printf("  Price paid:  %d Cummies\n", offer.Price)
 
-	// Persist updated stables after trade.
+	// Persist updated stables and the moved horse after trade.
 	if fromStable, err := state.sm.GetStable(offer.FromStableID); err == nil {
 		state.persistStable(fromStable)
 	}
 	if toStable, err := state.sm.GetStable(offer.ToStableID); err == nil {
 		state.persistStable(toStable)
+	}
+	if horse, err := state.sm.GetHorse(offer.HorseID); err == nil {
+		state.persistHorse(horse)
 	}
 }
 
