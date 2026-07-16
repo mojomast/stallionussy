@@ -9500,8 +9500,10 @@ async function loadChallenges() {
 	const targetStableEl = $('#challenge-target-stable');
 	if (targetStableEl) {
 		targetStableEl.innerHTML = '<option value="">-- SELECT OPPONENT --</option>';
-		targetStableEl.innerHTML += '<option value="bot">CPU Arena</option>';
-		allStables.filter(s => s.owner_id !== getOwnerID()).forEach(s => {
+		targetStableEl.innerHTML += '<option value="bot">🤖 CPU Arena (always ready — house-funded purse)</option>';
+		// Exclude system stables: challenging the House of USSY always failed
+		// with "player not found" (its horses only race as CPU clones).
+		allStables.filter(s => s.owner_id !== getOwnerID() && s.owner_id !== 'system' && s.owner_id !== 'bot').forEach(s => {
 			targetStableEl.innerHTML += `<option value="${s.id}">${escHtml(s.name)}</option>`;
 		});
 	}
@@ -9546,6 +9548,17 @@ async function loadChallengeList() {
   }
 }
 
+// Human-readable time left before a challenge expires (R-6).
+function challengeExpiryLabel(c) {
+  const exp = c.expiresAt || c.expires_at;
+  if (!exp) return '';
+  const ms = new Date(exp).getTime() - Date.now();
+  if (ms <= 0) return '<span class="text-red">expired</span>';
+  const mins = Math.ceil(ms / 60000);
+  const label = mins >= 120 ? `${Math.floor(mins / 60)}h` : `${mins}m`;
+  return `<span class="text-dim">expires in ${label}</span>`;
+}
+
 function renderChallenges(challenges) {
   const inEl = $('#challenges-incoming');
   const outEl = $('#challenges-outgoing');
@@ -9572,7 +9585,7 @@ function renderChallenges(challenges) {
           <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()} ${renderLoreHint('betting', 'LORE')}</span>
         </div>
         <div class="text-dim" style="font-size:11px;">
-          ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || 'your horse')}
+          ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || 'your horse')} — ${challengeExpiryLabel(c)}
         </div>
         <div class="challenge-actions">
           <button class="term-btn sm" onclick="window.SU.acceptChallenge('${c.id}')">ACCEPT</button>
@@ -9594,7 +9607,7 @@ function renderChallenges(challenges) {
           <span class="text-amber">Wager: ₵${(c.wager || 0).toLocaleString()} ${renderLoreHint('betting', 'LORE')}</span>
         </div>
         <div class="text-dim" style="font-size:11px;">
-          ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || '?')} — Waiting for response...
+          ${escHtml(c.challenger_horse_name || c.challengerHorseName || '')} vs ${escHtml(c.defender_horse_name || c.defenderHorseName || '?')} — Waiting for response... ${challengeExpiryLabel(c)}
         </div>
       </div>`;
     });

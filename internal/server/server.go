@@ -4735,30 +4735,39 @@ func (s *Server) handleCreateChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	challenge, errMsg := s.createChallenge(claims.UserID, claims.Username, defenderName, req.HorseID, req.Wager)
-	if errMsg != "" {
-		writeError(w, http.StatusBadRequest, errMsg)
-		return
-	}
-
+	// R-4: consume the daily race BEFORE creating the challenge (mirroring
+	// quick race). Creating first meant a 429 was returned while the
+	// challenge had already been registered, persisted, and broadcast — the
+	// defender could accept it and the race ran anyway, bypassing the cap.
 	if _, err := s.consumeDailyRace(claims.UserID); err != nil {
 		writeError(w, http.StatusTooManyRequests, err.Error())
 		return
 	}
 
+	challenge, errMsg := s.createChallenge(claims.UserID, claims.Username, defenderName, req.HorseID, req.Wager)
+	if errMsg != "" {
+		// The challenge never happened — give the daily race back (C-8 pattern).
+		s.refundDailyRace(claims.UserID)
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	// R-5: grant first_challenge for issuing ANY challenge, including CPU
+	// Arena ones — the bot path used to return before the grant, making the
+	// achievement unobtainable for solo players.
+	if stable := s.getStableForUser(claims.UserID); stable != nil {
+		s.grantAchievementToStable(stable, "first_challenge")
+	}
+
 	if challenge.DefenderID == "bot" {
 		result, errMsg := s.runBotChallenge(challenge)
 		if errMsg != "" {
+			s.refundDailyRace(claims.UserID)
 			writeError(w, http.StatusBadRequest, errMsg)
 			return
 		}
 		writeJSON(w, http.StatusCreated, result)
 		return
-	}
-
-	// Grant first_challenge achievement for issuing a challenge.
-	if stable := s.getStableForUser(claims.UserID); stable != nil {
-		s.grantAchievementToStable(stable, "first_challenge")
 	}
 
 	writeJSON(w, http.StatusCreated, challenge)
@@ -4869,6 +4878,23 @@ func (s *Server) handleListChallenges(w http.ResponseWriter, r *http.Request) {
 // Challenge core logic (shared by API and chat handlers)
 // ---------------------------------------------------------------------------
 
+// challengeTTL is how long a pending PvP challenge stays acceptable (R-6).
+// The old 5-minute expiry meant asynchronous PvP never happened on low-pop
+// servers — the defender was almost never online inside the window. A day
+// keeps duels alive across sessions. Challenges are persisted (Phase 4) and
+// hold no escrow while pending (the wager is only deducted at accept time),
+// so a long TTL is safe and consistent with the H-6 refund sweeps.
+const challengeTTL = 24 * time.Hour
+
+// formatChallengeTTL renders a duration for challenge chat messages
+// ("24 hours", "90 minutes").
+func formatChallengeTTL(d time.Duration) string {
+	if d >= time.Hour {
+		return fmt.Sprintf("%d hours", int(d.Hours()))
+	}
+	return fmt.Sprintf("%d minutes", int(d.Minutes()))
+}
+
 // createChallenge creates a new head-to-head challenge. Returns the challenge
 // on success, or an error message string on failure.
 func (s *Server) createChallenge(challengerID, challengerName, defenderName, horseID string, wager int64) (*models.Challenge, string) {
@@ -4949,7 +4975,7 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 		Wager:               wager,
 		Status:              models.ChallengeStatusPending,
 		CreatedAt:           now,
-		ExpiresAt:           now.Add(5 * time.Minute),
+		ExpiresAt:           now.Add(challengeTTL),
 	}
 
 	s.challengeMu.Lock()
@@ -4969,8 +4995,8 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 	})
 	s.hub.BroadcastJSON(map[string]interface{}{
 		"type": "chat_system",
-		"text": fmt.Sprintf("⚔️ %s challenges %s to a 1v1 race! (%s vs ???)%s — /accept or /decline within 5 minutes!",
-			challengerName, defenderUsername, horse.Name, wagerText),
+		"text": fmt.Sprintf("⚔️ %s challenges %s to a 1v1 race! (%s vs ???)%s — /accept or /decline within %s!",
+			challengerName, defenderUsername, horse.Name, wagerText, formatChallengeTTL(challengeTTL)),
 		"ts": now.Unix(),
 	})
 
@@ -5093,6 +5119,11 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 
 // acceptChallenge accepts a pending challenge, runs the 1v1 race, and
 // distributes winnings. Returns the race result on success.
+//
+// Deliberate (R-4 follow-up): accepting does NOT consume the defender's
+// daily race entry. The challenger already paid one at creation time, and
+// charging the defender too would let cap-exhausted players deny incoming
+// challenges by accident and discourage answering duels at all.
 func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID string) (interface{}, string) {
 	s.challengeMu.Lock()
 	challenge, exists := s.challenges[challengeID]
@@ -6175,6 +6206,35 @@ func (s *Server) consumeDailyRace(userID string) (*models.PlayerProgress, error)
 	s.progressMu.Unlock()
 	s.persistProgress(context.Background(), progressSnapshot)
 	return progressSnapshot, nil
+}
+
+// refundDailyRace returns a consumed daily race entry (used when the action
+// it was consumed for never happened — C-8 pattern). Capped at the daily
+// default so refunds can't stack entries above the cap.
+func (s *Server) refundDailyRace(userID string) {
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(userID)
+	resetDailyLimitsIfNeeded(p)
+	if p.DailyRacesLeft < defaultDailyRaces {
+		p.DailyRacesLeft++
+	}
+	snapshot := clonePlayerProgress(p)
+	s.progressMu.Unlock()
+	s.persistProgress(context.Background(), snapshot)
+}
+
+// refundDailyTrain returns a consumed daily training session (R-9: failed
+// training requests must not burn the day's turns).
+func (s *Server) refundDailyTrain(userID string) {
+	s.progressMu.Lock()
+	p := s.getOrCreateProgress(userID)
+	resetDailyLimitsIfNeeded(p)
+	if p.DailyTrainsLeft < defaultDailyTrains {
+		p.DailyTrainsLeft++
+	}
+	snapshot := clonePlayerProgress(p)
+	s.progressMu.Unlock()
+	s.persistProgress(context.Background(), snapshot)
 }
 
 func isBotHorse(h *models.Horse) bool {
