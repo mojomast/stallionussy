@@ -7,6 +7,7 @@ package postgres
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -329,6 +330,65 @@ func TestSQLiteMarketListingUseLimits(t *testing.T) {
 	}
 	if active, _ = repo.ListActiveListings(ctx); len(active) != 0 {
 		t.Fatalf("deactivated listing still active: %d", len(active))
+	}
+}
+
+// TestSQLiteMarketListing_NaNSapphoScore covers N-2: an E-008's Chosen
+// listing carries a NaN Sappho score ("the pricing algorithm cannot
+// calculate a value"), which the SQLite driver binds as NULL — with the
+// NOT NULL column that made CreateListing fail, so the listing silently
+// vanished on restart. NaN now round-trips via the negative sentinel.
+func TestSQLiteMarketListing_NaNSapphoScore(t *testing.T) {
+	db := newSQLiteDB(t)
+	repo := NewMarketRepo(db)
+	ctx := context.Background()
+
+	listing := &models.StudListing{
+		ID:          "listing-e008",
+		HorseID:     "horse-e008",
+		HorseName:   "E-008's Chosen",
+		OwnerID:     "system",
+		Price:       6666,
+		Pedigree:    "REDACTED BY B.U.R.P.",
+		SapphoScore: models.SapphoScore(math.NaN()),
+		Active:      true,
+		CreatedAt:   time.Now().UTC(),
+	}
+	if err := repo.CreateListing(ctx, listing); err != nil {
+		t.Fatalf("CreateListing with NaN score: %v (N-2)", err)
+	}
+
+	got, err := repo.GetListing(ctx, "listing-e008")
+	if err != nil {
+		t.Fatalf("GetListing: %v", err)
+	}
+	if !math.IsNaN(float64(got.SapphoScore)) {
+		t.Fatalf("SapphoScore = %v, want NaN after round-trip", float64(got.SapphoScore))
+	}
+
+	// The listing must appear in the active list too (this is the exact
+	// path that used to lose E-008 on restart).
+	active, err := repo.ListActiveListings(ctx)
+	if err != nil {
+		t.Fatalf("ListActiveListings: %v", err)
+	}
+	found := false
+	for _, l := range active {
+		if l.ID == "listing-e008" {
+			found = true
+			if !math.IsNaN(float64(l.SapphoScore)) {
+				t.Fatalf("active listing SapphoScore = %v, want NaN", float64(l.SapphoScore))
+			}
+		}
+	}
+	if !found {
+		t.Fatal("NaN-scored listing missing from active listings")
+	}
+
+	// Updates round-trip too.
+	listing.TimesUsed = 1
+	if err := repo.UpdateListing(ctx, listing); err != nil {
+		t.Fatalf("UpdateListing with NaN score: %v", err)
 	}
 }
 

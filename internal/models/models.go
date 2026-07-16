@@ -3,7 +3,9 @@
 package models
 
 import (
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"math"
 	"time"
 )
@@ -368,6 +370,58 @@ func (s *SapphoScore) UnmarshalJSON(data []byte) error {
 	}
 	*s = SapphoScore(f)
 	return nil
+}
+
+// sapphoNaNSentinel is what NaN becomes in the database. Real Sappho scores
+// are clamped to [0, 12], so a negative value is unambiguous. A sentinel
+// (rather than NULL) keeps the NOT NULL SQLite column working: SQLite binds
+// NaN as NULL, which used to make E-008's Chosen listings fail persistence
+// and silently vanish on restart (N-2). Postgres would store NaN natively,
+// but writes go through Value() on both dialects for consistency.
+const sapphoNaNSentinel = -1.0
+
+// Value implements driver.Valuer: NaN is stored as the sentinel.
+func (s SapphoScore) Value() (driver.Value, error) {
+	if math.IsNaN(float64(s)) {
+		return sapphoNaNSentinel, nil
+	}
+	return float64(s), nil
+}
+
+// Scan implements sql.Scanner: the sentinel, NULL, and any legacy NaN stored
+// natively by Postgres all come back as NaN.
+func (s *SapphoScore) Scan(src any) error {
+	switch v := src.(type) {
+	case nil:
+		*s = SapphoScore(math.NaN())
+		return nil
+	case float64:
+		if v < 0 || math.IsNaN(v) {
+			*s = SapphoScore(math.NaN())
+			return nil
+		}
+		*s = SapphoScore(v)
+		return nil
+	case int64:
+		if v < 0 {
+			*s = SapphoScore(math.NaN())
+			return nil
+		}
+		*s = SapphoScore(v)
+		return nil
+	case []byte:
+		var f float64
+		if err := json.Unmarshal(v, &f); err != nil {
+			return fmt.Errorf("scan SapphoScore from %q: %w", v, err)
+		}
+		if f < 0 {
+			f = math.NaN()
+		}
+		*s = SapphoScore(f)
+		return nil
+	default:
+		return fmt.Errorf("cannot scan SapphoScore from %T", src)
+	}
 }
 
 // StudListing is a marketplace entry advertising a horse for breeding.
