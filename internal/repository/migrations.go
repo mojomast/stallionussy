@@ -498,6 +498,19 @@ ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS hand_round INT NOT NULL DEFAUL
 ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_deadline TIMESTAMPTZ;
 
 -- ===========================================================================
+-- Progressive slot jackpot (M-2)
+-- Previously RAM-only: a restart reset the pool to its seed and every 2%
+-- wager contribution accumulated so far evaporated.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS casino_jackpot (
+    id          INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    pool        BIGINT NOT NULL DEFAULT 0,
+    last_winner TEXT NOT NULL DEFAULT '',
+    last_amount BIGINT NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ===========================================================================
 -- Balance floors (C-9)
 -- The write-through persistence blasts absolute in-memory balances at the
 -- database, so a single missed in-process check could persist a negative

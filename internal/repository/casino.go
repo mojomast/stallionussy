@@ -13,6 +13,10 @@ type CasinoRepository interface {
 	UpdatePokerTable(ctx context.Context, table *models.PokerTable) error
 	RecordSlotSpin(ctx context.Context, spin *models.SlotSpin) error
 	ListSlotSpinsByUser(ctx context.Context, userID string, limit int) ([]*models.SlotSpin, error)
+	// Progressive slot jackpot state (M-2: previously RAM-only, so all
+	// accumulated contributions were lost on restart).
+	GetJackpotState(ctx context.Context) (pool int64, lastWinner string, lastAmount int64, err error)
+	SaveJackpotState(ctx context.Context, pool int64, lastWinner string, lastAmount int64) error
 }
 
 type DepartureRepository interface {

@@ -20,6 +20,7 @@ import (
 
 const (
 	casinoExchangeRate          = int64(25)
+	casinoChipCashoutRate       = int64(10) // cummies credited per chip on cashout (M-8)
 	casinoProtectedCummiesFloor = int64(500)
 	casinoDailyChipGrant        = int64(40)
 	deathReturnChance           = 0.015
@@ -149,6 +150,7 @@ func (s *Server) handleGetCasinoOverview(w http.ResponseWriter, r *http.Request)
 		"cummies":               stable.Cummies,
 		"casinoChips":           stable.CasinoChips,
 		"exchangeRate":          casinoExchangeRate,
+		"cashoutRate":           casinoChipCashoutRate,
 		"protectedCummiesFloor": casinoProtectedCummiesFloor,
 		"dailyChipGrant":        casinoDailyChipGrant,
 		"dailyChipGrantClaimed": claimedGrant,
@@ -203,7 +205,7 @@ func (s *Server) handleExchangeCasinoChips(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		stable.CasinoChips -= req.Amount
-		stable.Cummies += req.Amount * 10
+		stable.Cummies += req.Amount * casinoChipCashoutRate
 	default:
 		writeError(w, http.StatusBadRequest, "direction must be buy or cashout")
 		return
@@ -214,6 +216,7 @@ func (s *Server) handleExchangeCasinoChips(w http.ResponseWriter, r *http.Reques
 		"cummies":      stable.Cummies,
 		"casinoChips":  stable.CasinoChips,
 		"exchangeRate": casinoExchangeRate,
+		"cashoutRate":  casinoChipCashoutRate,
 	})
 }
 
@@ -550,6 +553,22 @@ func (s *Server) handleSpinSlots(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, spin)
 }
 
+// persistJackpotState write-throughs the progressive jackpot to the DB (M-2).
+// Callers must NOT hold jackpotMu.
+func (s *Server) persistJackpotState(ctx context.Context) {
+	if s.casinoRepo == nil {
+		return
+	}
+	s.jackpotMu.Lock()
+	pool := s.jackpotPool
+	winner := s.jackpotLastWinner
+	amount := s.jackpotLastAmount
+	s.jackpotMu.Unlock()
+	if err := s.casinoRepo.SaveJackpotState(ctx, pool, winner, amount); err != nil {
+		log.Printf("server: failed to persist jackpot state: %v", err)
+	}
+}
+
 // handleGetJackpot returns the current progressive jackpot info.
 func (s *Server) handleGetJackpot(w http.ResponseWriter, r *http.Request) {
 	s.jackpotMu.Lock()
@@ -662,14 +681,18 @@ func (s *Server) spinSlotsForStable(ctx context.Context, stable *models.Stable, 
 		middleRow[4] == symGoldenStallion {
 		s.jackpotMu.Lock()
 		pool := s.jackpotPool
+		// M-2: the minimum-payout top-up and the post-win reseed used to be
+		// minted from nothing (min 1000 > seed 500). Both are now sponsored
+		// by the House of USSY treasury; if the house can't afford them the
+		// jackpot pays what the pool actually accumulated.
 		if pool < slotJackpotMinPayout {
-			pool = slotJackpotMinPayout
+			pool += s.debitHouseChips(ctx, slotJackpotMinPayout-pool)
 		}
 		totalPayout += pool
 		jackpotWin = true
 		s.jackpotLastWinner = username
 		s.jackpotLastAmount = pool
-		s.jackpotPool = slotJackpotSeed // Reset after payout
+		s.jackpotPool = s.debitHouseChips(ctx, slotJackpotSeed) // house-funded reseed
 		s.jackpotMu.Unlock()
 	}
 
@@ -710,6 +733,7 @@ func (s *Server) spinSlotsForStable(ctx context.Context, stable *models.Stable, 
 	if s.casinoRepo != nil {
 		_ = s.casinoRepo.RecordSlotSpin(ctx, spin)
 	}
+	s.persistJackpotState(ctx)
 	s.persistStable(ctx, stable)
 	return spin, nil
 }
@@ -969,6 +993,21 @@ func (s *Server) maybeGrantDailyCasinoChipsLocked(ctx context.Context, userID st
 	return s.grantDailyCasinoChips(ctx, userID, stable, true)
 }
 
+// debitHouseChips withdraws up to `chips` casino chips' worth of cummies from
+// the House of USSY treasury (at the cashout rate) and returns how many whole
+// chips were actually funded. Unusable change is returned to the house.
+func (s *Server) debitHouseChips(ctx context.Context, chips int64) int64 {
+	if chips <= 0 {
+		return 0
+	}
+	fundedCummies := s.debitHouseFunds(ctx, chips*casinoChipCashoutRate)
+	fundedChips := fundedCummies / casinoChipCashoutRate
+	if remainder := fundedCummies % casinoChipCashoutRate; remainder > 0 {
+		s.creditHouseFunds(ctx, remainder)
+	}
+	return fundedChips
+}
+
 func (s *Server) grantDailyCasinoChips(ctx context.Context, userID string, stable *models.Stable, stableLockHeld bool) bool {
 	today := time.Now().UTC().Format("2006-01-02")
 	granted := false
@@ -976,12 +1015,22 @@ func (s *Server) grantDailyCasinoChips(ctx context.Context, userID string, stabl
 	p := s.getOrCreateProgress(userID)
 	resetDailyLimitsIfNeeded(p)
 	if p.LastCasinoGrantDate != today {
+		// M-1: the daily grant used to be minted from nothing — a free 400
+		// cummies/day faucet once cashed out. It is now sponsored by the
+		// House of USSY treasury at cashout value; if the house is broke the
+		// grant shrinks (and the day is not consumed, so players can claim
+		// later once the house recoups from its cuts).
+		grant := s.debitHouseChips(ctx, casinoDailyChipGrant)
+		if grant <= 0 {
+			s.progressMu.Unlock()
+			return false
+		}
 		if stableLockHeld {
-			stable.CasinoChips += casinoDailyChipGrant
+			stable.CasinoChips += grant
 		} else {
 			mu := s.stableMu(stable.ID)
 			mu.Lock()
-			stable.CasinoChips += casinoDailyChipGrant
+			stable.CasinoChips += grant
 			mu.Unlock()
 		}
 		p.LastCasinoGrantDate = today

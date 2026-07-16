@@ -6469,6 +6469,22 @@ func (s *Server) loadFromDB() {
 	// 9. Load casino tables and departed horse records.
 	loadCasinoState(s, ctx)
 
+	// 9b. Rehydrate the progressive slot jackpot (M-2). Previously RAM-only:
+	// every restart reset the pool to its seed, evaporating all accumulated
+	// 2%-of-wager contributions.
+	if s.casinoRepo != nil {
+		if pool, lastWinner, lastAmount, err := s.casinoRepo.GetJackpotState(ctx); err != nil {
+			log.Printf("server: loadFromDB: failed to load jackpot state: %v", err)
+		} else if pool > 0 || lastWinner != "" {
+			s.jackpotMu.Lock()
+			s.jackpotPool = pool
+			s.jackpotLastWinner = lastWinner
+			s.jackpotLastAmount = lastAmount
+			s.jackpotMu.Unlock()
+			log.Printf("server: loadFromDB: restored slot jackpot pool of %d chips", pool)
+		}
+	}
+
 	// 10. Rehydrate pending fights (H-6). Fights are persisted at creation
 	// with their entry fee already deducted; before this, a restart dropped
 	// them from the RAM-only pendingFights map and the fee was never

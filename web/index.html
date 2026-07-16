@@ -3620,14 +3620,14 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   <!-- Chip Exchange -->
   <div class="casino-exchange">
     <div class="exchange-group">
-      <label>BUY CHIPS</label>
+      <label>BUY CHIPS <span class="text-dim" id="casino-buy-rate">(25₵ / chip)</span></label>
       <div style="display:flex; gap:4px;">
         <input class="term-input" id="casino-buy-amount" type="number" value="50" min="1" style="max-width:100px;">
         <button class="term-btn amber" id="btn-buy-chips">BUY</button>
       </div>
     </div>
     <div class="exchange-group">
-      <label>CASH OUT</label>
+      <label>CASH OUT <span class="text-dim" id="casino-cashout-rate">(10₵ / chip)</span></label>
       <div style="display:flex; gap:4px;">
         <input class="term-input" id="casino-cashout-amount" type="number" value="20" min="1" style="max-width:100px;">
         <button class="term-btn" id="btn-cashout-chips">CASH OUT</button>
@@ -10731,6 +10731,13 @@ async function loadCasinoPage() {
     if (chipsEl) chipsEl.textContent = chips.toLocaleString();
     if (dailyEl) dailyEl.textContent = dailyGrant + ' chips';
     if (walletMsg) walletMsg.innerHTML = '';
+
+    // Show the real exchange rates so the 25₵-in / 10₵-out haircut is
+    // disclosed before anyone clicks (M-8).
+    const buyRateEl = $('#casino-buy-rate');
+    const cashoutRateEl = $('#casino-cashout-rate');
+    if (buyRateEl && data.exchangeRate) buyRateEl.textContent = `(${data.exchangeRate}₵ / chip)`;
+    if (cashoutRateEl && data.cashoutRate) cashoutRateEl.textContent = `(${data.cashoutRate}₵ / chip)`;
 
     // Try to fetch jackpot info
     try {

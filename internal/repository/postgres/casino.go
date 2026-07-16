@@ -259,3 +259,37 @@ func nullableTime(t time.Time) any {
 	}
 	return t
 }
+
+// GetJackpotState loads the persisted progressive slot jackpot (M-2).
+// Returns sql.ErrNoRows via a zero-value result if no row exists yet.
+func (r *CasinoRepo) GetJackpotState(ctx context.Context) (int64, string, int64, error) {
+	var pool, lastAmount int64
+	var lastWinner string
+	err := r.db.db.QueryRowContext(ctx,
+		`SELECT pool, last_winner, last_amount FROM casino_jackpot WHERE id = 1`,
+	).Scan(&pool, &lastWinner, &lastAmount)
+	if err == sql.ErrNoRows {
+		return 0, "", 0, nil
+	}
+	if err != nil {
+		return 0, "", 0, fmt.Errorf("get jackpot state: %w", err)
+	}
+	return pool, lastWinner, lastAmount, nil
+}
+
+// SaveJackpotState upserts the progressive slot jackpot state (M-2).
+func (r *CasinoRepo) SaveJackpotState(ctx context.Context, pool int64, lastWinner string, lastAmount int64) error {
+	_, err := r.db.db.ExecContext(ctx, `
+		INSERT INTO casino_jackpot (id, pool, last_winner, last_amount, updated_at)
+		VALUES (1, $1, $2, $3, NOW())
+		ON CONFLICT (id) DO UPDATE SET
+			pool = EXCLUDED.pool,
+			last_winner = EXCLUDED.last_winner,
+			last_amount = EXCLUDED.last_amount,
+			updated_at = NOW()`,
+		pool, lastWinner, lastAmount)
+	if err != nil {
+		return fmt.Errorf("save jackpot state: %w", err)
+	}
+	return nil
+}
