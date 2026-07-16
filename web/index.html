@@ -6957,9 +6957,9 @@ function renderInjuryBadge(injury, horseId) {
   if (isCareerEnding) {
     html += `<div class="injury-cooldown" style="color:var(--red);">⚠ CAREER ENDING — This horse must retire.</div>`;
   } else {
-    html += `<div class="injury-cooldown">⏳ Races until recovery: ${injury.races_left || 0}</div>`;
+    html += `<div class="injury-cooldown">⏳ Rest days until recovery: ${injury.races_left || 0} — 😴 RestDay is free and always works</div>`;
     if (cost > 0) {
-      html += `<button class="injury-heal-btn" onclick="window.SU.healHorse('${escHtml(horseId)}')">💊 HEAL (₵${cost})</button>`;
+      html += `<button class="injury-heal-btn" onclick="window.SU.healHorse('${escHtml(horseId)}')">💊 HEAL INSTANTLY (₵${cost})</button>`;
     }
   }
   html += '</div>';

@@ -235,6 +235,167 @@ func TestChallengeTTL_HoursNotMinutes(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// R-9 — injury gating: rest always works, racing/training is blocked, and
+// failed requests never burn daily turns
+// ---------------------------------------------------------------------------
+
+func injureHorse(t *testing.T, s *Server, horseID string) *models.Horse {
+	t.Helper()
+	h, err := s.stables.GetHorse(horseID)
+	if err != nil {
+		t.Fatalf("get horse: %v", err)
+	}
+	h.Injury = &models.Injury{
+		Type:        models.InjuryMuscleStrain,
+		Severity:    models.SeverityModerate,
+		RacesLeft:   2,
+		Description: "test injury",
+		OccurredAt:  time.Now(),
+	}
+	return h
+}
+
+func dailyTrainsLeft(s *Server, userID string) int {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return s.getOrCreateProgress(userID).DailyTrainsLeft
+}
+
+func dailyRacesLeft(s *Server, userID string) int {
+	s.progressMu.Lock()
+	defer s.progressMu.Unlock()
+	return s.getOrCreateProgress(userID).DailyRacesLeft
+}
+
+// TestInjuredHorse_RestHealsTrainingBlocked: the safe option (rest) used to
+// be the ONLY one rejected for injured horses, while racing and training were
+// allowed. Now rest always works (and heals), strenuous training is blocked
+// without burning a daily turn.
+func TestInjuredHorse_RestHealsTrainingBlocked(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Infirmary Ranch", "user-hurt", true)
+	if err != nil {
+		t.Fatalf("create stable: %v", err)
+	}
+	horse := injureHorse(t, s, stable.Horses[0].ID)
+
+	// Strenuous training is rejected with a clear message and no turn burned.
+	trainRR := postJSON(t, s, "/api/horses/"+horse.ID+"/train",
+		map[string]any{"workoutType": "Sprint"}, "user-hurt", "hurt")
+	if trainRR.Code != http.StatusBadRequest {
+		t.Fatalf("train injured: status = %d, want 400\nbody: %s", trainRR.Code, trainRR.Body.String())
+	}
+	if got := dailyTrainsLeft(s, "user-hurt"); got != defaultDailyTrains {
+		t.Fatalf("failed training consumed a daily turn: %d left, want %d (R-9)", got, defaultDailyTrains)
+	}
+
+	// Invalid workout type: 400 and no turn burned either.
+	badRR := postJSON(t, s, "/api/horses/"+horse.ID+"/train",
+		map[string]any{"workoutType": "Zumba"}, "user-hurt", "hurt")
+	if badRR.Code != http.StatusBadRequest {
+		t.Fatalf("invalid workout: status = %d, want 400", badRR.Code)
+	}
+	if got := dailyTrainsLeft(s, "user-hurt"); got != defaultDailyTrains {
+		t.Fatalf("invalid workout consumed a daily turn: %d left, want %d", got, defaultDailyTrains)
+	}
+
+	// Rest works while injured and ticks down the recovery counter.
+	restRR := postJSON(t, s, "/api/horses/"+horse.ID+"/rest", map[string]any{}, "user-hurt", "hurt")
+	if restRR.Code != http.StatusCreated && restRR.Code != http.StatusOK {
+		t.Fatalf("rest injured horse: status = %d (R-9: rest must always work)\nbody: %s",
+			restRR.Code, restRR.Body.String())
+	}
+	if horse.Injury == nil {
+		t.Fatal("injury healed after one rest; expected 2 rest days")
+	}
+	if got := horse.Injury.RacesLeft; got != 1 {
+		t.Fatalf("injury RacesLeft after rest = %d, want 1", got)
+	}
+
+	// A second rest fully heals it.
+	rest2 := postJSON(t, s, "/api/horses/"+horse.ID+"/rest", map[string]any{}, "user-hurt", "hurt")
+	if rest2.Code != http.StatusCreated && rest2.Code != http.StatusOK {
+		t.Fatalf("second rest: status = %d\nbody: %s", rest2.Code, rest2.Body.String())
+	}
+	if horse.Injury != nil {
+		t.Fatalf("injury not healed after enough rest days: %+v", horse.Injury)
+	}
+}
+
+// TestInjuredHorse_CannotRace: quick races skip injured horses, custom races
+// reject them, and challenges refuse them on both sides.
+func TestInjuredHorse_CannotRace(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Sideline Ranch", "user-side", true)
+	if err != nil {
+		t.Fatalf("create stable: %v", err)
+	}
+	if len(stable.Horses) < 2 {
+		t.Fatalf("need 2 starter horses, have %d", len(stable.Horses))
+	}
+	hurt := injureHorse(t, s, stable.Horses[0].ID)
+	sound := stable.Horses[1]
+
+	// Custom race with the injured horse is rejected — and does not burn a
+	// daily race (validation precedes the cap).
+	raceRR := postJSON(t, s, "/api/races", map[string]any{
+		"horseIDs": []string{hurt.ID, sound.ID}, "trackType": "Sprintussy", "purse": 0,
+	}, "user-side", "side")
+	if raceRR.Code != http.StatusNotFound && raceRR.Code != http.StatusBadRequest {
+		t.Fatalf("custom race with injured horse: status = %d, want 4xx\nbody: %s", raceRR.Code, raceRR.Body.String())
+	}
+	if got := dailyRacesLeft(s, "user-side"); got != defaultDailyRaces {
+		t.Fatalf("rejected race consumed a daily entry: %d left, want %d", got, defaultDailyRaces)
+	}
+
+	// Quick race still works — it picks the sound horse, never the hurt one.
+	quickRR := postJSON(t, s, "/api/races/quick", map[string]any{}, "user-side", "side")
+	if quickRR.Code != http.StatusOK {
+		t.Fatalf("quick race: status = %d\nbody: %s", quickRR.Code, quickRR.Body.String())
+	}
+	var result raceResult
+	decodeJSON(t, quickRR, &result)
+	for _, e := range result.Race.Entries {
+		if e.HorseID == hurt.ID {
+			t.Fatal("quick race auto-entered an injured horse (R-9)")
+		}
+	}
+
+	// Challenges refuse an injured horse.
+	chRR := postJSON(t, s, "/api/challenges", map[string]any{
+		"horseID": hurt.ID, "defenderName": "CPU Arena", "wager": 0,
+	}, "user-side", "side")
+	if chRR.Code != http.StatusBadRequest {
+		t.Fatalf("challenge with injured horse: status = %d, want 400\nbody: %s", chRR.Code, chRR.Body.String())
+	}
+	if got := dailyRacesLeft(s, "user-side"); got != defaultDailyRaces-1 {
+		t.Fatalf("failed challenge did not refund the daily race: %d left, want %d",
+			got, defaultDailyRaces-1)
+	}
+}
+
+// TestQuickRace_AllHorsesInjured_NoTurnBurned: when every horse is hurt the
+// player gets a helpful 400 and keeps the daily race entry.
+func TestQuickRace_AllHorsesInjured_NoTurnBurned(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Ward Ranch", "user-ward", true)
+	if err != nil {
+		t.Fatalf("create stable: %v", err)
+	}
+	for i := range stable.Horses {
+		injureHorse(t, s, stable.Horses[i].ID)
+	}
+
+	rr := postJSON(t, s, "/api/races/quick", map[string]any{}, "user-ward", "ward")
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("quick race with all horses injured: status = %d, want 400\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if got := dailyRacesLeft(s, "user-ward"); got != defaultDailyRaces {
+		t.Fatalf("rejected quick race consumed a daily entry: %d left, want %d", got, defaultDailyRaces)
+	}
+}
+
 // TestExhibitionPool_ZeroBets_BroadcastsResolution: a pool nobody bet on must
 // still resolve cleanly (the pool disappears rather than lingering open).
 func TestExhibitionPool_ZeroBets_Resolves(t *testing.T) {

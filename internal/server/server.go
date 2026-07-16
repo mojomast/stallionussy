@@ -998,56 +998,10 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-		if _, err := s.consumeDailyTrain(claims.UserID); err != nil {
-			writeError(w, http.StatusTooManyRequests, err.Error())
-			return
-		}
-	}
-
-	// Training while injured: 50% chance to worsen the injury.
-	if horse.Injury != nil && horse.Injury.Severity != models.SeverityCareerEnding {
-		if rand.Float64() < 0.50 {
-			// Worsen the injury by one severity level.
-			switch horse.Injury.Severity {
-			case models.SeverityMinor:
-				horse.Injury.Severity = models.SeverityModerate
-				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeverityModerate)
-				horse.Injury.Description = "Training aggravated the injury! " + horse.Injury.Description
-			case models.SeverityModerate:
-				horse.Injury.Severity = models.SeveritySevere
-				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeveritySevere)
-				horse.Injury.Description = "Training made it much worse! " + horse.Injury.Description
-			case models.SeveritySevere:
-				horse.Injury.Severity = models.SeverityCareerEnding
-				horse.Injury.RacesLeft = models.InjuryRaceCooldown(models.SeverityCareerEnding)
-				horse.Injury.Description = "CATASTROPHIC: Training destroyed what was left. Career over."
-				// Force retirement for career-ending injuries.
-				trainussy.RetireHorse(horse, "Career-ending injury sustained during training")
-			}
-
-			s.syncHorseToStable(horse)
-			s.persistHorse(r.Context(), horse)
-
-			// Broadcast the worsened injury.
-			s.hub.BroadcastJSON(map[string]interface{}{
-				"type":      "injury_worsened",
-				"horseName": horse.Name,
-				"horseID":   horse.ID,
-				"severity":  string(horse.Injury.Severity),
-				"text":      fmt.Sprintf("🤕 %s trained while injured and made it WORSE! Now: %s (%s)", horse.Name, horse.Injury.Severity, horse.Injury.Type),
-				"ts":        time.Now().Unix(),
-			})
-
-			writeJSON(w, http.StatusOK, map[string]interface{}{
-				"warning":  "Training while injured worsened the condition!",
-				"horse":    horse,
-				"severity": horse.Injury.Severity,
-			})
-			return
-		}
-		// 50% chance: training proceeds normally despite injury (lucky).
-	}
+	// R-9: validate EVERYTHING before consuming the daily training turn.
+	// The turn used to be consumed first, so an invalid workoutType or an
+	// injured horse burned one of the day's six sessions on a 400 (and the
+	// old 50%-worsen coin flip consumed a turn either way).
 
 	var req struct {
 		WorkoutType models.WorkoutType `json:"workoutType"`
@@ -1071,8 +1025,30 @@ func (s *Server) handleTrainHorse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Injured horses can't do strenuous workouts — rest is the treatment
+	// (and Train enforces the same rule). Rejecting up front keeps the
+	// daily turn unconsumed.
+	if horse.Injury != nil && req.WorkoutType != models.WorkoutRecovery {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf(
+			"%s is injured (%s, %s) and cannot train; use REST DAY to recover", horse.Name, horse.Injury.Type, horse.Injury.Severity))
+		return
+	}
+
+	var consumedBy string
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		if _, err := s.consumeDailyTrain(claims.UserID); err != nil {
+			writeError(w, http.StatusTooManyRequests, err.Error())
+			return
+		}
+		consumedBy = claims.UserID
+	}
+
 	session, err := s.trainer.Train(horse, req.WorkoutType)
 	if err != nil {
+		// The session never happened — give the turn back (R-9).
+		if consumedBy != "" {
+			s.refundDailyTrain(consumedBy)
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1560,11 +1536,8 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
-		if _, err := s.consumeDailyRace(claims.UserID); err != nil {
-			writeError(w, http.StatusTooManyRequests, err.Error())
-			return
-		}
-
+		// R-9: validate the stable and horse BEFORE consuming the daily race
+		// so a 400 here doesn't burn one of the day's entries.
 		stable := s.getStableForUser(claims.UserID)
 		if stable == nil || len(stable.Horses) == 0 {
 			writeError(w, http.StatusBadRequest, "you need a stable with at least one active horse")
@@ -1573,7 +1546,12 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 
 		playerHorse := s.firstBestActiveHorse(stable)
 		if playerHorse == nil {
-			writeError(w, http.StatusBadRequest, "no active horse available for quick race")
+			writeError(w, http.StatusBadRequest, "no race-ready horse available: your horses are retired or injured — rest the injured ones to get them back on the track")
+			return
+		}
+
+		if _, err := s.consumeDailyRace(claims.UserID); err != nil {
+			writeError(w, http.StatusTooManyRequests, err.Error())
 			return
 		}
 
@@ -1655,6 +1633,13 @@ func (s *Server) resolveHorses(ids []string) ([]*models.Horse, string) {
 		}
 		if h.Retired {
 			return nil, fmt.Sprintf("horse %s (%s) is retired and cannot race", h.Name, h.ID)
+		}
+		// R-9: injured horses sit races out — rest days heal them. Before
+		// this gate, injuries never stopped a race while the SAFE option
+		// (resting) was the one that got rejected.
+		if h.Injury != nil {
+			return nil, fmt.Sprintf("horse %s is injured (%s, %s) and cannot race; rest it to recover",
+				h.Name, h.Injury.Type, h.Injury.Severity)
 		}
 		horses = append(horses, h)
 	}
@@ -2196,6 +2181,10 @@ func (s *Server) firstBestActiveHorse(stable *models.Stable) *models.Horse {
 		}
 		h, err := s.stables.GetHorse(stable.Horses[i].ID)
 		if err != nil || h == nil {
+			continue
+		}
+		// R-9: never auto-enter an injured horse into a quick race.
+		if h.Injury != nil {
 			continue
 		}
 		if best == nil || h.ELO > best.ELO || (h.ELO == best.ELO && h.CurrentFitness > best.CurrentFitness) {
@@ -3187,6 +3176,12 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 
 	if horse.Retired {
 		writeError(w, http.StatusBadRequest, "horse is retired and cannot race")
+		return
+	}
+	// R-9: injured horses can't register either — a multi-round tournament
+	// is no place to walk off a hamstring.
+	if horse.Injury != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("horse %s is injured (%s) and cannot register; rest it to recover", horse.Name, horse.Injury.Type))
 		return
 	}
 
@@ -4801,7 +4796,7 @@ func (s *Server) handleAcceptChallenge(w http.ResponseWriter, r *http.Request) {
 	if req.HorseID == "" {
 		if stable := s.getStableForUser(claims.UserID); stable != nil {
 			for i := range stable.Horses {
-				if !stable.Horses[i].Retired {
+				if !stable.Horses[i].Retired && stable.Horses[i].Injury == nil {
 					req.HorseID = stable.Horses[i].ID
 					break
 				}
@@ -4910,6 +4905,9 @@ func (s *Server) createChallenge(challengerID, challengerName, defenderName, hor
 	}
 	if horse.Retired {
 		return nil, fmt.Sprintf("horse %s is retired and cannot race", horse.Name)
+	}
+	if horse.Injury != nil {
+		return nil, fmt.Sprintf("horse %s is injured (%s) and cannot race; rest it to recover", horse.Name, horse.Injury.Type)
 	}
 
 	if strings.EqualFold(defenderName, "CPU Arena") || strings.EqualFold(defenderName, "bot") {
@@ -5173,6 +5171,12 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 		challenge.Status = models.ChallengeStatusPending
 		s.challengeMu.Unlock()
 		return nil, fmt.Sprintf("horse %s is retired and cannot race", defenderHorse.Name)
+	}
+	if defenderHorse.Injury != nil {
+		s.challengeMu.Lock()
+		challenge.Status = models.ChallengeStatusPending
+		s.challengeMu.Unlock()
+		return nil, fmt.Sprintf("horse %s is injured (%s) and cannot race; rest it to recover", defenderHorse.Name, defenderHorse.Injury.Type)
 	}
 
 	// Set the defender's horse on the challenge.

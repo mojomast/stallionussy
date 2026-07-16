@@ -40,9 +40,12 @@ func TestHTTP_TrainingModesProduceDistinctSpecialties(t *testing.T) {
 			t.Fatalf("train %s: status = %d\nbody: %s", m.workout, rr.Code, rr.Body.String())
 		}
 		// Clear any comedy injury so the next session isn't blocked (the
-		// specialty gain for this session already landed before the roll).
+		// specialty gain for this session already landed before the roll),
+		// and reset fatigue — an injury roll spikes it to 100, which would
+		// halve the NEXT session's specialty gain and flake this test.
 		if h, err := s.stables.GetHorse(horseID); err == nil {
 			h.Injury = nil
+			h.Fatigue = 0
 		}
 	}
 

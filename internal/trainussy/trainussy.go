@@ -155,11 +155,14 @@ var retirementMessages = []string{
 // the session record.
 func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*models.TrainingSession, error) {
 	// BUG FIX: Guard against training retired or injured horses.
+	// R-9: recovery workouts are exempt — resting an injured horse is the
+	// sensible (and now the only) way to nurse it back to soundness. Every
+	// strenuous workout is still rejected.
 	if horse.Retired {
 		return nil, fmt.Errorf("cannot train a retired horse")
 	}
-	if horse.Injury != nil {
-		return nil, fmt.Errorf("cannot train an injured horse")
+	if horse.Injury != nil && workout != models.WorkoutRecovery {
+		return nil, fmt.Errorf("cannot train an injured horse; a rest day is what the vet ordered")
 	}
 
 	t.mu.Lock()
@@ -219,6 +222,23 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*model
 	injured, injuryNote := false, ""
 	if workout != models.WorkoutRecovery {
 		injured, injuryNote = rollInjury(horse)
+	}
+
+	// ---- Injury recovery (R-9) ----
+	// A rest day counts toward healing an existing injury: each recovery
+	// session works off one unit of the injury's cooldown, and the horse is
+	// sound again when it reaches zero. Career-ending injuries never heal
+	// (the horse is already retired, so it can't reach here anyway).
+	if workout == models.WorkoutRecovery && horse.Injury != nil &&
+		horse.Injury.Severity != models.SeverityCareerEnding {
+		horse.Injury.RacesLeft--
+		if horse.Injury.RacesLeft <= 0 {
+			injuryNote = fmt.Sprintf("Fully recovered from %s! Cleared to race.", horse.Injury.Type)
+			horse.Injury = nil
+		} else {
+			injuryNote = fmt.Sprintf("Recovering from %s — %d more rest day(s) until race-ready.",
+				horse.Injury.Type, horse.Injury.RacesLeft)
+		}
 	}
 
 	// BUG FIX: When an injury occurs, create and assign an Injury struct so
