@@ -7,6 +7,8 @@ Codebase archaeology of **STALLIONRUN / StallionUSSY** — a comedy horse breedi
 > **Fix pass (branch `fable/full-improvement-pass`, 2026-07-16):** all CRITICAL and HIGH findings are fixed and annotated inline with `[FIXED: <sha>]`. Two related bugs discovered during fixing were folded into their parent findings: tournament registration double-counted every entry fee into the prize pool (fixed with C-2), and the betting house cut evaporated instead of going to the house (now banks into the House of USSY treasury, which funds the C-3 purses).
 >
 > **Phase 3 (same branch, 2026-07-16):** all MEDIUM findings are resolved and annotated inline (`[FIXED: <sha>]`, `[ALREADY-FIXED]`, or `[WONTFIX: reason]`), and a wiring & balance pass covered every gameplay action end-to-end — see the "Phase 3 — Wiring & Balance Pass" section at the bottom. LOW findings remain open.
+>
+> **Phase 4 (same branch, 2026-07-16):** full session & state persistence plus offline mode — see the "Phase 4 — Persistence & Offline Mode" section at the bottom. Nothing in the In-Memory State Inventory is lost on restart anymore; the server also runs fully self-contained on embedded SQLite (`make offline`).
 
 ## Severity Summary
 
@@ -56,9 +58,9 @@ The single largest structural risk is that **in-memory maps are the source of tr
 
 ### Persistence: what is a table vs RAM-only
 
-**Postgres tables** (migrations.go): `users`, `stables`, `horses`, `race_results`, `stud_listings`, `tournaments`, `trade_offers`, `achievements`, `training_sessions`, `player_progress`, `seasons`, `poker_tables`, `slot_spins`, `departed_horses`, `market_transactions`, `auctions`, `race_replays`, `alliances`, `alliance_members`, `horse_fights`, `glue_factory`, `breeding_stallions`.
+**Postgres tables** (migrations.go): `users`, `stables`, `horses`, `race_results`, `stud_listings`, `tournaments`, `trade_offers`, `achievements`, `training_sessions`, `player_progress`, `seasons`, `poker_tables`, `slot_spins`, `departed_horses`, `market_transactions`, `auctions`, `race_replays`, `alliances`, `alliance_members`, `horse_fights`, `glue_factory`, `breeding_stallions`; Phase 2/3 added `casino_jackpot`; Phase 4 added `sessions`, `challenges`, `betting_pools`, `rivalries`, `app_config`. Every table also exists in the SQLite schema (`migrations_sqlite.go`) for offline mode.
 
-**RAM-only (lost on restart)** — see the In-Memory State Inventory below: challenges, betting pools (with escrowed bets), rivalries, the progressive slot jackpot pool, pending fights (with deducted entry fees), the race-replay cache, and all `Race`/`RaceEntry`/`TickEvent` objects (only derived `race_results` + `race_replays` persist).
+**RAM-only (lost on restart)** — *(updated for Phase 4)* only genuinely ephemeral state remains RAM-only: the race-replay share cache (DB `race_replays` fallback exists), live WS connections, per-entity mutexes, and in-flight `Race`/`RaceEntry`/`TickEvent` sim objects (only derived `race_results` + `race_replays` persist, by design). Challenges, betting pools (with escrowed bets), rivalries, the jackpot pool, pending fights, market transaction history, and per-horse training history are all persisted and rehydrated now.
 
 ---
 
@@ -258,21 +260,21 @@ State held only in RAM on the `Server` struct (`server.go:48-145`) and elsewhere
 | Field / location | Type | Holds | On restart |
 |---|---|---|---|
 | `stables` (`server.go:50`) | `*stableussy.StableManager` | All stables + global horse registry (`stableussy.go:77-81`) | Rehydrated from `stables`/`horses` — **but** `LastBredAt`/`RetiredChampion` are dropped (H-7). |
-| `market` (`server.go:51`) | `*marketussy.Market` | Stud listings, transactions, `totalBurned` | Listings rehydrated; `TimesUsed`/`MaxUses`/`totalBurned` **lost** (H-8). |
+| `market` (`server.go:51`) | `*marketussy.Market` | Stud listings, transactions, `totalBurned` | Listings rehydrated; `TimesUsed`/`MaxUses` fixed in Phase 2 (H-8); **[FIXED: Phase 4]** transaction history + `totalBurned` also rehydrate now (`Market.ImportTransaction`). |
 | `raceCache` (`server.go:61`) | `map[string]*raceResult` | Replay cache, cap 200 | Lost; DB `race_replays` fallback exists. |
-| `challenges` (`server.go:92`) | `map[string]*models.Challenge` | Head-to-head challenges + wager escrow state | **Lost.** Pending challenges vanish. |
+| `challenges` (`server.go:92`) | `map[string]*models.Challenge` | Head-to-head challenges + wager escrow state | ~~Lost~~ **[FIXED: Phase 4]** Persisted (`challenges` table, write-through on every status change); pending challenges rehydrate on boot. |
 | `auctions` (`server.go:96`) | `map[string]*models.Auction` | Live auctions + bid history | Persisted (auctionRepo). |
-| `bettingPools` (`server.go:100`) | `map[string]*models.BettingPool` | Open/closed pools + escrowed bets | **Lost — escrowed cummies never refunded (H-6).** |
+| `bettingPools` (`server.go:100`) | `map[string]*models.BettingPool` | Open/closed pools + escrowed bets | ~~Lost~~ **[FIXED: Phase 4]** Persisted (`betting_pools` table, upserted on every mutation); unresolved pools rehydrate with escrow intact, exhibition timers reschedule, resolved pools remain as payout records. |
 | `currentSeason`/`pastSeasons` (`server.go:104-105`) | `*Season` / `[]Season` | Season state | Persisted (seasonRepo). |
 | `progress` (`server.go:109`) | `map[string]*PlayerProgress` | Daily limits, streaks, prestige | Persisted (progressRepo). |
-| `rivalries` (`server.go:114`) | `map[string]map[string]int` | Head-to-head meeting counts | **Lost.** |
+| `rivalries` (`server.go:114`) | `map[string]map[string]int` | Head-to-head meeting counts | ~~Lost~~ **[FIXED: Phase 4]** Persisted (`rivalries` table, upsert-increment write-through); full matrix rehydrates on boot. |
 | `alliances` (`server.go:118`) | `map[string]*Alliance` | Guilds + treasury | Persisted (allianceRepo). |
 | `pendingFights` (`server.go:122`) | `map[string]*HorseFight` | Fights awaiting a joiner | **Lost — deducted entry fees never refunded (H-6).** Finished fights persisted. |
 | `pokerTables` (`server.go:126`) | `map[string]*PokerTable` | Poker/hold'em tables | Persisted, but Hold'em fields truncated (H-10). |
 | `departures` (`server.go:128`) | `map[string]*DepartureRecord` | Glue/fight departures + omen state | Persisted (departureRepo). |
 | `jackpotPool` / `jackpotLastWinner` / `jackpotLastAmount` (`server.go:132-134`) | `int64`/`string`/`int64` | Progressive slot jackpot | **Lost — resets to seed 500 (M-2); all 2%-of-wager contributions gone.** |
 | `stableMus` (`server.go:139`) | `map[string]*sync.Mutex` | Per-stable locks | Lost (fine). |
-| `trainer.sessions` (`trainussy.go:25`) | `map[string][]*TrainingSession` | Per-horse training history | Persisted separately via `persistTrainingSession`; in-memory copy lost. |
+| `trainer.sessions` (`trainussy.go:25`) | `map[string][]*TrainingSession` | Per-horse training history | Persisted via `persistTrainingSession`; **[FIXED: Phase 4]** now also rehydrated on boot (`Trainer.ImportSession`). |
 | `raceHistory` (`tournussy.go:26-31`) | slices + maps | All race results (indexed) | Rehydrated from `race_results`. |
 | `trades` (`pedigreussy.go:424-427`) | `map[string]*TradeOffer` | Trade offers | Rehydrated from `trade_offers`. |
 | `tournaments` (`tournussy.go:384-388`) | `map[string]*Tournament` | Tournaments + standings | Rehydrated from `tournaments`. |
@@ -418,8 +420,67 @@ Branch `fable/full-improvement-pass`, 2026-07-16. Beyond the M-* fixes annotated
 
 ### Remaining known gaps (out of scope, LOW)
 
-- L-1…L-12 as documented above; the CASINO_DESIGN_SPEC/MULTIPLAYER_ENGAGEMENT_RESEARCH feature wishlists; market transaction history is not rehydrated from DB (the `market_mogul` counter counts since last restart — a floor, never an overcount); rivalries/challenges remain RAM-only (challenge escrow is refunded on expiry by the Phase 2 sweeps).
+- L-1…L-12 as documented above; the CASINO_DESIGN_SPEC/MULTIPLAYER_ENGAGEMENT_RESEARCH feature wishlists; ~~market transaction history is not rehydrated from DB; rivalries/challenges remain RAM-only~~ *(all three closed in Phase 4)*.
 
 ### Phase 3 integration tests added (internal/server)
 
 `phase3_econ_test.go` (exchange round-trip with disclosed rates; house-funded daily grant incl. broke-house; house-bounded chip funding), `phase3_trade_test.go` (trade create→accept full path; negative price; foreign horse; failed-payment compensation; M-9 unseated auto-fold guard), `phase3_training_test.go` (4 distinct specialties over HTTP; specialty reaches `CalcBaseSpeed`; cap), `phase3_betting_test.go` (exhibition bet-and-settle loop with conservation and no-stat-mutation; full tournament lifecycle with burn-exact conservation; pool-clobber escrow guard), `phase3_market_test.go` (burn conservation on stud purchase + `first_sale`; house-funded glue with exact veteran/foal payouts; `tournament_winner`), plus `racussy` statistical variance bounds and same-seed determinism tests.
+
+---
+
+## Phase 4 — Persistence & Offline Mode
+
+Branch `fable/full-improvement-pass`, 2026-07-16. Commits: `83b37bf` (SQLite dialect layer), `a6f49c1` (sessions), `3fefca8` (state persistence), `f8c8b54` (offline mode).
+
+### What is now persisted (and how rehydration works)
+
+**Everything in the In-Memory State Inventory survives a restart.** The write-through model is unchanged (in-memory managers mutate first, `persistX` helpers mirror to the DB); Phase 4 closed the last gaps:
+
+- **Challenges** — new `challenges` table; upserted at creation, accept-time expiry, bot/PvP completion, decline, and the 30s expiry sweep. `loadFromDB` restores the most recent 500. A challenge caught mid-accept by a crash reloads as `pending` (wager escrow only persists at settlement, so this matches the persisted balances).
+- **Betting pools** — new `betting_pools` table storing the full pool (horses, escrowed bets, totals, status, and a new `Kind`: race/exhibition/tournament), upserted on open, add-horse, every bet, close, resolve, and refund. Unresolved pools rehydrate with their escrow intact; exhibition pools reschedule the remainder of their betting window (or resolve immediately if it elapsed during downtime); resolved/refunded pools remain in the table as permanent payout records. The H-6 "refund everything at shutdown" path was removed — an open pool now simply resumes. The 15-minute stale-pool sweep still guards abandonment.
+- **Rivalries** — new `rivalries (winner_id, loser_id, wins)` table with upsert-increment write-through from the post-race update; the full matrix rehydrates.
+- **Market transaction history + burn total** and **per-horse training history** — were persisted but never reloaded; `loadFromDB` now imports both (oldest-first) via new `Market.ImportTransaction` / `Trainer.ImportSession`.
+- Already persisted before Phase 4 (verified): stables/horses (incl. `last_bred_at`, `retired_champion`, `training_specialty`, injury), market listings with use limits, race results, tournaments (bracket/standings/round/prize pool), trades, achievements, player progress, seasons, auctions, alliances, poker tables (full Hold'em state), departures, pending fights, glue ledger, breeding stallions, the jackpot pool, and the House of USSY treasury (a normal stable row).
+
+### Sessions design
+
+New `sessions` table: `token_hash` (PK), `player_id`, `created_at`, `expires_at`, `last_seen` — only the SHA-256 of the JWT is stored, never the raw token. Wiring follows the existing `GetTokenVersion` injection pattern: `authussy.AuthService` gained optional `CreateSession`/`ValidateSession` callbacks that the server implements against `SessionRepository`.
+
+- Login/register/refresh insert a session row for every issued token (failing closed with a 500 if the store errors).
+- The middleware honors a structurally valid JWT only while its session row exists and is unexpired; validation is a single `UPDATE ... SET last_seen = now WHERE token_hash = ? AND expires_at > now` (zero rows ⇒ 401), which doubles as the `last_seen` refresh.
+- Expired rows are purged at startup and hourly; `DeleteSessionsForPlayer` exists for future password-change revocation.
+- `STALLION_SESSION_TTL` (Go duration, default `168h`) sets both the JWT expiry and the session `expires_at`, so they age out together. Because sessions live in the DB and the signing secret is stable (env in online mode, persisted `app_config` secret in offline mode), players resume their exact state after a restart with no re-login.
+
+### Offline mode architecture
+
+**Decision: a dialect shim over the single shared SQL repository implementation — not a second repository.** The audit showed the runtime SQL was already 95% portable: `$N` placeholders, basic `ON CONFLICT`, partial/expression indexes, and inline CHECKs all work in SQLite; there was no `RETURNING`, `FOR UPDATE`, `INTERVAL`, `ILIKE`, casts, or lib/pq API usage anywhere. Only three queries used `NOW()` (now bound as parameters — portable), leaving the schema DDL as the single true divergence. Duplicating 20+ repo files for that would have been a maintenance disaster.
+
+- `postgres.NewSQLite(path)` opens modernc.org/sqlite (pure Go, no CGO) with WAL, foreign keys, busy timeout, `_time_format=sqlite`, and a single-connection pool (SQLite has one writer; a pinned connection sidesteps `SQLITE_BUSY` and makes `:memory:` safe). `DB.Dialect()` reports the engine.
+- `repository.RunMigrationsFor(db, dialect)` selects the schema: the existing Postgres DDL, or `migrations_sqlite.go` — a fresh-schema rendering with all retrofit `ALTER TABLE`s baked into `CREATE TABLE`, `SERIAL`→`AUTOINCREMENT`, `NOW()`→`CURRENT_TIMESTAMP`, `JSONB`→`TEXT`, and the `DO $$` constraint block as inline CHECKs.
+- `cmd`: `serve --offline` or `STALLION_OFFLINE=true`; DB file `./stallionussy.db` (override `STALLION_DB_PATH`); `make offline` runs the full stack with zero external dependencies.
+- Zero-config auth: offline mode auto-generates a 256-bit JWT secret on first run and persists it in the new `app_config` table.
+- New unauthenticated `GET /api/status` → `{app, status, mode: "offline"|"online", storage, uptimeSeconds}` (additive). The SPA fetches it at boot and shows an amber `◈ OFFLINE MODE` badge in the terminal header.
+
+### New environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STALLION_SESSION_TTL` | `168h` | Session + JWT lifetime |
+| `STALLION_OFFLINE` | `false` | Run on embedded SQLite (same as `--offline`) |
+| `STALLION_DB_PATH` | `./stallionussy.db` | SQLite file location |
+
+### Tests added (all CI-runnable — SQLite needs no server)
+
+- `internal/repository/postgres/sqlite_test.go` — the repo's first real DB-backed tests: users/stables/horses (full JSON round-trip incl. genome, traits, injury, specialty, `last_bred_at`), race-result dedupe (M-13), stud use limits (H-8), jackpot upsert, the C-9 balance-floor CHECK, and `AcceptTradeAtomically` incl. the H-2 double-accept guard.
+- `internal/repository/postgres/sessions_test.go` — session CRUD, touch-validates-and-refreshes (expired sessions cannot be resurrected), expiry purge, per-player delete.
+- `internal/authussy` — middleware session enforcement (live vs dead session), fail-closed session creation on login/register.
+- `internal/server/rehydration_test.go` — full round-trip: boot a real server on a temp SQLite file, create state through real code paths (HTTP registration, training, challenge, escrowed bet, rivalry, market tx, jackpot), boot a second server on the same file, assert identical state including that the pre-restart token still authenticates; plus expired-session-stays-dead.
+- `internal/server/status_test.go` — `/api/status` mode reporting per backend; zero-config offline secret survives restarts.
+
+Also verified manually end-to-end with the compiled binary: offline boot with no env vars, register/login over HTTP, hard process restart, old token still authenticates, `/api/status` reports offline.
+
+### Known limitations
+
+- The SQLite schema is fresh-start-only: future column additions need explicit `ALTER TABLE` handling for existing offline DBs (SQLite lacks `ADD COLUMN IF NOT EXISTS`).
+- Refresh does not revoke the previous token's session (it ages out at its original expiry) — acceptable, both belong to the same player.
+- Postgres-backed integration tests still don't run in CI (no server available); the SQLite suite covers the shared SQL implementation, which is identical except for the DDL.
