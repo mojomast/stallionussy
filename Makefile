@@ -6,7 +6,7 @@ BINARY_NAME=stallionussy
 BUILD_DIR=./cmd/stallionussy
 PORT?=8080
 
-.PHONY: all build run serve cli test vet clean docker docker-run fmt smoke
+.PHONY: all build run serve cli test vet clean docker docker-run fmt smoke offline
 
 # Default: build the binary
 all: build
@@ -30,6 +30,12 @@ cli: build
 # Run in dev mode (no build cache)
 dev:
 	go run $(BUILD_DIR)/main.go serve --port $(PORT)
+
+# Run the full stack in OFFLINE MODE: embedded SQLite, no Docker, no Postgres.
+# Database file: ./stallionussy.db (override with STALLION_DB_PATH).
+offline:
+	@echo "🐴 Starting StallionUSSY in OFFLINE MODE (embedded SQLite)..."
+	go run $(BUILD_DIR)/main.go serve --offline --port $(PORT)
 
 # Run tests
 test:
@@ -86,6 +92,7 @@ help:
 	@echo "  make serve      - Start the web server (PORT=8080)"
 	@echo "  make cli        - Interactive CLI mode"
 	@echo "  make dev        - Dev mode (go run)"
+	@echo "  make offline    - OFFLINE MODE: embedded SQLite, zero dependencies"
 	@echo "  make test       - Run tests"
 	@echo "  make vet        - Run go vet"
 	@echo "  make fmt        - Format code"

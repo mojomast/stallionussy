@@ -128,15 +128,51 @@ Go monolith for a browser-based horse breeding, racing, trading, and chaos simul
 ## Requirements
 
 - Go 1.25+
-- PostgreSQL
+- PostgreSQL (online mode only — offline mode needs nothing else)
 
-The HTTP server requires Postgres at startup. By default it uses:
+In online mode the HTTP server requires Postgres at startup. By default it uses:
 
 ```text
 postgres://stallionussy:h0rs3ussy420@localhost/stallionussy?sslmode=disable
 ```
 
 Override with `DATABASE_URL`.
+
+## Offline Mode
+
+The full stack can run with **zero external dependencies** — no Docker, no
+Postgres. Offline mode swaps PostgreSQL for an embedded SQLite database
+(pure-Go `modernc.org/sqlite`, no CGO) behind the same repository layer, so
+every gameplay system (racing, breeding, training, market, tournaments,
+betting, casino, fights) behaves identically.
+
+```bash
+make offline
+# or
+STALLION_OFFLINE=true go run ./cmd/stallionussy serve --port 8080
+# or
+go run ./cmd/stallionussy serve --offline
+```
+
+- The database lives at `./stallionussy.db` by default (override with
+  `STALLION_DB_PATH`).
+- No `JWT_SECRET` needed: offline mode generates a random secret on first run
+  and stores it in the database (`app_config`), so logins survive restarts.
+- `GET /api/status` reports `{"mode":"offline","storage":"sqlite",...}`
+  (`"online"`/`"postgres"` otherwise), and the terminal UI shows a subtle
+  amber `◈ OFFLINE MODE` badge in the header.
+
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | see above | PostgreSQL connection string (online mode) |
+| `JWT_SECRET` | — | JWT signing secret; required online, auto-generated offline |
+| `STALLION_OFFLINE` | `false` | `true`/`1` runs the server in offline mode (same as `--offline`) |
+| `STALLION_DB_PATH` | `./stallionussy.db` | SQLite database file location (offline mode) |
+| `STALLION_SESSION_TTL` | `168h` | Login session (and JWT) lifetime, Go duration syntax |
+| `STALLIONUSSY_PORT` | `8080` | HTTP listen port |
+| `CORS_ORIGIN` | `*` | Allowed CORS origin |
 
 ### Sessions
 
@@ -183,7 +219,7 @@ go build ./...
 - Frontend is a single-file SPA at `web/index.html`.
 - The first-session tutorial intentionally focuses on the core loop first: stable -> horse -> training -> race -> results, then previews breeding, market, competition, and replay/share.
 - The lore codex is routed at `#lore` and is also reachable from the bottom-right help area.
-- Authenticated player progression and season state now persist in Postgres and survive server restarts.
-- Casino tables, slot spin history, and departed-horse omens also persist in Postgres.
-- Challenges and betting pools are still in-memory and reset on server restart.
+- Authenticated player progression and season state persist in the database and survive server restarts.
+- Casino tables, slot spin history, and departed-horse omens also persist.
+- Challenges, betting pools (including escrowed bets), rivalries, market transaction history, and login sessions all persist and are rehydrated on startup — a restart no longer loses any player state.
 - On mobile, chat remains a drawer instead of a persistent side column.

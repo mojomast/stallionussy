@@ -557,6 +557,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_player_id  ON sessions (player_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions (expires_at);
 
 -- ===========================================================================
+-- App config (small key/value store)
+-- Used by offline mode to persist a generated JWT secret so sessions
+-- survive restarts without requiring the JWT_SECRET env var.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS app_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+-- ===========================================================================
 -- Head-to-head challenges
 -- Previously RAM-only: pending challenges vanished on restart.
 -- ===========================================================================

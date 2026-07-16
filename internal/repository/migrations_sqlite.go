@@ -473,6 +473,16 @@ CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (o
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
 
 -- ===========================================================================
+-- App config (small key/value store)
+-- Used by offline mode to persist a generated JWT secret so sessions
+-- survive restarts without requiring the JWT_SECRET env var.
+-- ===========================================================================
+CREATE TABLE IF NOT EXISTS app_config (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
+
+-- ===========================================================================
 -- Head-to-head challenges
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS challenges (

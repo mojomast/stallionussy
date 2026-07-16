@@ -8,6 +8,7 @@ package server
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -163,6 +164,11 @@ type Server struct {
 	// CORS origin — read once at startup from CORS_ORIGIN env var.
 	// Defaults to "*" (permissive) when unset, for local development.
 	corsOrigin string
+
+	// Offline mode: true when the server runs on embedded SQLite instead
+	// of PostgreSQL. Reported by GET /api/status.
+	offline   bool
+	startedAt time.Time
 }
 
 const starterHorseCount = 2
@@ -184,6 +190,30 @@ func resolveSessionTTL() time.Duration {
 		return defaultSessionTTL
 	}
 	return ttl
+}
+
+// ensureLocalJWTSecret loads the offline-mode JWT secret from the app_config
+// table, generating and persisting a fresh 256-bit random one on first run.
+// This keeps offline mode zero-config while still surviving restarts.
+func ensureLocalJWTSecret(db *postgres.DB) (string, error) {
+	ctx := context.Background()
+	secret, err := db.GetAppConfig(ctx, "jwt_secret")
+	if err != nil {
+		return "", err
+	}
+	if secret != "" {
+		return secret, nil
+	}
+	raw := make([]byte, 32)
+	if _, err := cryptorand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate secret: %w", err)
+	}
+	secret = hex.EncodeToString(raw)
+	if err := db.SetAppConfig(ctx, "jwt_secret", secret); err != nil {
+		return "", err
+	}
+	log.Println("server: generated a local JWT secret for offline mode (stored in app_config)")
+	return secret, nil
 }
 
 // hashSessionToken derives the storage key for a session from its JWT.
@@ -272,6 +302,11 @@ func NewServer(db *postgres.DB) *Server {
 		jackpotPool:   slotJackpotSeed,
 		stableMus:     make(map[string]*sync.Mutex),
 		bettingWindow: defaultBettingWindow,
+		startedAt:     time.Now(),
+	}
+	if db != nil && db.Dialect() == repository.DialectSQLite {
+		s.offline = true
+		log.Println("server: OFFLINE MODE — embedded SQLite, no external dependencies. The yogurt is local.")
 	}
 
 	// Read the allowed CORS origin once at startup. In production, set
@@ -319,9 +354,20 @@ func NewServer(db *postgres.DB) *Server {
 		// hardcoded default when real authentication is in play.
 		jwtSecret := os.Getenv("JWT_SECRET")
 		if jwtSecret == "" {
-			log.Fatal("server: JWT_SECRET environment variable is not set. " +
-				"Refusing to start in database mode with an empty secret. " +
-				"Set JWT_SECRET to a strong random value before running.")
+			if s.offline {
+				// Offline mode must run with zero configuration: generate a
+				// random secret once and persist it in app_config so tokens
+				// and sessions stay valid across restarts.
+				secret, err := ensureLocalJWTSecret(db)
+				if err != nil {
+					log.Fatalf("server: failed to initialize local JWT secret: %v", err)
+				}
+				jwtSecret = secret
+			} else {
+				log.Fatal("server: JWT_SECRET environment variable is not set. " +
+					"Refusing to start in database mode with an empty secret. " +
+					"Set JWT_SECRET to a strong random value before running.")
+			}
 		}
 
 		// Session lifetime — also the JWT expiry, so the token and its
@@ -480,6 +526,7 @@ func NewServer(db *postgres.DB) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 
 	// --- Auth (only when DB/auth is configured) ---
 	if s.authHandler != nil {
@@ -801,6 +848,28 @@ func (s *Server) handleGetStable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, stable)
+}
+
+// handleStatus reports the server's operating mode. Unauthenticated (it is
+// in the auth middleware's skip list) so the SPA can render the offline-mode
+// indicator before login.
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	mode := "online"
+	storage := "postgres"
+	if s.offline {
+		mode = "offline"
+		storage = "sqlite"
+	}
+	if s.pgDB == nil {
+		storage = "memory"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"app":           "stallionussy",
+		"status":        "ok",
+		"mode":          mode,
+		"storage":       storage,
+		"uptimeSeconds": int64(time.Since(s.startedAt).Seconds()),
+	})
 }
 
 func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {

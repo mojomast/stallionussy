@@ -122,29 +122,39 @@ func main() {
 	// -----------------------------------------------------------------------
 	serveCmd := flag.NewFlagSet("serve", flag.ExitOnError)
 	servePort := serveCmd.String("port", defaultPort, "HTTP server port (env: STALLIONUSSY_PORT)")
+	serveOffline := serveCmd.Bool("offline", false, "run in offline mode: embedded SQLite, no PostgreSQL required (env: STALLION_OFFLINE)")
 
 	cliCmd := flag.NewFlagSet("cli", flag.ExitOnError)
 
 	// If no subcommand is given, default to "serve".
 	if len(os.Args) < 2 {
-		runServe(resolvePort(*servePort))
+		runServe(resolvePort(*servePort), offlineModeEnv())
 		return
 	}
 
 	switch os.Args[1] {
 	case "serve":
 		serveCmd.Parse(os.Args[2:])
-		runServe(resolvePort(*servePort))
+		runServe(resolvePort(*servePort), *serveOffline || offlineModeEnv())
 	case "cli":
 		cliCmd.Parse(os.Args[2:])
 		runCLI()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
 		fmt.Fprintln(os.Stderr, "Usage: stallionussy [serve|cli]")
-		fmt.Fprintln(os.Stderr, "  serve  --port 8080   Start the HTTP server")
-		fmt.Fprintln(os.Stderr, "  cli                  Interactive terminal mode")
+		fmt.Fprintln(os.Stderr, "  serve  --port 8080 [--offline]   Start the HTTP server")
+		fmt.Fprintln(os.Stderr, "  cli                              Interactive terminal mode")
 		os.Exit(1)
 	}
+}
+
+// offlineModeEnv reports whether STALLION_OFFLINE requests offline mode.
+func offlineModeEnv() bool {
+	switch strings.ToLower(os.Getenv("STALLION_OFFLINE")) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +164,10 @@ func main() {
 // defaultDatabaseURL is the fallback PostgreSQL connection string when
 // the DATABASE_URL environment variable is not set.
 const defaultDatabaseURL = "postgres://stallionussy:h0rs3ussy420@localhost/stallionussy?sslmode=disable"
+
+// defaultSQLitePath is where offline mode stores its embedded database when
+// STALLION_DB_PATH is not set.
+const defaultSQLitePath = "./stallionussy.db"
 
 // connectDB establishes a PostgreSQL connection and runs schema migrations.
 // Returns the *postgres.DB (caller must Close) or nil + error.
@@ -176,16 +190,51 @@ func connectDB() (*postgres.DB, error) {
 	return db, nil
 }
 
-// runServe starts the HTTP API server on the given port.
-func runServe(port string) {
+// connectSQLite opens (creating if necessary) the embedded SQLite database
+// for offline mode and runs the SQLite schema migrations. No external
+// services are required.
+func connectSQLite() (*postgres.DB, error) {
+	path := os.Getenv("STALLION_DB_PATH")
+	if path == "" {
+		path = defaultSQLitePath
+	}
+
+	db, err := postgres.NewSQLite(path)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite database %q: %w", path, err)
+	}
+
+	if err := repository.RunMigrationsFor(db.GetDB(), repository.DialectSQLite); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("run sqlite migrations: %w", err)
+	}
+
+	log.Printf("Offline mode: embedded SQLite database at %s", path)
+	return db, nil
+}
+
+// runServe starts the HTTP API server on the given port. In offline mode the
+// server runs entirely self-contained on an embedded SQLite database.
+func runServe(port string, offline bool) {
 	fmt.Print(banner)
 	fmt.Println()
 
 	addr := ":" + port
-	fmt.Printf("Starting StallionUSSY server on %s ...\n", addr)
+	if offline {
+		fmt.Printf("Starting StallionUSSY server on %s [OFFLINE MODE] ...\n", addr)
+	} else {
+		fmt.Printf("Starting StallionUSSY server on %s ...\n", addr)
+	}
 
-	// Connect to PostgreSQL and run migrations.
-	db, err := connectDB()
+	// Connect to the database (PostgreSQL online, SQLite offline) and run
+	// the dialect's migrations.
+	var db *postgres.DB
+	var err error
+	if offline {
+		db, err = connectSQLite()
+	} else {
+		db, err = connectDB()
+	}
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}

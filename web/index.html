@@ -186,6 +186,13 @@ body::after {
   align-items: center;
 }
 
+.offline-indicator {
+  color: var(--amber);
+  font-size: 11px;
+  text-shadow: var(--glow-amber);
+  animation: pulse-dot 3s ease-in-out infinite;
+}
+
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -2854,6 +2861,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
   </div>
   <div class="status">
     <span><span class="status-dot"></span>SYSTEM: OPERATIONAL</span>
+    <span id="offline-indicator" class="offline-indicator" style="display:none" title="Running on the local yogurt vault (embedded SQLite). No network required.">◈ OFFLINE MODE</span>
     <span class="text-dim" id="ws-status">WS: DISCONNECTED</span>
     <span class="text-dim" id="clock"></span>
     <span class="text-dim" id="header-season-info" style="font-size:10px;color:var(--amber);"></span>
@@ -11534,6 +11542,21 @@ window.SU = {
 window.copyRaceLink = copyRaceLink;
 
 // ─── INITIALIZATION ────────────────────────────────────────────────────────
+// ─── SERVER MODE (offline indicator) ────────────────────────────────────────
+// Asks the server which mode it's running in and lights up the header badge
+// when the stable is powered by the local yogurt vault (embedded SQLite).
+async function checkServerMode() {
+  try {
+    const status = await api('/status');
+    const el = $('#offline-indicator');
+    if (el && status && status.mode === 'offline') {
+      el.style.display = '';
+    }
+  } catch (e) {
+    // Status endpoint unavailable — assume online, keep the badge hidden.
+  }
+}
+
 function init() {
   runBootSequence();
 
@@ -11541,6 +11564,7 @@ function init() {
   setInterval(updateClock, 1000);
 
   bindEvents();
+  checkServerMode();
   document.body.classList.toggle('app-shell-active', window.innerWidth > 900);
 
   // Bind auth form keyboard events
