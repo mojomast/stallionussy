@@ -2767,6 +2767,11 @@ func (s *Server) handleCreateTournament(w http.ResponseWriter, r *http.Request) 
 
 	tournament := s.tournaments.CreateTournament(req.Name, req.TrackType, req.Rounds, req.EntryFee)
 
+	// Record the organizer so only they (or an admin) can advance rounds (H-4).
+	if claims, ok := authussy.GetUserFromContext(r.Context()); ok {
+		tournament.CreatedBy = claims.UserID
+	}
+
 	// Write-through: persist tournament to DB.
 	s.persistTournament(r.Context(), tournament)
 
@@ -2867,11 +2872,10 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		// Deduct entry fee from stable.
+		// Deduct entry fee from stable. The prize pool accumulation happens
+		// inside tournussy.RegisterHorse below — adding it here as well
+		// double-counted every entry fee (part of C-2's money creation).
 		payingStable.Cummies -= tournament.EntryFee
-
-		// Accumulate into tournament prize pool.
-		tournament.PrizePool += tournament.EntryFee
 
 		// Persist the stable after deduction.
 		s.persistStable(r.Context(), payingStable)
@@ -2882,12 +2886,12 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.tournaments.RegisterHorse(tournamentID, horse, req.StableID); err != nil {
-		// Refund entry fee if registration fails.
+		// Refund entry fee if registration fails. RegisterHorse only adds to
+		// the prize pool on success, so no pool adjustment is needed here.
 		if tournament.EntryFee > 0 {
 			mu := s.stableMu(registeredStable.ID)
 			mu.Lock()
 			registeredStable.Cummies += tournament.EntryFee
-			tournament.PrizePool -= tournament.EntryFee
 			s.persistStable(r.Context(), registeredStable)
 			mu.Unlock()
 		}
@@ -2930,14 +2934,27 @@ func (s *Server) handleRegisterTournament(w http.ResponseWriter, r *http.Request
 func (s *Server) handleTournamentRace(w http.ResponseWriter, r *http.Request) {
 	tournamentID := r.PathValue("id")
 
-	// Auth note: any authenticated user can trigger tournament races for now.
-	// Organizer-only check will be added in a future update.
-
 	// Get tournament to find registered horses.
 	tournament, err := s.tournaments.GetTournament(tournamentID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
+	}
+
+	// Authorization (H-4): only the tournament organizer (or the admin) may
+	// advance rounds and trigger prize distribution. Tournaments created
+	// before organizers were tracked (CreatedBy == "") remain open to any
+	// authenticated user for backward compatibility.
+	if tournament.CreatedBy != "" {
+		claims, ok := authussy.GetUserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		if claims.UserID != tournament.CreatedBy && claims.Username != "mojo" {
+			writeError(w, http.StatusForbidden, "only the tournament organizer can run tournament rounds")
+			return
+		}
 	}
 
 	if len(tournament.Standings) < 2 {

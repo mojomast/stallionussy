@@ -450,6 +450,7 @@ type Tournament struct {
 	Standings    []TournamentEntry `json:"standings"`
 	Races        []string          `json:"races"`  // race IDs
 	Status       string            `json:"status"` // "Open", "InProgress", "Finished"
+	CreatedBy    string            `json:"created_by,omitempty"` // user ID of the organizer ("" = legacy/system)
 	CreatedAt    time.Time         `json:"created_at"`
 }
 

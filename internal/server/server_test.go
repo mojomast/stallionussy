@@ -1695,3 +1695,141 @@ func TestHTTP_GetHorse_NotFound(t *testing.T) {
 var _ = fmt.Sprintf
 var _ = strings.HasPrefix
 var _ = bytes.NewReader
+
+// ---------------------------------------------------------------------------
+// Tournament money conservation + authorization (C-2, H-3, H-4)
+// ---------------------------------------------------------------------------
+
+// tournamentTestSetup creates two users with stables and registers one horse
+// each into a fresh tournament, returning everything a tournament test needs.
+func tournamentTestSetup(t *testing.T, s *Server, entryFee int64, rounds int) (tournamentID string, stable1, stable2 *models.Stable) {
+	t.Helper()
+
+	st1, err := s.createOwnedStable(context.Background(), "Alpha Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable(user-1): %v", err)
+	}
+	st2, err := s.createOwnedStable(context.Background(), "Beta Ranch", "user-2", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable(user-2): %v", err)
+	}
+
+	// Create the tournament as user-1 (the organizer).
+	body := jsonBody(map[string]interface{}{
+		"name":      "Conservation Cup",
+		"trackType": "Sprintussy",
+		"rounds":    rounds,
+		"entryFee":  entryFee,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/tournaments", body)
+	req = injectAuth(req, "user-1", "alpha")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create tournament: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	var tresp models.Tournament
+	decodeJSON(t, rr, &tresp)
+
+	// Register one horse from each stable.
+	register := func(userID, username string, st *models.Stable) {
+		t.Helper()
+		body := jsonBody(map[string]string{
+			"horseID":  st.Horses[0].ID,
+			"stableID": st.ID,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/tournaments/"+tresp.ID+"/register", body)
+		req = injectAuth(req, userID, username)
+		rr := httptest.NewRecorder()
+		s.mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("register horse for %s: status = %d\nbody: %s", userID, rr.Code, rr.Body.String())
+		}
+	}
+	register("user-1", "alpha", st1)
+	register("user-2", "beta", st2)
+
+	return tresp.ID, st1, st2
+}
+
+// TestTournament_PrizePoolPaidExactlyOnce is the C-2 regression: the entry
+// fees collected must be paid out exactly once (final 60/25/10 distribution
+// with ~5% burned) — not per-round purses PLUS a final distribution, and the
+// prize pool must not double-count entry fees.
+func TestTournament_PrizePoolPaidExactlyOnce(t *testing.T) {
+	s := NewServer(nil)
+	const entryFee = int64(500)
+	const rounds = 2
+
+	tournamentID, st1, st2 := tournamentTestSetup(t, s, entryFee, rounds)
+
+	// Prize pool must equal the collected fees exactly (no double count).
+	tournament, err := s.tournaments.GetTournament(tournamentID)
+	if err != nil {
+		t.Fatalf("GetTournament: %v", err)
+	}
+	if tournament.PrizePool != 2*entryFee {
+		t.Fatalf("prize pool = %d, want %d (entry fees must be counted exactly once)", tournament.PrizePool, 2*entryFee)
+	}
+
+	sumBefore := st1.Cummies + st2.Cummies
+
+	// Run all rounds as the organizer.
+	for i := 0; i < rounds; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/tournaments/"+tournamentID+"/race", nil)
+		req = injectAuth(req, "user-1", "alpha")
+		rr := httptest.NewRecorder()
+		s.mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("round %d: status = %d\nbody: %s", i+1, rr.Code, rr.Body.String())
+		}
+	}
+
+	tournament, _ = s.tournaments.GetTournament(tournamentID)
+	if tournament.Status != "Finished" {
+		t.Fatalf("tournament status = %q after %d rounds, want Finished", tournament.Status, rounds)
+	}
+
+	// With 2 entrants the payout is 60%% + 25%% of the pool; the rest
+	// (3rd-place share + burn) is removed from the economy.
+	pool := 2 * entryFee
+	expectedPayout := pool*60/100 + pool*25/100
+	sumAfter := st1.Cummies + st2.Cummies
+	if got, want := sumAfter, sumBefore+expectedPayout; got != want {
+		t.Fatalf("combined balance after tournament = %d, want %d (paid %d from a %d pool; double payout?)",
+			got, want, sumAfter-sumBefore, pool)
+	}
+}
+
+// TestTournament_RaceRequiresOrganizer is the H-4 regression: only the
+// tournament organizer (or admin) can advance tournament rounds.
+func TestTournament_RaceRequiresOrganizer(t *testing.T) {
+	s := NewServer(nil)
+	tournamentID, _, _ := tournamentTestSetup(t, s, 100, 1)
+
+	// A different authenticated user must be rejected.
+	req := httptest.NewRequest(http.MethodPost, "/api/tournaments/"+tournamentID+"/race", nil)
+	req = injectAuth(req, "user-2", "beta")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("non-organizer race trigger: status = %d, want 403\nbody: %s", rr.Code, rr.Body.String())
+	}
+
+	// An unauthenticated request must be rejected too.
+	req = httptest.NewRequest(http.MethodPost, "/api/tournaments/"+tournamentID+"/race", nil)
+	rr = httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated race trigger: status = %d, want 401\nbody: %s", rr.Code, rr.Body.String())
+	}
+
+	// The organizer is allowed.
+	req = httptest.NewRequest(http.MethodPost, "/api/tournaments/"+tournamentID+"/race", nil)
+	req = injectAuth(req, "user-1", "alpha")
+	rr = httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("organizer race trigger: status = %d, want 201\nbody: %s", rr.Code, rr.Body.String())
+	}
+}

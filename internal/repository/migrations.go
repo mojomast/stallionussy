@@ -453,6 +453,11 @@ CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (
 -- Token Version (for JWT revocation on password change)
 -- ===========================================================================
 ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
+
+-- ===========================================================================
+-- Tournament organizer (H-4: organizer-only round advancement)
+-- ===========================================================================
+ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
 `
 
 // RunMigrations executes the schema DDL against the provided database

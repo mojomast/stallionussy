@@ -43,6 +43,7 @@ func scanTournament(sc interface{ Scan(dest ...any) error }) (*models.Tournament
 		&standingsJSON,
 		&racesJSON,
 		&t.Status,
+		&t.CreatedBy,
 		&t.CreatedAt,
 	)
 	if err != nil {
@@ -87,8 +88,8 @@ func (r *TournamentRepo) CreateTournament(ctx context.Context, tournament *model
 	query := `
 		INSERT INTO tournaments (
 			id, name, track_type, rounds, current_round,
-			entry_fee, prize_pool, standings, races, status, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+			entry_fee, prize_pool, standings, races, status, created_by, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	_, err = r.db.db.ExecContext(ctx, query,
 		tournament.ID,
 		tournament.Name,
@@ -100,6 +101,7 @@ func (r *TournamentRepo) CreateTournament(ctx context.Context, tournament *model
 		standingsJSON,
 		racesJSON,
 		tournament.Status,
+		tournament.CreatedBy,
 		tournament.CreatedAt,
 	)
 	if err != nil {
@@ -112,7 +114,7 @@ func (r *TournamentRepo) CreateTournament(ctx context.Context, tournament *model
 func (r *TournamentRepo) GetTournament(ctx context.Context, id string) (*models.Tournament, error) {
 	query := `
 		SELECT id, name, track_type, rounds, current_round,
-			entry_fee, prize_pool, standings, races, status, created_at
+			entry_fee, prize_pool, standings, races, status, created_by, created_at
 		FROM tournaments WHERE id = $1`
 	t, err := scanTournament(r.db.db.QueryRowContext(ctx, query, id))
 	if err == sql.ErrNoRows {
@@ -128,7 +130,7 @@ func (r *TournamentRepo) GetTournament(ctx context.Context, id string) (*models.
 func (r *TournamentRepo) ListTournaments(ctx context.Context) ([]*models.Tournament, error) {
 	query := `
 		SELECT id, name, track_type, rounds, current_round,
-			entry_fee, prize_pool, standings, races, status, created_at
+			entry_fee, prize_pool, standings, races, status, created_by, created_at
 		FROM tournaments ORDER BY created_at DESC`
 	rows, err := r.db.db.QueryContext(ctx, query)
 	if err != nil {
@@ -165,7 +167,7 @@ func (r *TournamentRepo) UpdateTournament(ctx context.Context, tournament *model
 		UPDATE tournaments SET
 			name = $2, track_type = $3, rounds = $4, current_round = $5,
 			entry_fee = $6, prize_pool = $7, standings = $8, races = $9,
-			status = $10
+			status = $10, created_by = $11
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		tournament.ID,
@@ -178,6 +180,7 @@ func (r *TournamentRepo) UpdateTournament(ctx context.Context, tournament *model
 		standingsJSON,
 		racesJSON,
 		tournament.Status,
+		tournament.CreatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("update tournament: %w", err)

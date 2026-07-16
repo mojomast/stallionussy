@@ -628,13 +628,18 @@ func (tm *TournamentManager) RunNextRound(tournamentID string, horses []*models.
 		return nil, fmt.Errorf("tournament %s is finished (%d/%d rounds complete)", t.Name, t.CurrentRound, t.Rounds)
 	}
 
-	// Increment current round.
-	t.CurrentRound++
+	// BUG FIX (H-3): the round counter is NO LONGER incremented here. It
+	// advances in RecordRoundResults, i.e. only once the round's results
+	// have actually been recorded. Previously a simulated-but-unrecorded
+	// round still consumed a round slot, letting tournaments finish with
+	// fewer recorded rounds than advertised.
 
-	// Create the race using racussy. Purse is a fraction of the prize pool
-	// distributed per round.
-	roundPurse := t.PrizePool / int64(t.Rounds)
-	race := racussy.NewRace(horses, t.TrackType, roundPurse)
+	// BUG FIX (C-2): tournament round races carry NO purse. Previously each
+	// round distributed PrizePool/Rounds via the regular post-race payout
+	// AND distributeTournamentPrizes paid the full PrizePool again at the
+	// end — roughly doubling the money created from entry fees. The prize
+	// pool is now paid out exactly once, at tournament completion.
+	race := racussy.NewRace(horses, t.TrackType, 0)
 
 	return race, nil
 }
@@ -672,6 +677,10 @@ func (tm *TournamentManager) RecordRoundResults(tournamentID string, race *model
 	if !ok {
 		return nil, fmt.Errorf("tournament %s not found", tournamentID)
 	}
+
+	// BUG FIX (H-3): the round counter advances here — when results are
+	// actually recorded — rather than speculatively in RunNextRound.
+	t.CurrentRound++
 
 	// Append race ID to tournament's race list.
 	t.Races = append(t.Races, race.ID)

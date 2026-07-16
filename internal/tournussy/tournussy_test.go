@@ -629,8 +629,24 @@ func TestRunNextRound(t *testing.T) {
 	if retrieved.Status != "InProgress" {
 		t.Errorf("Status = %q, want InProgress", retrieved.Status)
 	}
+	// H-3 regression: the round counter must NOT advance until the round's
+	// results are actually recorded.
+	if retrieved.CurrentRound != 0 {
+		t.Errorf("CurrentRound = %d, want 0 (advances only on RecordRoundResults)", retrieved.CurrentRound)
+	}
+	// C-2 regression: round races carry no purse — the prize pool is paid
+	// exactly once, at tournament completion.
+	if race.Purse != 0 {
+		t.Errorf("round race purse = %d, want 0 (prize pool must only be paid once at the end)", race.Purse)
+	}
+
+	race = racussy.SimulateRace(race, horses)
+	if _, err := tm.RecordRoundResults(tournament.ID, race); err != nil {
+		t.Fatalf("RecordRoundResults error: %v", err)
+	}
+	retrieved, _ = tm.GetTournament(tournament.ID)
 	if retrieved.CurrentRound != 1 {
-		t.Errorf("CurrentRound = %d, want 1", retrieved.CurrentRound)
+		t.Errorf("CurrentRound after recording = %d, want 1", retrieved.CurrentRound)
 	}
 }
 
@@ -654,13 +670,65 @@ func TestRunNextRound_AllRoundsComplete(t *testing.T) {
 		tm.RegisterHorse(tournament.ID, h, "s1")
 	}
 
-	// Run first (and only) round
-	tm.RunNextRound(tournament.ID, horses)
+	// Run first (and only) round and record its results — the round counter
+	// only advances when results are recorded (H-3).
+	race, _ := tm.RunNextRound(tournament.ID, horses)
+	race = racussy.SimulateRace(race, horses)
+	if _, err := tm.RecordRoundResults(tournament.ID, race); err != nil {
+		t.Fatalf("RecordRoundResults error: %v", err)
+	}
 
 	// Try to run another — should fail
 	_, err := tm.RunNextRound(tournament.ID, horses)
 	if err == nil {
 		t.Error("expected error when all rounds are complete")
+	}
+}
+
+// TestRunNextRound_FailedRoundDoesNotConsumeRoundSlot is the H-3 regression:
+// a round that is simulated but whose results never get recorded (e.g. the
+// record step fails) must not consume a round slot — the tournament should
+// still require the full number of *recorded* rounds before finishing.
+func TestRunNextRound_FailedRoundDoesNotConsumeRoundSlot(t *testing.T) {
+	rh := NewRaceHistory()
+	tm := NewTournamentManager(rh)
+
+	tournament := tm.CreateTournament("Resilient Cup", models.TrackSprintussy, 2, 100)
+	horses := makeTestHorses(4)
+	for _, h := range horses {
+		tm.RegisterHorse(tournament.ID, h, "s1")
+	}
+
+	// Round created but results never recorded (simulating a record failure).
+	if _, err := tm.RunNextRound(tournament.ID, horses); err != nil {
+		t.Fatalf("RunNextRound error: %v", err)
+	}
+	retrieved, _ := tm.GetTournament(tournament.ID)
+	if retrieved.CurrentRound != 0 {
+		t.Fatalf("CurrentRound = %d after unrecorded round, want 0", retrieved.CurrentRound)
+	}
+	if retrieved.Status == "Finished" {
+		t.Fatal("tournament finished without any recorded rounds")
+	}
+
+	// Now play both rounds properly; the tournament must finish only after
+	// two *recorded* rounds.
+	for i := 0; i < 2; i++ {
+		race, err := tm.RunNextRound(tournament.ID, horses)
+		if err != nil {
+			t.Fatalf("RunNextRound round %d error: %v", i+1, err)
+		}
+		race = racussy.SimulateRace(race, horses)
+		if _, err := tm.RecordRoundResults(tournament.ID, race); err != nil {
+			t.Fatalf("RecordRoundResults round %d error: %v", i+1, err)
+		}
+	}
+	retrieved, _ = tm.GetTournament(tournament.ID)
+	if retrieved.CurrentRound != 2 {
+		t.Fatalf("CurrentRound = %d, want 2", retrieved.CurrentRound)
+	}
+	if retrieved.Status != "Finished" {
+		t.Fatalf("Status = %q, want Finished", retrieved.Status)
 	}
 }
 

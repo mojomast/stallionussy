@@ -1456,7 +1456,9 @@ func cmdTournamentRun(state *cliState, args []string) {
 		return
 	}
 
-	fmt.Printf("=== TOURNAMENT ROUND %d: %s ===\n", t.CurrentRound, t.Name)
+	// CurrentRound only advances once results are recorded (H-3), so the
+	// round being played right now is CurrentRound+1.
+	fmt.Printf("=== TOURNAMENT ROUND %d: %s ===\n", t.CurrentRound+1, t.Name)
 
 	// Generate weather and simulate.
 	weather := tournussy.RandomWeatherForTrack(t.TrackType)
