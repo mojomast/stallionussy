@@ -1214,8 +1214,8 @@ func cmdMarket(state *cliState) {
 	fmt.Println("  " + strings.Repeat("-", 80))
 
 	for _, l := range listings {
-		sapphoStr := fmt.Sprintf("%.1f", l.SapphoScore)
-		if math.IsNaN(l.SapphoScore) {
+		sapphoStr := fmt.Sprintf("%.1f", float64(l.SapphoScore))
+		if math.IsNaN(float64(l.SapphoScore)) {
 			sapphoStr = "NaN"
 		}
 		fmt.Printf("  %-30s  %8d  %7s  %s\n",

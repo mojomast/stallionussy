@@ -6853,12 +6853,15 @@ function renderTrackBadge(track) {
 // ─── SAPPHO PIP METER ──────────────────────────────────────────────────────
 function renderSapphoPips(score) {
   const max = 12;
-  const filled = Math.round((score / max) * 12);
+  // E-008's Chosen arrives as null: the pricing algorithm cannot calculate a value.
+  const anomalous = score == null || isNaN(score);
+  const val = anomalous ? 0 : score;
+  const filled = Math.round((val / max) * 12);
   let pips = '';
   for (let i = 0; i < max; i++) {
     pips += `<span class="sappho-pip${i < filled ? ' filled' : ''}"></span>`;
   }
-  return `<div class="sappho-meter">${pips}</div><span style="font-size:9px;color:var(--fg-dim);">${score.toFixed(1)}/${max}</span>`;
+  return `<div class="sappho-meter">${pips}</div><span style="font-size:9px;color:var(--fg-dim);">${anomalous ? 'NaN' : val.toFixed(1)}/${max}</span>`;
 }
 
 // ─── FATIGUE GAUGE ─────────────────────────────────────────────────────────
@@ -6879,11 +6882,14 @@ function renderFatigueGauge(fatigue) {
 // ─── SAPPHO BAR ────────────────────────────────────────────────────────────
 function renderSapphoBar(score) {
   const max = 12;
-  const filled = Math.round((score / max) * 12);
+  // E-008's Chosen arrives as null: the pricing algorithm cannot calculate a value.
+  const anomalous = score == null || isNaN(score);
+  const val = anomalous ? 0 : score;
+  const filled = Math.round((val / max) * 12);
   const empty = 12 - filled;
   const bar = '█'.repeat(filled) + '░'.repeat(empty);
-  const color = score >= 9 ? 'var(--fg-bright)' : score >= 6 ? 'var(--amber)' : 'var(--red)';
-  return `<span class="sappho-bar" style="color:${color}">[${bar}] ${score.toFixed(1)}/${max}</span>`;
+  const color = anomalous ? 'var(--purple)' : val >= 9 ? 'var(--fg-bright)' : val >= 6 ? 'var(--amber)' : 'var(--red)';
+  return `<span class="sappho-bar" style="color:${color}">[${bar}] ${anomalous ? 'NaN' : val.toFixed(1)}/${max}</span>`;
 }
 
 function renderTrackLore(track) {
@@ -8336,7 +8342,7 @@ function renderMarketListings() {
       <div>
         <div style="font-weight:bold;"><a href="#horse/${l.horse_id}">${escHtml(l.horse_name)}</a></div>
         <div style="margin-top:4px;font-size:10px;">
-          <span class="text-dim">SAPPHO:</span> ${renderSapphoPips(l.sappho_score || 0)} ${renderLoreHint('sappho', 'LORE')}
+          <span class="text-dim">SAPPHO:</span> ${renderSapphoPips(l.sappho_score)} ${renderLoreHint('sappho', 'LORE')}
         </div>
         <div class="text-dim" style="font-size:10px;margin-top:4px;">${escHtml(l.pedigree || '—')}</div>
         <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">

@@ -90,7 +90,7 @@ func (m *Market) CreateListing(horse *models.Horse, ownerID string, price int64)
 		OwnerID:     ownerID,
 		Price:       price,
 		Pedigree:    pedigree,
-		SapphoScore: sappho,
+		SapphoScore: models.SapphoScore(sappho),
 		Active:      true,
 		CreatedAt:   time.Now(),
 	}
@@ -148,7 +148,7 @@ func (m *Market) ListActiveListings() []*models.StudListing {
 	}
 
 	sort.Slice(active, func(i, j int) bool {
-		si, sj := active[i].SapphoScore, active[j].SapphoScore
+		si, sj := float64(active[i].SapphoScore), float64(active[j].SapphoScore)
 		// NaN sorts to the bottom — it's unknowable, not worthless.
 		if math.IsNaN(si) && math.IsNaN(sj) {
 			return false

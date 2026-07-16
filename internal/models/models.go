@@ -2,7 +2,11 @@
 // a horse breeding and racing simulator.
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"math"
+	"time"
+)
 
 // ---------------------------------------------------------------------------
 // Gene Types — the seven heritable traits every horse carries
@@ -340,19 +344,45 @@ type Race struct {
 // Stud Market
 // ---------------------------------------------------------------------------
 
+// SapphoScore is a Sappho Scale rating (0–12). E-008's Chosen carries NaN —
+// "the pricing algorithm cannot calculate a value" — which encoding/json
+// refuses to marshal (it kills the entire response), so NaN crosses the wire
+// as null and unmarshals back to NaN.
+type SapphoScore float64
+
+func (s SapphoScore) MarshalJSON() ([]byte, error) {
+	if math.IsNaN(float64(s)) {
+		return []byte("null"), nil
+	}
+	return json.Marshal(float64(s))
+}
+
+func (s *SapphoScore) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*s = SapphoScore(math.NaN())
+		return nil
+	}
+	var f float64
+	if err := json.Unmarshal(data, &f); err != nil {
+		return err
+	}
+	*s = SapphoScore(f)
+	return nil
+}
+
 // StudListing is a marketplace entry advertising a horse for breeding.
 type StudListing struct {
-	ID          string    `json:"id"`
-	HorseID     string    `json:"horse_id"`
-	HorseName   string    `json:"horse_name"`
-	OwnerID     string    `json:"owner_id"`
-	Price       int64     `json:"price"`        // Cost in cummies
-	Pedigree    string    `json:"pedigree"`     // Human-readable lineage summary
-	SapphoScore float64   `json:"sappho_score"` // Quality rating 0-12
-	Active      bool      `json:"active"`
-	TimesUsed   int       `json:"times_used"` // Number of times this stud has been bred via marketplace
-	MaxUses     int       `json:"max_uses"`   // 0 = unlimited; otherwise deactivate after this many uses
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string      `json:"id"`
+	HorseID     string      `json:"horse_id"`
+	HorseName   string      `json:"horse_name"`
+	OwnerID     string      `json:"owner_id"`
+	Price       int64       `json:"price"`        // Cost in cummies
+	Pedigree    string      `json:"pedigree"`     // Human-readable lineage summary
+	SapphoScore SapphoScore `json:"sappho_score"` // Quality rating 0-12; NaN for E-008's Chosen
+	Active      bool        `json:"active"`
+	TimesUsed   int         `json:"times_used"` // Number of times this stud has been bred via marketplace
+	MaxUses     int         `json:"max_uses"`   // 0 = unlimited; otherwise deactivate after this many uses
+	CreatedAt   time.Time   `json:"created_at"`
 }
 
 // ---------------------------------------------------------------------------

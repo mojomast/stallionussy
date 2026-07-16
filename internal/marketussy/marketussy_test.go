@@ -1,7 +1,9 @@
 package marketussy
 
 import (
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/mojomast/stallionussy/internal/models"
@@ -708,5 +710,57 @@ func TestELOUpdate_Symmetry(t *testing.T) {
 	if math.Abs(winDelta+loseDelta) > 0.01 {
 		t.Errorf("ELO not zero-sum: winDelta=%v, loseDelta=%v, sum=%v",
 			winDelta, loseDelta, winDelta+loseDelta)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// E-008's Chosen JSON safety
+// ---------------------------------------------------------------------------
+
+// TestListingWithE008ChosenMarshalsToJSON guards the /api/market response
+// against E-008's Chosen (LotNumber 6), whose Sappho Score is deliberately
+// NaN. encoding/json refuses to marshal NaN, which used to kill the entire
+// market response for every player whenever such a horse was listed. The
+// score must cross the wire as null and come back as NaN.
+func TestListingWithE008ChosenMarshalsToJSON(t *testing.T) {
+	m := NewMarket()
+	chosen := makeTestHorse("e008", "E-008's Chosen", "owner1")
+	chosen.LotNumber = 6
+
+	listing, err := m.CreateListing(chosen, "owner1", 6666)
+	if err != nil {
+		t.Fatalf("CreateListing: %v", err)
+	}
+	if !math.IsNaN(float64(listing.SapphoScore)) {
+		t.Fatalf("E-008's Chosen should have a NaN Sappho Score, got %v", listing.SapphoScore)
+	}
+
+	data, err := json.Marshal(m.ListActiveListings())
+	if err != nil {
+		t.Fatalf("market response with E-008's Chosen must marshal, got: %v", err)
+	}
+	if !strings.Contains(string(data), `"sappho_score":null`) {
+		t.Errorf("NaN Sappho Score should serialize as null, got: %s", data)
+	}
+
+	var back []models.StudListing
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("round-trip unmarshal: %v", err)
+	}
+	if !math.IsNaN(float64(back[0].SapphoScore)) {
+		t.Errorf("null sappho_score should unmarshal back to NaN, got %v", back[0].SapphoScore)
+	}
+
+	// A normal horse's score must remain a plain JSON number.
+	normal := makeTestHorse("h2", "Ordinary Horseussy", "owner2")
+	if _, err := m.CreateListing(normal, "owner2", 500); err != nil {
+		t.Fatalf("CreateListing: %v", err)
+	}
+	data, err = json.Marshal(m.ListActiveListings())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"sappho_score":null`) || strings.Count(string(data), `"sappho_score":`) != 2 {
+		t.Errorf("expected one null and one numeric sappho_score, got: %s", data)
 	}
 }
