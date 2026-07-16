@@ -273,6 +273,38 @@ func (sm *StableManager) UpdateHorseStats(horseID string, wins, losses, races in
 	return nil
 }
 
+// SyncHorse copies the given horse's full state onto the canonical registry
+// entry and the owning stable's roster slice. This is the safe way to
+// propagate mutations made through a potentially stale pointer — e.g. one
+// obtained via GetHorse *before* AddHorseToStable appended to (and thereby
+// reallocated) the stable's Horses slice, which re-points the registry into
+// the new backing array and orphans the old pointer.
+//
+// Unlike UpdateHorseStats (which only propagates Wins/Losses/Races/ELO),
+// SyncHorse propagates every mutable field (LastBredAt, RetiredChampion,
+// Fatigue, traits, injuries, ...). Returns an error if the horse is not
+// registered.
+func (sm *StableManager) SyncHorse(horse *models.Horse) error {
+	if horse == nil {
+		return fmt.Errorf("horse must not be nil")
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	live, ok := sm.horses[horse.ID]
+	if !ok {
+		return fmt.Errorf("horse not found: %s", horse.ID)
+	}
+	// If the caller holds an orphaned copy (pointer into a reallocated
+	// backing array), copy its state onto the live registry entry.
+	if live != horse {
+		*live = *horse
+	}
+	sm.syncHorseToStable(live)
+	return nil
+}
+
 // syncHorseToStable propagates a horse's current state back into its parent
 // stable's Horses slice. Must be called while holding sm.mu (write lock).
 func (sm *StableManager) syncHorseToStable(horse *models.Horse) {

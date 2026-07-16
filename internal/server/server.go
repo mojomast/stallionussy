@@ -1803,12 +1803,20 @@ func (s *Server) addEarningsToStable(horse *models.Horse, earnings int64) {
 	}
 }
 
-// syncHorseToStable triggers the stable manager to update the embedded horse
-// in the stable's horse slice. We call UpdateHorseStats with zero deltas
-// to trigger the sync, since the horse pointer is already mutated.
+// syncHorseToStable propagates the full state of the given horse pointer onto
+// the live registry entry and the stable's embedded horse slice.
+//
+// BUG FIX (C-5): this previously called UpdateHorseStats with zero deltas,
+// which only propagated ELO. Any pointer obtained via GetHorse *before* a
+// subsequent AddHorseToStable (which reallocates the stable's Horses slice
+// and re-registers pointers) became an orphaned copy — fields like
+// LastBredAt written through it never reached the live registry horse,
+// making breeding cooldowns bypassable. SyncHorse copies every field onto
+// the canonical entry.
 func (s *Server) syncHorseToStable(horse *models.Horse) {
-	// UpdateHorseStats with zero deltas just syncs the horse to the stable.
-	_ = s.stables.UpdateHorseStats(horse.ID, 0, 0, 0, horse.ELO)
+	if err := s.stables.SyncHorse(horse); err != nil {
+		log.Printf("server: failed to sync horse %s to stable: %v", horse.ID, err)
+	}
 }
 
 // getStableForUser finds the stable owned by a given user ID.

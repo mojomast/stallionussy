@@ -2,6 +2,7 @@ package stableussy
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mojomast/stallionussy/internal/models"
@@ -646,5 +647,112 @@ func TestUpdateHorseStats_NotFound(t *testing.T) {
 	err := sm.UpdateHorseStats("ghost", 1, 0, 1, 1300)
 	if err == nil {
 		t.Fatal("expected error for missing horse")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SyncHorse — regression tests for FABLE finding C-5 (breeding cooldown
+// bypass via pointer/value divergence)
+// ---------------------------------------------------------------------------
+
+// TestSyncHorse_PropagatesFieldsFromOrphanedPointer reproduces the C-5 bug
+// mechanism: a pointer obtained via GetHorse becomes orphaned when a later
+// AddHorseToStable reallocates the stable's Horses slice. Writes through the
+// orphaned pointer (e.g. LastBredAt after breeding) must still reach the live
+// registry entry once SyncHorse is called.
+func TestSyncHorse_PropagatesFieldsFromOrphanedPointer(t *testing.T) {
+	sm := NewStableManager()
+	stable := sm.CreateStable("Cooldown Ranch", "owner-1")
+
+	sire := makeTestHorse("Sire Prime", 1200)
+	if err := sm.AddHorseToStable(stable.ID, sire); err != nil {
+		t.Fatalf("AddHorseToStable(sire): %v", err)
+	}
+
+	// Grab the live pointer, exactly like handleBreed does before breeding.
+	sirePtr, err := sm.GetHorse(sire.ID)
+	if err != nil {
+		t.Fatalf("GetHorse: %v", err)
+	}
+
+	// Adding more horses appends to stable.Horses, eventually reallocating
+	// the backing array and orphaning sirePtr. Add enough to guarantee at
+	// least one reallocation regardless of append's growth strategy.
+	for i := 0; i < 32; i++ {
+		foal := makeTestHorse("Foal", 1000)
+		if err := sm.AddHorseToStable(stable.ID, foal); err != nil {
+			t.Fatalf("AddHorseToStable(foal %d): %v", i, err)
+		}
+	}
+
+	// Write the breeding cooldown through the (now orphaned) pointer, then
+	// sync — this is the exact sequence handleBreed performs.
+	bredAt := time.Now()
+	sirePtr.LastBredAt = bredAt
+	sirePtr.RetiredChampion = true
+	if err := sm.SyncHorse(sirePtr); err != nil {
+		t.Fatalf("SyncHorse: %v", err)
+	}
+
+	// The live registry entry must see the cooldown.
+	live, err := sm.GetHorse(sire.ID)
+	if err != nil {
+		t.Fatalf("GetHorse after sync: %v", err)
+	}
+	if live.LastBredAt.IsZero() {
+		t.Fatal("LastBredAt is zero on the live registry horse — breeding cooldown was lost (C-5)")
+	}
+	if !live.LastBredAt.Equal(bredAt) {
+		t.Fatalf("LastBredAt = %v, want %v", live.LastBredAt, bredAt)
+	}
+	if !live.RetiredChampion {
+		t.Fatal("RetiredChampion was not propagated to the live registry horse")
+	}
+
+	// The stable's embedded horse slice must also see the cooldown.
+	st, err := sm.GetStable(stable.ID)
+	if err != nil {
+		t.Fatalf("GetStable: %v", err)
+	}
+	found := false
+	for i := range st.Horses {
+		if st.Horses[i].ID == sire.ID {
+			found = true
+			if st.Horses[i].LastBredAt.IsZero() {
+				t.Fatal("LastBredAt is zero in the stable's Horses slice")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("sire not found in stable roster")
+	}
+}
+
+func TestSyncHorse_LivePointerIsNoOpSafe(t *testing.T) {
+	sm := NewStableManager()
+	stable := sm.CreateStable("Ranch", "owner-1")
+	horse := makeTestHorse("Solo", 1200)
+	if err := sm.AddHorseToStable(stable.ID, horse); err != nil {
+		t.Fatalf("AddHorseToStable: %v", err)
+	}
+
+	live, _ := sm.GetHorse(horse.ID)
+	live.LastBredAt = time.Now()
+	if err := sm.SyncHorse(live); err != nil {
+		t.Fatalf("SyncHorse with live pointer: %v", err)
+	}
+	again, _ := sm.GetHorse(horse.ID)
+	if again.LastBredAt.IsZero() {
+		t.Fatal("LastBredAt lost when syncing a live pointer")
+	}
+}
+
+func TestSyncHorse_NotFound(t *testing.T) {
+	sm := NewStableManager()
+	if err := sm.SyncHorse(makeTestHorse("Ghost", 1200)); err == nil {
+		t.Fatal("expected error for unregistered horse")
+	}
+	if err := sm.SyncHorse(nil); err == nil {
+		t.Fatal("expected error for nil horse")
 	}
 }
