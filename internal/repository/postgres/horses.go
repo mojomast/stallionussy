@@ -30,7 +30,7 @@ const horseCols = `
 	fitness_ceiling, current_fitness, wins, losses, races,
 	elo, owner_id, is_legendary, lot_number, created_at,
 	lore, traits, fatigue, retired, total_earnings,
-	training_xp, peak_elo, injury`
+	training_xp, peak_elo, injury, retired_champion, last_bred_at`
 
 // scanHorse scans a single horse row from the given scanner. Genome and Traits
 // are stored as JSONB and unmarshalled here.
@@ -43,6 +43,7 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 		sireID     sql.NullString
 		mareID     sql.NullString
 		lore       sql.NullString
+		lastBredAt sql.NullTime
 	)
 
 	err := sc.Scan(
@@ -71,9 +72,14 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 		&h.TrainingXP,
 		&h.PeakELO,
 		&injuryJSON,
+		&h.RetiredChampion,
+		&lastBredAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if lastBredAt.Valid {
+		h.LastBredAt = lastBredAt.Time
 	}
 
 	// Unmarshal JSONB genome.
@@ -117,6 +123,15 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 	return h, nil
 }
 
+// nullableHorseTime converts a zero time to a NULL, so unbred horses keep a
+// NULL last_bred_at instead of a bogus zero timestamp.
+func nullableHorseTime(t time.Time) sql.NullTime {
+	if t.IsZero() {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: t, Valid: true}
+}
+
 // toNullString converts an empty string to sql.NullString{Valid: false}.
 func toNullString(s string) sql.NullString {
 	if s == "" {
@@ -149,13 +164,13 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 			fitness_ceiling, current_fitness, wins, losses, races,
 			elo, owner_id, is_legendary, lot_number, created_at,
 			lore, traits, fatigue, retired, total_earnings,
-			training_xp, peak_elo, injury
+			training_xp, peak_elo, injury, retired_champion, last_bred_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10, $11, $12,
 			$13, $14, $15, $16, $17,
 			$18, $19, $20, $21, $22,
-			$23, $24, $25
+			$23, $24, $25, $26, $27
 		)`
 	_, err = r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -183,6 +198,8 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 		horse.TrainingXP,
 		horse.PeakELO,
 		injuryJSON,
+		horse.RetiredChampion,
+		nullableHorseTime(horse.LastBredAt),
 	)
 	if err != nil {
 		return fmt.Errorf("create horse: %w", err)
@@ -275,7 +292,7 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 			elo = $13, owner_id = $14, is_legendary = $15, lot_number = $16,
 			lore = $17, traits = $18, fatigue = $19, retired = $20,
 			total_earnings = $21, training_xp = $22, peak_elo = $23,
-			injury = $24
+			injury = $24, retired_champion = $25, last_bred_at = $26
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -302,6 +319,8 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 		horse.TrainingXP,
 		horse.PeakELO,
 		injuryJSON,
+		horse.RetiredChampion,
+		nullableHorseTime(horse.LastBredAt),
 	)
 	if err != nil {
 		return fmt.Errorf("update horse: %w", err)
@@ -335,8 +354,17 @@ func (r *HorseRepo) DeleteHorse(ctx context.Context, id string) error {
 
 // MoveHorse atomically transfers a horse from one stable to another.
 // It verifies the horse currently belongs to fromStableID before moving.
+//
+// BUG FIX (C-4): horses.owner_id stores USER IDs, not stable IDs, so the
+// stable IDs passed by callers must be resolved to their owners via the
+// stables table — the old query compared stable IDs against user IDs,
+// matched zero rows, and always failed.
 func (r *HorseRepo) MoveHorse(ctx context.Context, horseID, fromStableID, toStableID string) error {
-	query := `UPDATE horses SET owner_id = $1 WHERE id = $2 AND owner_id = $3`
+	query := `
+		UPDATE horses
+		SET owner_id = (SELECT owner_id FROM stables WHERE id = $1)
+		WHERE id = $2
+		  AND owner_id = (SELECT owner_id FROM stables WHERE id = $3)`
 	result, err := r.db.db.ExecContext(ctx, query, toStableID, horseID, fromStableID)
 	if err != nil {
 		return fmt.Errorf("move horse: %w", err)

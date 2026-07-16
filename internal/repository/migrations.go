@@ -458,6 +458,63 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAUL
 -- Tournament organizer (H-4: organizer-only round advancement)
 -- ===========================================================================
 ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
+
+-- ===========================================================================
+-- Horse breeding cooldown & champion flag (H-7)
+-- Previously RAM-only: restarts reset breeding cooldowns and dropped the
+-- retired-champion flag that drives the foal breeding bonus.
+-- ===========================================================================
+ALTER TABLE horses ADD COLUMN IF NOT EXISTS retired_champion BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE horses ADD COLUMN IF NOT EXISTS last_bred_at TIMESTAMPTZ;
+
+-- ===========================================================================
+-- Stud listing use limits (H-8)
+-- Previously RAM-only: a maxed-out stud came back active with 0 uses after
+-- every restart.
+-- ===========================================================================
+ALTER TABLE stud_listings ADD COLUMN IF NOT EXISTS times_used INT NOT NULL DEFAULT 0;
+ALTER TABLE stud_listings ADD COLUMN IF NOT EXISTS max_uses INT NOT NULL DEFAULT 0;
+
+-- ===========================================================================
+-- Market transaction seller payout (H-9)
+-- ===========================================================================
+ALTER TABLE market_transactions ADD COLUMN IF NOT EXISTS seller_payout BIGINT NOT NULL DEFAULT 0;
+
+-- ===========================================================================
+-- Texas Hold'em poker table state (H-10)
+-- Previously only the 13 legacy draw-poker columns persisted, so an
+-- in-progress Hold'em hand reloaded as a corrupted draw table.
+-- ===========================================================================
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS game_type TEXT NOT NULL DEFAULT 'draw';
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS community_cards JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS small_blind BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS big_blind BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS current_bet BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS dealer_seat INT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_seat INT NOT NULL DEFAULT -1;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS min_raise BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS side_pots JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS hand_round INT NOT NULL DEFAULT 0;
+ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_deadline TIMESTAMPTZ;
+
+-- ===========================================================================
+-- Balance floors (C-9)
+-- The write-through persistence blasts absolute in-memory balances at the
+-- database, so a single missed in-process check could persist a negative
+-- balance. Floor any legacy negatives, then enforce non-negativity at the
+-- database layer as a last line of defense against double spends.
+-- ===========================================================================
+UPDATE stables SET cummies = 0 WHERE cummies < 0;
+UPDATE stables SET casino_chips = 0 WHERE casino_chips < 0;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stables_cummies_nonnegative') THEN
+        ALTER TABLE stables ADD CONSTRAINT stables_cummies_nonnegative CHECK (cummies >= 0);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stables_casino_chips_nonnegative') THEN
+        ALTER TABLE stables ADD CONSTRAINT stables_casino_chips_nonnegative CHECK (casino_chips >= 0);
+    END IF;
+END $$;
 `
 
 // RunMigrations executes the schema DDL against the provided database

@@ -26,15 +26,20 @@ import (
 // this call — this method only touches the database.
 func (d *DB) AcceptTradeAtomically(ctx context.Context, trade *models.TradeOffer) error {
 	return d.WithTx(ctx, func(tx *sql.Tx) error {
-		// 1. Update trade status to "accepted".
-		_, err := tx.ExecContext(ctx, `
+		// 1. Update trade status to "accepted". Guard on the previous status
+		// (H-2): a trade that no longer exists or was already accepted must
+		// abort the whole transaction before any money moves.
+		res, err := tx.ExecContext(ctx, `
 			UPDATE trade_offers
 			SET status = $2, updated_at = $3
-			WHERE id = $1`,
+			WHERE id = $1 AND status = 'Pending'`,
 			trade.ID, trade.Status, trade.UpdatedAt,
 		)
 		if err != nil {
 			return fmt.Errorf("update trade status: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("trade %s not found or no longer pending", trade.ID)
 		}
 
 		// 2. Transfer cummies: deduct from buyer (ToStable), credit seller (FromStable).
@@ -51,7 +56,7 @@ func (d *DB) AcceptTradeAtomically(ctx context.Context, trade *models.TradeOffer
 				return fmt.Errorf("buyer stable %s has insufficient cummies for trade", trade.ToStableID)
 			}
 
-			_, err = tx.ExecContext(ctx, `
+			res, err = tx.ExecContext(ctx, `
 				UPDATE stables SET cummies = cummies + $1
 				WHERE id = $2`,
 				trade.Price, trade.FromStableID,
@@ -59,12 +64,26 @@ func (d *DB) AcceptTradeAtomically(ctx context.Context, trade *models.TradeOffer
 			if err != nil {
 				return fmt.Errorf("credit cummies to seller: %w", err)
 			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("seller stable %s not found", trade.FromStableID)
+			}
 		}
 
 		// 3. Move horse from seller stable to buyer stable.
-		res, err := tx.ExecContext(ctx, `
-			UPDATE horses SET owner_id = $1
-			WHERE id = $2 AND owner_id = $3`,
+		//
+		// BUG FIX (C-4): horses.owner_id stores USER IDs, not stable IDs (see
+		// stableussy.AddHorseToStable and the hydration query, which lists
+		// horses by the stable's OwnerID). The old query filtered and wrote
+		// stable IDs, matched zero rows, and rolled back the ENTIRE
+		// transaction — while the in-memory trade had already completed. On
+		// restart the DB still showed the trade Pending with the buyer's
+		// cummies intact and the horse unmoved: duplication. Resolve the
+		// stable IDs to their owners' user IDs inside the transaction.
+		res, err = tx.ExecContext(ctx, `
+			UPDATE horses
+			SET owner_id = (SELECT owner_id FROM stables WHERE id = $1)
+			WHERE id = $2
+			  AND owner_id = (SELECT owner_id FROM stables WHERE id = $3)`,
 			trade.ToStableID, trade.HorseID, trade.FromStableID,
 		)
 		if err != nil {
@@ -79,21 +98,29 @@ func (d *DB) AcceptTradeAtomically(ctx context.Context, trade *models.TradeOffer
 }
 
 // SettleAuctionAtomically performs the entire auction settlement flow inside a
-// single database transaction: update auction status, pay the seller (minus
-// tax), and move the horse from seller to buyer. If any step fails the entire
-// operation is rolled back.
+// single database transaction: update auction status, commit the seller's and
+// buyer's final balances, and move the horse from seller to buyer. If any step
+// fails the entire operation is rolled back.
+//
+// BUG FIX (H-1): the buyer's balance is now written inside the same
+// transaction as the seller's credit. The buyer's escrow happens in memory at
+// bid time with a best-effort persist; if that persist was lost, the old
+// settlement minted the seller payout from nothing. Writing both final
+// balances atomically (matching the write-through architecture, where the
+// in-memory state is the source of truth) closes that hole. All statements
+// now check RowsAffected, and the status update is guarded so an auction can
+// only be settled once.
 //
 // Parameters:
 //   - auction: the auction being settled (already mutated with final status, tax, etc.)
-//   - sellerStableID: the seller's stable ID
-//   - buyerStableID: the buyer's stable ID
-//   - sellerPayout: the amount credited to the seller (bid minus tax)
+//   - sellerStableID / sellerFinalBalance: seller stable and its post-payout balance
+//   - buyerStableID / buyerFinalBalance: buyer stable and its post-escrow balance
 //   - newOwnerID: the buyer's user ID to set on the horse
 func (d *DB) SettleAuctionAtomically(
 	ctx context.Context,
 	auction *models.Auction,
-	sellerStableID, buyerStableID string,
-	sellerPayout int64,
+	sellerStableID string, sellerFinalBalance int64,
+	buyerStableID string, buyerFinalBalance int64,
 	newOwnerID string,
 ) error {
 	bidHistoryJSON, err := json.Marshal(auction.BidHistory)
@@ -106,13 +133,14 @@ func (d *DB) SettleAuctionAtomically(
 	}
 
 	return d.WithTx(ctx, func(tx *sql.Tx) error {
-		// 1. Update auction status to "sold" with tax info.
-		_, err := tx.ExecContext(ctx, `
+		// 1. Update auction status to "sold" with tax info. Guarded on the
+		// previous status so a settlement can never be applied twice (H-1).
+		res, err := tx.ExecContext(ctx, `
 			UPDATE auctions SET
 				status = $2, current_bid = $3, bidder_id = $4,
 				bidder_name = $5, bid_count = $6, bid_history = $7,
 				completed_at = $8, geoffrussy_tax = $9
-			WHERE id = $1`,
+			WHERE id = $1 AND status IN ('open', 'ending')`,
 			auction.ID,
 			auction.Status,
 			auction.CurrentBid,
@@ -126,28 +154,53 @@ func (d *DB) SettleAuctionAtomically(
 		if err != nil {
 			return fmt.Errorf("update auction: %w", err)
 		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("auction %s not found or already settled", auction.ID)
+		}
 
-		// 2. Credit the seller (payout = bid - tax).
-		if sellerPayout > 0 && sellerStableID != "" {
-			_, err = tx.ExecContext(ctx, `
-				UPDATE stables SET cummies = cummies + $1
+		// 2. Commit the seller's final balance (includes the payout applied
+		// in memory by the caller).
+		if sellerStableID != "" {
+			res, err = tx.ExecContext(ctx, `
+				UPDATE stables SET cummies = $1
 				WHERE id = $2`,
-				sellerPayout, sellerStableID,
+				sellerFinalBalance, sellerStableID,
 			)
 			if err != nil {
 				return fmt.Errorf("credit seller: %w", err)
 			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("seller stable %s not found", sellerStableID)
+			}
 		}
 
-		// 3. Move the horse to the buyer's stable and update owner.
+		// 3. Commit the buyer's final balance (reflects the bid escrow).
 		if buyerStableID != "" {
-			_, err = tx.ExecContext(ctx, `
+			res, err = tx.ExecContext(ctx, `
+				UPDATE stables SET cummies = $1
+				WHERE id = $2`,
+				buyerFinalBalance, buyerStableID,
+			)
+			if err != nil {
+				return fmt.Errorf("debit buyer: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("buyer stable %s not found", buyerStableID)
+			}
+		}
+
+		// 4. Move the horse to the buyer's stable and update owner.
+		if buyerStableID != "" {
+			res, err = tx.ExecContext(ctx, `
 				UPDATE horses SET owner_id = $1
 				WHERE id = $2`,
 				newOwnerID, auction.HorseID,
 			)
 			if err != nil {
 				return fmt.Errorf("move horse to buyer: %w", err)
+			}
+			if n, _ := res.RowsAffected(); n == 0 {
+				return fmt.Errorf("auction horse %s not found", auction.HorseID)
 			}
 		}
 

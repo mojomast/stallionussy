@@ -24,15 +24,15 @@ func NewMarketTransactionRepo(db *DB) *MarketTransactionRepo {
 // txCols is the canonical column list for market_transactions queries.
 const txCols = `
 	id, listing_id, buyer_id, seller_id, price,
-	burn_amount, foal_id, created_at`
+	burn_amount, seller_payout, foal_id, created_at`
 
 // SaveTransaction persists a completed market transaction.
 func (r *MarketTransactionRepo) SaveTransaction(ctx context.Context, tx *models.MarketTransaction) error {
 	query := `
 		INSERT INTO market_transactions (
 			id, listing_id, buyer_id, seller_id, price,
-			burn_amount, foal_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+			burn_amount, seller_payout, foal_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err := r.db.db.ExecContext(ctx, query,
 		tx.ID,
 		tx.ListingID,
@@ -40,6 +40,7 @@ func (r *MarketTransactionRepo) SaveTransaction(ctx context.Context, tx *models.
 		tx.SellerID,
 		tx.Price,
 		tx.BurnAmount,
+		tx.SellerPayout,
 		tx.FoalID,
 		tx.CreatedAt,
 	)
@@ -105,6 +106,7 @@ func scanMarketTransaction(sc interface{ Scan(dest ...any) error }) (*models.Mar
 		&t.SellerID,
 		&t.Price,
 		&t.BurnAmount,
+		&t.SellerPayout,
 		&t.FoalID,
 		&t.CreatedAt,
 	)

@@ -27,8 +27,8 @@ func (r *MarketRepo) CreateListing(ctx context.Context, listing *models.StudList
 	query := `
 		INSERT INTO stud_listings (
 			id, horse_id, horse_name, owner_id, price,
-			pedigree, sappho_score, active, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+			pedigree, sappho_score, active, times_used, max_uses, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
 	_, err := r.db.db.ExecContext(ctx, query,
 		listing.ID,
 		listing.HorseID,
@@ -38,6 +38,8 @@ func (r *MarketRepo) CreateListing(ctx context.Context, listing *models.StudList
 		listing.Pedigree,
 		listing.SapphoScore,
 		listing.Active,
+		listing.TimesUsed,
+		listing.MaxUses,
 		listing.CreatedAt,
 	)
 	if err != nil {
@@ -50,7 +52,7 @@ func (r *MarketRepo) CreateListing(ctx context.Context, listing *models.StudList
 func (r *MarketRepo) GetListing(ctx context.Context, id string) (*models.StudListing, error) {
 	query := `
 		SELECT id, horse_id, horse_name, owner_id, price,
-			pedigree, sappho_score, active, created_at
+			pedigree, sappho_score, active, times_used, max_uses, created_at
 		FROM stud_listings WHERE id = $1`
 	l := &models.StudListing{}
 	var pedigree sql.NullString
@@ -63,6 +65,8 @@ func (r *MarketRepo) GetListing(ctx context.Context, id string) (*models.StudLis
 		&pedigree,
 		&l.SapphoScore,
 		&l.Active,
+		&l.TimesUsed,
+		&l.MaxUses,
 		&l.CreatedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -79,7 +83,7 @@ func (r *MarketRepo) GetListing(ctx context.Context, id string) (*models.StudLis
 func (r *MarketRepo) ListActiveListings(ctx context.Context) ([]*models.StudListing, error) {
 	query := `
 		SELECT id, horse_id, horse_name, owner_id, price,
-			pedigree, sappho_score, active, created_at
+			pedigree, sappho_score, active, times_used, max_uses, created_at
 		FROM stud_listings WHERE active = true ORDER BY created_at DESC`
 	rows, err := r.db.db.QueryContext(ctx, query)
 	if err != nil {
@@ -100,6 +104,8 @@ func (r *MarketRepo) ListActiveListings(ctx context.Context) ([]*models.StudList
 			&pedigree,
 			&l.SapphoScore,
 			&l.Active,
+			&l.TimesUsed,
+			&l.MaxUses,
 			&l.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("list active listings scan: %w", err)
@@ -118,7 +124,8 @@ func (r *MarketRepo) UpdateListing(ctx context.Context, listing *models.StudList
 	query := `
 		UPDATE stud_listings SET
 			horse_id = $2, horse_name = $3, owner_id = $4, price = $5,
-			pedigree = $6, sappho_score = $7, active = $8
+			pedigree = $6, sappho_score = $7, active = $8,
+			times_used = $9, max_uses = $10
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		listing.ID,
@@ -129,6 +136,8 @@ func (r *MarketRepo) UpdateListing(ctx context.Context, listing *models.StudList
 		listing.Pedigree,
 		listing.SapphoScore,
 		listing.Active,
+		listing.TimesUsed,
+		listing.MaxUses,
 	)
 	if err != nil {
 		return fmt.Errorf("update listing: %w", err)

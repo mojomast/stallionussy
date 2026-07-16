@@ -7710,10 +7710,20 @@ func (s *Server) auctionExpiryLoop(ctx context.Context) {
 				}
 
 				// Write-through: persist auction settlement atomically (auction
-				// status + seller payment + horse transfer in one DB tx).
+				// status + seller payment + buyer escrow + horse transfer in
+				// one DB tx, H-1). The final balances are snapshotted under
+				// the respective stable locks.
 				if s.pgDB != nil && buyerStable != nil && sellerStable != nil {
 					newOwnerID := buyerStable.OwnerID
-					if err := s.pgDB.SettleAuctionAtomically(ctx, auction, sellerStable.ID, buyerStable.ID, sellerPayout, newOwnerID); err != nil {
+					sellerMu := s.stableMu(sellerStable.ID)
+					sellerMu.Lock()
+					sellerBalance := sellerStable.Cummies
+					sellerMu.Unlock()
+					buyerMu := s.stableMu(buyerStable.ID)
+					buyerMu.Lock()
+					buyerBalance := buyerStable.Cummies
+					buyerMu.Unlock()
+					if err := s.pgDB.SettleAuctionAtomically(ctx, auction, sellerStable.ID, sellerBalance, buyerStable.ID, buyerBalance, newOwnerID); err != nil {
 						log.Printf("server: atomic auction settlement failed for %s: %v", auction.ID, err)
 					}
 				} else {

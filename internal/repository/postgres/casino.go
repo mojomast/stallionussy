@@ -21,11 +21,16 @@ func NewCasinoRepo(db *DB) *CasinoRepo {
 	return &CasinoRepo{db: db}
 }
 
+// scanPokerTable scans a full poker table row, including the Hold'em fields
+// (H-10): game_type, community cards, blinds, seat pointers, side pots, hand
+// round and action deadline. These used to be dropped on every DB round-trip,
+// so a restart corrupted any in-progress Hold'em hand into a legacy draw
+// table with the players' chips already deducted.
 func scanPokerTable(sc interface{ Scan(dest ...any) error }) (*models.PokerTable, error) {
 	t := &models.PokerTable{}
-	var seatsJSON, logJSON []byte
+	var seatsJSON, logJSON, communityJSON, sidePotsJSON []byte
 	var deckSeed int64
-	var startedAt sql.NullTime
+	var startedAt, actionDeadline sql.NullTime
 	err := sc.Scan(
 		&t.ID,
 		&t.Name,
@@ -41,6 +46,17 @@ func scanPokerTable(sc interface{ Scan(dest ...any) error }) (*models.PokerTable
 		&startedAt,
 		&t.CreatedAt,
 		&t.UpdatedAt,
+		&t.GameType,
+		&communityJSON,
+		&t.SmallBlind,
+		&t.BigBlind,
+		&t.CurrentBet,
+		&t.DealerSeat,
+		&t.ActionSeat,
+		&t.MinRaise,
+		&sidePotsJSON,
+		&t.Round,
+		&actionDeadline,
 	)
 	if err != nil {
 		return nil, err
@@ -56,8 +72,21 @@ func scanPokerTable(sc interface{ Scan(dest ...any) error }) (*models.PokerTable
 			return nil, fmt.Errorf("unmarshal poker log: %w", err)
 		}
 	}
+	if len(communityJSON) > 0 {
+		if err := json.Unmarshal(communityJSON, &t.CommunityCards); err != nil {
+			return nil, fmt.Errorf("unmarshal community cards: %w", err)
+		}
+	}
+	if len(sidePotsJSON) > 0 {
+		if err := json.Unmarshal(sidePotsJSON, &t.SidePots); err != nil {
+			return nil, fmt.Errorf("unmarshal side pots: %w", err)
+		}
+	}
 	if startedAt.Valid {
 		t.StartedAt = startedAt.Time
+	}
+	if actionDeadline.Valid {
+		t.ActionDeadline = actionDeadline.Time
 	}
 	if t.Seats == nil {
 		t.Seats = []models.PokerSeat{}
@@ -68,23 +97,43 @@ func scanPokerTable(sc interface{ Scan(dest ...any) error }) (*models.PokerTable
 	return t, nil
 }
 
-func (r *CasinoRepo) CreatePokerTable(ctx context.Context, table *models.PokerTable) error {
-	seatsJSON, err := json.Marshal(table.Seats)
-	if err != nil {
-		return fmt.Errorf("marshal poker seats: %w", err)
+// marshalPokerTableJSON marshals the JSONB payloads shared by the create and
+// update statements.
+func marshalPokerTableJSON(table *models.PokerTable) (seats, log, community, sidePots []byte, err error) {
+	if seats, err = json.Marshal(table.Seats); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("marshal poker seats: %w", err)
 	}
-	logJSON, err := json.Marshal(table.Log)
+	if log, err = json.Marshal(table.Log); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("marshal poker log: %w", err)
+	}
+	if community, err = json.Marshal(table.CommunityCards); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("marshal community cards: %w", err)
+	}
+	if sidePots, err = json.Marshal(table.SidePots); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("marshal side pots: %w", err)
+	}
+	return seats, log, community, sidePots, nil
+}
+
+func (r *CasinoRepo) CreatePokerTable(ctx context.Context, table *models.PokerTable) error {
+	seatsJSON, logJSON, communityJSON, sidePotsJSON, err := marshalPokerTableJSON(table)
 	if err != nil {
-		return fmt.Errorf("marshal poker log: %w", err)
+		return err
 	}
 	_, err = r.db.db.ExecContext(ctx, `
 		INSERT INTO poker_tables (
 			id, name, created_by, stake_currency, buy_in, max_players, status,
-			pot, deck_seed, seats, log, started_at, created_at, updated_at
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+			pot, deck_seed, seats, log, started_at, created_at, updated_at,
+			game_type, community_cards, small_blind, big_blind, current_bet,
+			dealer_seat, action_seat, min_raise, side_pots, hand_round, action_deadline
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+			$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 	`, table.ID, table.Name, table.CreatedBy, table.StakeCurrency, table.BuyIn,
 		table.MaxPlayers, table.Status, table.Pot, int64(table.DeckSeed), seatsJSON,
-		logJSON, nullableTime(table.StartedAt), table.CreatedAt, table.UpdatedAt)
+		logJSON, nullableTime(table.StartedAt), table.CreatedAt, table.UpdatedAt,
+		table.GameType, communityJSON, table.SmallBlind, table.BigBlind, table.CurrentBet,
+		table.DealerSeat, table.ActionSeat, table.MinRaise, sidePotsJSON, table.Round,
+		nullableTime(table.ActionDeadline))
 	if err != nil {
 		return fmt.Errorf("create poker table: %w", err)
 	}
@@ -92,7 +141,7 @@ func (r *CasinoRepo) CreatePokerTable(ctx context.Context, table *models.PokerTa
 }
 
 func (r *CasinoRepo) GetPokerTable(ctx context.Context, id string) (*models.PokerTable, error) {
-	query := `SELECT id, name, created_by, stake_currency, buy_in, max_players, status, pot, deck_seed, seats, log, started_at, created_at, updated_at FROM poker_tables WHERE id = $1`
+	query := `SELECT id, name, created_by, stake_currency, buy_in, max_players, status, pot, deck_seed, seats, log, started_at, created_at, updated_at, game_type, community_cards, small_blind, big_blind, current_bet, dealer_seat, action_seat, min_raise, side_pots, hand_round, action_deadline FROM poker_tables WHERE id = $1`
 	t, err := scanPokerTable(r.db.db.QueryRowContext(ctx, query, id))
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("poker table not found: %s", id)
@@ -107,7 +156,7 @@ func (r *CasinoRepo) ListPokerTables(ctx context.Context, limit int) ([]*models.
 	if limit <= 0 {
 		limit = 20
 	}
-	rows, err := r.db.db.QueryContext(ctx, `SELECT id, name, created_by, stake_currency, buy_in, max_players, status, pot, deck_seed, seats, log, started_at, created_at, updated_at FROM poker_tables ORDER BY updated_at DESC LIMIT $1`, limit)
+	rows, err := r.db.db.QueryContext(ctx, `SELECT id, name, created_by, stake_currency, buy_in, max_players, status, pot, deck_seed, seats, log, started_at, created_at, updated_at, game_type, community_cards, small_blind, big_blind, current_bet, dealer_seat, action_seat, min_raise, side_pots, hand_round, action_deadline FROM poker_tables ORDER BY updated_at DESC LIMIT $1`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list poker tables: %w", err)
 	}
@@ -127,23 +176,26 @@ func (r *CasinoRepo) ListPokerTables(ctx context.Context, limit int) ([]*models.
 }
 
 func (r *CasinoRepo) UpdatePokerTable(ctx context.Context, table *models.PokerTable) error {
-	seatsJSON, err := json.Marshal(table.Seats)
+	seatsJSON, logJSON, communityJSON, sidePotsJSON, err := marshalPokerTableJSON(table)
 	if err != nil {
-		return fmt.Errorf("marshal poker seats: %w", err)
-	}
-	logJSON, err := json.Marshal(table.Log)
-	if err != nil {
-		return fmt.Errorf("marshal poker log: %w", err)
+		return err
 	}
 	result, err := r.db.db.ExecContext(ctx, `
 		UPDATE poker_tables
 		SET name = $2, created_by = $3, stake_currency = $4, buy_in = $5,
 			max_players = $6, status = $7, pot = $8, deck_seed = $9,
-			seats = $10, log = $11, started_at = $12, updated_at = $13
+			seats = $10, log = $11, started_at = $12, updated_at = $13,
+			game_type = $14, community_cards = $15, small_blind = $16,
+			big_blind = $17, current_bet = $18, dealer_seat = $19,
+			action_seat = $20, min_raise = $21, side_pots = $22,
+			hand_round = $23, action_deadline = $24
 		WHERE id = $1
 	`, table.ID, table.Name, table.CreatedBy, table.StakeCurrency, table.BuyIn,
 		table.MaxPlayers, table.Status, table.Pot, int64(table.DeckSeed), seatsJSON,
-		logJSON, nullableTime(table.StartedAt), table.UpdatedAt)
+		logJSON, nullableTime(table.StartedAt), table.UpdatedAt,
+		table.GameType, communityJSON, table.SmallBlind, table.BigBlind,
+		table.CurrentBet, table.DealerSeat, table.ActionSeat, table.MinRaise,
+		sidePotsJSON, table.Round, nullableTime(table.ActionDeadline))
 	if err != nil {
 		return fmt.Errorf("update poker table: %w", err)
 	}
