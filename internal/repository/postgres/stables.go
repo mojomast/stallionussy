@@ -73,10 +73,16 @@ func (r *StableRepo) GetStable(ctx context.Context, id string) (*models.Stable, 
 }
 
 // GetStableByOwner retrieves the stable belonging to a given owner.
+// M-14: stables.owner_id has no UNIQUE constraint, so a multi-stable owner
+// used to get an arbitrary (plan-dependent) row back. Order deterministically
+// by creation time — the server's in-memory resolution (getStableForUser)
+// uses the same oldest-first rule.
 func (r *StableRepo) GetStableByOwner(ctx context.Context, ownerID string) (*models.Stable, error) {
 	query := `
 		SELECT id, name, owner_id, cummies, casino_chips, starter_grants, created_at, total_earnings, total_races, motto
-		FROM stables WHERE owner_id = $1`
+		FROM stables WHERE owner_id = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1`
 	s := &models.Stable{}
 	err := r.db.db.QueryRowContext(ctx, query, ownerID).Scan(
 		&s.ID,

@@ -635,8 +635,8 @@ type PlayerProgress struct {
 	LoginStreak         int    `json:"loginStreak"`
 	LastLoginDate       string `json:"lastLoginDate"` // YYYY-MM-DD format
 	TotalLogins         int    `json:"totalLogins"`
-	DailyTrainsLeft     int    `json:"dailyTrainsLeft"` // resets daily, default 5
-	DailyRacesLeft      int    `json:"dailyRacesLeft"`  // resets daily, default 10
+	DailyTrainsLeft     int    `json:"dailyTrainsLeft"` // resets daily, default 6 (server.defaultDailyTrains, matches DB default)
+	DailyRacesLeft      int    `json:"dailyRacesLeft"`  // resets daily, default 6 (server.defaultDailyRaces, matches DB default)
 	LastDailyReset      string `json:"lastDailyReset"`  // YYYY-MM-DD
 	LastCasinoGrantDate string `json:"lastCasinoGrantDate,omitempty"`
 	PrestigeLevel       int    `json:"prestigeLevel"`

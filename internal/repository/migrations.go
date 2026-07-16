@@ -498,6 +498,20 @@ ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS hand_round INT NOT NULL DEFAUL
 ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_deadline TIMESTAMPTZ;
 
 -- ===========================================================================
+-- Race result uniqueness (M-13)
+-- race_results had no unique constraint on (race_id, horse_id) and inserts
+-- were plain INSERTs, so re-running result recording double-counted history
+-- and earnings. Dedupe any legacy duplicates (keeping the earliest row),
+-- then enforce uniqueness. RecordResult now uses ON CONFLICT DO NOTHING.
+-- ===========================================================================
+DELETE FROM race_results a USING race_results b
+WHERE a.race_id = b.race_id
+  AND a.horse_id = b.horse_id
+  AND a.ctid > b.ctid;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_race_results_race_horse
+    ON race_results (race_id, horse_id);
+
+-- ===========================================================================
 -- Progressive slot jackpot (M-2)
 -- Previously RAM-only: a restart reset the pool to its seed and every 2%
 -- wager contribution accumulated so far evaporated.

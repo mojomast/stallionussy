@@ -64,12 +64,15 @@ func scanRaceResult(sc interface{ Scan(dest ...any) error }) (*models.RaceResult
 // RecordResult persists a single horse's result from a completed race.
 // FinalTime is stored as nanoseconds (int64).
 func (r *RaceResultRepo) RecordResult(ctx context.Context, result *models.RaceResult) error {
+	// M-13: (race_id, horse_id) is unique — recording the same result twice
+	// (e.g. a retried handler) must not double-count history or earnings.
 	query := `
 		INSERT INTO race_results (
 			race_id, horse_id, horse_name, track_type, distance,
 			finish_place, total_horses, final_time_ns, elo_before, elo_after,
 			earnings, weather, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (race_id, horse_id) DO NOTHING`
 	_, err := r.db.db.ExecContext(ctx, query,
 		result.RaceID,
 		result.HorseID,
