@@ -1,18 +1,24 @@
 package repository
 
-import "database/sql"
-
-// schemaSQL contains all CREATE TABLE IF NOT EXISTS statements for
-// StallionUSSY's PostgreSQL schema.  Tables are created in dependency
-// order so that foreign-key references are valid.
+// schemaSQLiteSQL is the offline-mode (SQLite) rendering of the StallionUSSY
+// schema. It mirrors schemaSQL (the PostgreSQL DDL) with the dialect
+// differences resolved:
 //
-// Design notes:
-//   - Complex nested Go types (Genome, Traits, TickLog, Standings) are
-//     stored as JSONB columns so they can be round-tripped without an
-//     explosion of join tables.
-//   - All primary keys are TEXT (UUID strings generated in Go).
-//   - Timestamps default to NOW() when not supplied.
-const schemaSQL = `
+//   - TIMESTAMPTZ            -> TIMESTAMP (the "TIME"-bearing decltype lets
+//     modernc.org/sqlite round-trip time.Time values)
+//   - DEFAULT NOW()          -> DEFAULT CURRENT_TIMESTAMP
+//   - SERIAL PRIMARY KEY     -> INTEGER PRIMARY KEY AUTOINCREMENT
+//   - JSONB                  -> TEXT (JSON is stored as text)
+//   - ALTER TABLE ... ADD COLUMN IF NOT EXISTS retrofits -> columns are baked
+//     directly into CREATE TABLE (SQLite databases created by this schema are
+//     always born fully up to date)
+//   - the DO $$ ... $$ constraint block -> inline CHECK constraints
+//   - the ctid-based race_results dedupe -> unnecessary on a fresh schema;
+//     the unique index alone enforces it
+//
+// Everything else (CREATE [UNIQUE] INDEX IF NOT EXISTS, partial indexes,
+// expression indexes, inline CHECKs, TRUE/FALSE literals) is portable as-is.
+const schemaSQLiteSQL = `
 -- ===========================================================================
 -- Users
 -- ===========================================================================
@@ -21,8 +27,9 @@ CREATE TABLE IF NOT EXISTS users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL DEFAULT '',
     display_name  TEXT NOT NULL DEFAULT '',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    token_version INTEGER NOT NULL DEFAULT 0,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
@@ -35,13 +42,13 @@ CREATE TABLE IF NOT EXISTS stables (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
     owner_id        TEXT NOT NULL DEFAULT '',
-    cummies         BIGINT NOT NULL DEFAULT 0,
-    casino_chips    BIGINT NOT NULL DEFAULT 0,
+    cummies         BIGINT NOT NULL DEFAULT 0 CHECK (cummies >= 0),
+    casino_chips    BIGINT NOT NULL DEFAULT 0 CHECK (casino_chips >= 0),
     starter_grants  INT NOT NULL DEFAULT 0,
     total_earnings  BIGINT NOT NULL DEFAULT 0,
     total_races     BIGINT NOT NULL DEFAULT 0,
     motto           TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_stables_owner_id ON stables (owner_id);
@@ -53,7 +60,7 @@ CREATE TABLE IF NOT EXISTS horses (
     id               TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
     stable_id        TEXT DEFAULT '',
-    genome           JSONB NOT NULL DEFAULT '{}',
+    genome           TEXT NOT NULL DEFAULT '{}',
     sire_id          TEXT DEFAULT '',
     mare_id          TEXT DEFAULT '',
     generation       INT NOT NULL DEFAULT 0,
@@ -67,14 +74,18 @@ CREATE TABLE IF NOT EXISTS horses (
     owner_id         TEXT NOT NULL DEFAULT '',
     is_legendary     BOOLEAN NOT NULL DEFAULT FALSE,
     lot_number       INT NOT NULL DEFAULT 0,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lore             TEXT DEFAULT '',
-    traits           JSONB NOT NULL DEFAULT '[]',
+    traits           TEXT NOT NULL DEFAULT '[]',
     fatigue          DOUBLE PRECISION NOT NULL DEFAULT 0,
     retired          BOOLEAN NOT NULL DEFAULT FALSE,
     total_earnings   BIGINT NOT NULL DEFAULT 0,
     training_xp      DOUBLE PRECISION NOT NULL DEFAULT 0,
-    peak_elo         DOUBLE PRECISION NOT NULL DEFAULT 0
+    peak_elo         DOUBLE PRECISION NOT NULL DEFAULT 0,
+    injury           TEXT,
+    retired_champion BOOLEAN NOT NULL DEFAULT FALSE,
+    last_bred_at     TIMESTAMP,
+    training_specialty TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_horses_stable_id ON horses (stable_id);
@@ -84,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_horses_owner_id  ON horses (owner_id);
 -- Race Results
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS race_results (
-    id            SERIAL PRIMARY KEY,
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
     race_id       TEXT NOT NULL,
     horse_id      TEXT NOT NULL DEFAULT '',
     horse_name    TEXT NOT NULL DEFAULT '',
@@ -97,11 +108,13 @@ CREATE TABLE IF NOT EXISTS race_results (
     elo_after     DOUBLE PRECISION NOT NULL DEFAULT 0,
     earnings      BIGINT NOT NULL DEFAULT 0,
     weather       TEXT NOT NULL DEFAULT '',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_race_results_race_id  ON race_results (race_id);
 CREATE INDEX IF NOT EXISTS idx_race_results_horse_id ON race_results (horse_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_race_results_race_horse
+    ON race_results (race_id, horse_id);
 
 -- ===========================================================================
 -- Market Listings (Stud Market)
@@ -115,7 +128,9 @@ CREATE TABLE IF NOT EXISTS stud_listings (
     pedigree      TEXT DEFAULT '',
     sappho_score  DOUBLE PRECISION NOT NULL DEFAULT 0,
     active        BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    times_used    INT NOT NULL DEFAULT 0,
+    max_uses      INT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_stud_listings_horse_id ON stud_listings (horse_id);
@@ -132,10 +147,11 @@ CREATE TABLE IF NOT EXISTS tournaments (
     current_round  INT NOT NULL DEFAULT 0,
     entry_fee      BIGINT NOT NULL DEFAULT 0,
     prize_pool     BIGINT NOT NULL DEFAULT 0,
-    standings      JSONB NOT NULL DEFAULT '[]',
-    races          JSONB NOT NULL DEFAULT '[]',
+    standings      TEXT NOT NULL DEFAULT '[]',
+    races          TEXT NOT NULL DEFAULT '[]',
     status         TEXT NOT NULL DEFAULT 'Open',
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by     TEXT NOT NULL DEFAULT ''
 );
 
 -- ===========================================================================
@@ -149,8 +165,8 @@ CREATE TABLE IF NOT EXISTS trade_offers (
     to_stable_id    TEXT NOT NULL DEFAULT '',
     price           BIGINT NOT NULL DEFAULT 0,
     status          TEXT NOT NULL DEFAULT 'Pending',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_trade_offers_from ON trade_offers (from_stable_id);
@@ -160,14 +176,14 @@ CREATE INDEX IF NOT EXISTS idx_trade_offers_to   ON trade_offers (to_stable_id);
 -- Achievements
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS achievements (
-    id             SERIAL PRIMARY KEY,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     stable_id      TEXT NOT NULL DEFAULT '',
     achievement_id TEXT NOT NULL,
     name           TEXT NOT NULL DEFAULT '',
     description    TEXT NOT NULL DEFAULT '',
     icon           TEXT NOT NULL DEFAULT '',
     rarity         TEXT NOT NULL DEFAULT 'common',
-    unlocked_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    unlocked_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (stable_id, achievement_id)
 );
 
@@ -186,7 +202,7 @@ CREATE TABLE IF NOT EXISTS training_sessions (
     fatigue_after   DOUBLE PRECISION NOT NULL DEFAULT 0,
     injured         BOOLEAN NOT NULL DEFAULT FALSE,
     injury_note     TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_training_sessions_horse_id ON training_sessions (horse_id);
@@ -214,10 +230,10 @@ CREATE TABLE IF NOT EXISTS player_progress (
 CREATE TABLE IF NOT EXISTS seasons (
     id          INT PRIMARY KEY,
     name        TEXT NOT NULL DEFAULT '',
-    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    ended_at    TIMESTAMPTZ,
+    started_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at    TIMESTAMP,
     active      BOOLEAN NOT NULL DEFAULT FALSE,
-    champions   JSONB NOT NULL DEFAULT '[]'
+    champions   TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_seasons_active ON seasons (active);
@@ -235,11 +251,22 @@ CREATE TABLE IF NOT EXISTS poker_tables (
     status          TEXT NOT NULL DEFAULT 'open',
     pot             BIGINT NOT NULL DEFAULT 0,
     deck_seed       BIGINT NOT NULL DEFAULT 0,
-    seats           JSONB NOT NULL DEFAULT '[]',
-    log             JSONB NOT NULL DEFAULT '[]',
-    started_at      TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    seats           TEXT NOT NULL DEFAULT '[]',
+    log             TEXT NOT NULL DEFAULT '[]',
+    started_at      TIMESTAMP,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    game_type       TEXT NOT NULL DEFAULT 'draw',
+    community_cards TEXT NOT NULL DEFAULT '[]',
+    small_blind     BIGINT NOT NULL DEFAULT 0,
+    big_blind       BIGINT NOT NULL DEFAULT 0,
+    current_bet     BIGINT NOT NULL DEFAULT 0,
+    dealer_seat     INT NOT NULL DEFAULT 0,
+    action_seat     INT NOT NULL DEFAULT -1,
+    min_raise       BIGINT NOT NULL DEFAULT 0,
+    side_pots       TEXT NOT NULL DEFAULT '[]',
+    hand_round      INT NOT NULL DEFAULT 0,
+    action_deadline TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_poker_tables_status_created_at ON poker_tables (status, created_at DESC);
@@ -251,9 +278,9 @@ CREATE TABLE IF NOT EXISTS slot_spins (
     wager_amount   BIGINT NOT NULL DEFAULT 0,
     payout_amount  BIGINT NOT NULL DEFAULT 0,
     multiplier     DOUBLE PRECISION NOT NULL DEFAULT 0,
-    symbols        JSONB NOT NULL DEFAULT '[]',
+    symbols        TEXT NOT NULL DEFAULT '[]',
     summary        TEXT NOT NULL DEFAULT '',
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_slot_spins_user_id_created_at ON slot_spins (user_id, created_at DESC);
@@ -269,14 +296,14 @@ CREATE TABLE IF NOT EXISTS departed_horses (
     stable_id        TEXT NOT NULL DEFAULT '',
     cause            TEXT NOT NULL DEFAULT '',
     state            TEXT NOT NULL DEFAULT 'dormant',
-    horse_snapshot   JSONB NOT NULL DEFAULT '{}',
+    horse_snapshot   TEXT NOT NULL DEFAULT '{}',
     omen_text        TEXT NOT NULL DEFAULT '',
     return_summary   TEXT NOT NULL DEFAULT '',
     returned_horse   TEXT NOT NULL DEFAULT '',
     last_roll_date   TEXT NOT NULL DEFAULT '',
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    omen_expires_at  TIMESTAMPTZ,
-    returned_at      TIMESTAMPTZ
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    omen_expires_at  TIMESTAMP,
+    returned_at      TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_departed_horses_owner_state ON departed_horses (owner_id, state, created_at DESC);
@@ -292,7 +319,8 @@ CREATE TABLE IF NOT EXISTS market_transactions (
     price         BIGINT NOT NULL DEFAULT 0,
     burn_amount   BIGINT NOT NULL DEFAULT 0,
     foal_id       TEXT NOT NULL DEFAULT '',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    seller_payout BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_market_transactions_buyer_id  ON market_transactions (buyer_id);
@@ -313,12 +341,12 @@ CREATE TABLE IF NOT EXISTS auctions (
     bidder_id        TEXT NOT NULL DEFAULT '',
     bidder_name      TEXT NOT NULL DEFAULT '',
     bid_count        INT NOT NULL DEFAULT 0,
-    bid_history      JSONB NOT NULL DEFAULT '[]',
+    bid_history      TEXT NOT NULL DEFAULT '[]',
     status           TEXT NOT NULL DEFAULT 'open',
     duration         INT NOT NULL DEFAULT 120,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at     TIMESTAMPTZ,
+    created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at     TIMESTAMP,
     geoffrussy_tax   BIGINT NOT NULL DEFAULT 0
 );
 
@@ -338,8 +366,8 @@ CREATE TABLE IF NOT EXISTS race_replays (
     weather      TEXT NOT NULL DEFAULT '',
     winner_id    TEXT NOT NULL DEFAULT '',
     winner_name  TEXT NOT NULL DEFAULT '',
-    data         JSONB NOT NULL DEFAULT '{}',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    data         TEXT NOT NULL DEFAULT '{}',
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_race_replays_created_at ON race_replays (created_at DESC);
@@ -354,7 +382,7 @@ CREATE TABLE IF NOT EXISTS alliances (
     leader_id   TEXT NOT NULL DEFAULT '',
     motto       TEXT NOT NULL DEFAULT '',
     treasury    BIGINT NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_alliances_leader_id ON alliances (leader_id);
@@ -368,16 +396,11 @@ CREATE TABLE IF NOT EXISTS alliance_members (
     username    TEXT NOT NULL DEFAULT '',
     stable_id   TEXT NOT NULL DEFAULT '',
     role        TEXT NOT NULL DEFAULT 'member',
-    joined_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    joined_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (alliance_id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_alliance_members_user_id ON alliance_members (user_id);
-
--- ===========================================================================
--- Add injury column to horses (JSONB, nullable)
--- ===========================================================================
-ALTER TABLE horses ADD COLUMN IF NOT EXISTS injury JSONB;
 
 -- ===========================================================================
 -- Horse Fights
@@ -402,9 +425,9 @@ CREATE TABLE IF NOT EXISTS horse_fights (
     status          TEXT NOT NULL DEFAULT 'pending',
     ko_round        INT NOT NULL DEFAULT 0,
     total_rounds    INT NOT NULL DEFAULT 0,
-    fight_log       JSONB NOT NULL DEFAULT '{}',
-    narrative       JSONB NOT NULL DEFAULT '[]',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    fight_log       TEXT NOT NULL DEFAULT '{}',
+    narrative       TEXT NOT NULL DEFAULT '[]',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_horse_fights_status ON horse_fights (status);
@@ -425,7 +448,7 @@ CREATE TABLE IF NOT EXISTS glue_factory (
     bonus_material  TEXT NOT NULL DEFAULT '',
     bonus_amount    BIGINT NOT NULL DEFAULT 0,
     eulogy          TEXT NOT NULL DEFAULT '',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_glue_factory_owner ON glue_factory (owner_id);
@@ -443,131 +466,20 @@ CREATE TABLE IF NOT EXISTS breeding_stallions (
     fee             BIGINT NOT NULL DEFAULT 0,
     cooldown_hours  INT NOT NULL DEFAULT 12,
     active          BOOLEAN NOT NULL DEFAULT TRUE,
-    assigned_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    assigned_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_owner ON breeding_stallions (owner_id);
 CREATE INDEX IF NOT EXISTS idx_breeding_stallions_active ON breeding_stallions (active) WHERE active = TRUE;
 
 -- ===========================================================================
--- Token Version (for JWT revocation on password change)
--- ===========================================================================
-ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version INTEGER NOT NULL DEFAULT 0;
-
--- ===========================================================================
--- Tournament organizer (H-4: organizer-only round advancement)
--- ===========================================================================
-ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS created_by TEXT NOT NULL DEFAULT '';
-
--- ===========================================================================
--- Horse breeding cooldown & champion flag (H-7)
--- Previously RAM-only: restarts reset breeding cooldowns and dropped the
--- retired-champion flag that drives the foal breeding bonus.
--- ===========================================================================
-ALTER TABLE horses ADD COLUMN IF NOT EXISTS retired_champion BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE horses ADD COLUMN IF NOT EXISTS last_bred_at TIMESTAMPTZ;
-
--- ===========================================================================
--- Training specialties (Phase 3)
--- Per-discipline bonuses accumulated by distinct workout modes
--- (Sprint/Endurance/MudRun/MentalRep), consumed by the race simulator.
--- ===========================================================================
-ALTER TABLE horses ADD COLUMN IF NOT EXISTS training_specialty JSONB;
-
--- ===========================================================================
--- Stud listing use limits (H-8)
--- Previously RAM-only: a maxed-out stud came back active with 0 uses after
--- every restart.
--- ===========================================================================
-ALTER TABLE stud_listings ADD COLUMN IF NOT EXISTS times_used INT NOT NULL DEFAULT 0;
-ALTER TABLE stud_listings ADD COLUMN IF NOT EXISTS max_uses INT NOT NULL DEFAULT 0;
-
--- ===========================================================================
--- Market transaction seller payout (H-9)
--- ===========================================================================
-ALTER TABLE market_transactions ADD COLUMN IF NOT EXISTS seller_payout BIGINT NOT NULL DEFAULT 0;
-
--- ===========================================================================
--- Texas Hold'em poker table state (H-10)
--- Previously only the 13 legacy draw-poker columns persisted, so an
--- in-progress Hold'em hand reloaded as a corrupted draw table.
--- ===========================================================================
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS game_type TEXT NOT NULL DEFAULT 'draw';
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS community_cards JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS small_blind BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS big_blind BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS current_bet BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS dealer_seat INT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_seat INT NOT NULL DEFAULT -1;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS min_raise BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS side_pots JSONB NOT NULL DEFAULT '[]';
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS hand_round INT NOT NULL DEFAULT 0;
-ALTER TABLE poker_tables ADD COLUMN IF NOT EXISTS action_deadline TIMESTAMPTZ;
-
--- ===========================================================================
--- Race result uniqueness (M-13)
--- race_results had no unique constraint on (race_id, horse_id) and inserts
--- were plain INSERTs, so re-running result recording double-counted history
--- and earnings. Dedupe any legacy duplicates (keeping the earliest row),
--- then enforce uniqueness. RecordResult now uses ON CONFLICT DO NOTHING.
--- ===========================================================================
-DELETE FROM race_results a USING race_results b
-WHERE a.race_id = b.race_id
-  AND a.horse_id = b.horse_id
-  AND a.ctid > b.ctid;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_race_results_race_horse
-    ON race_results (race_id, horse_id);
-
--- ===========================================================================
 -- Progressive slot jackpot (M-2)
--- Previously RAM-only: a restart reset the pool to its seed and every 2%
--- wager contribution accumulated so far evaporated.
 -- ===========================================================================
 CREATE TABLE IF NOT EXISTS casino_jackpot (
     id          INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     pool        BIGINT NOT NULL DEFAULT 0,
     last_winner TEXT NOT NULL DEFAULT '',
     last_amount BIGINT NOT NULL DEFAULT 0,
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-
--- ===========================================================================
--- Balance floors (C-9)
--- The write-through persistence blasts absolute in-memory balances at the
--- database, so a single missed in-process check could persist a negative
--- balance. Floor any legacy negatives, then enforce non-negativity at the
--- database layer as a last line of defense against double spends.
--- ===========================================================================
-UPDATE stables SET cummies = 0 WHERE cummies < 0;
-UPDATE stables SET casino_chips = 0 WHERE casino_chips < 0;
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stables_cummies_nonnegative') THEN
-        ALTER TABLE stables ADD CONSTRAINT stables_cummies_nonnegative CHECK (cummies >= 0);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'stables_casino_chips_nonnegative') THEN
-        ALTER TABLE stables ADD CONSTRAINT stables_casino_chips_nonnegative CHECK (casino_chips >= 0);
-    END IF;
-END $$;
 `
-
-// RunMigrations executes the PostgreSQL schema DDL against the provided
-// database connection.  All statements use IF NOT EXISTS so this is safe to
-// call on every startup.
-func RunMigrations(db *sql.DB) error {
-	return RunMigrationsFor(db, DialectPostgres)
-}
-
-// RunMigrationsFor executes the schema DDL for the given SQL dialect.
-// PostgreSQL uses schemaSQL (including the retrofit ALTER TABLE statements
-// for pre-existing databases); SQLite uses schemaSQLiteSQL, a fresh-schema
-// rendering with all retrofitted columns baked in. Both are idempotent and
-// safe to run on every startup.
-func RunMigrationsFor(db *sql.DB, dialect Dialect) error {
-	schema := schemaSQL
-	if dialect == DialectSQLite {
-		schema = schemaSQLiteSQL
-	}
-	_, err := db.Exec(schema)
-	return err
-}

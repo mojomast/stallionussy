@@ -279,15 +279,17 @@ func (r *CasinoRepo) GetJackpotState(ctx context.Context) (int64, string, int64,
 
 // SaveJackpotState upserts the progressive slot jackpot state (M-2).
 func (r *CasinoRepo) SaveJackpotState(ctx context.Context, pool int64, lastWinner string, lastAmount int64) error {
+	// The timestamp is bound as a parameter instead of NOW() so the query is
+	// portable across PostgreSQL and SQLite (offline mode).
 	_, err := r.db.db.ExecContext(ctx, `
 		INSERT INTO casino_jackpot (id, pool, last_winner, last_amount, updated_at)
-		VALUES (1, $1, $2, $3, NOW())
+		VALUES (1, $1, $2, $3, $4)
 		ON CONFLICT (id) DO UPDATE SET
 			pool = EXCLUDED.pool,
 			last_winner = EXCLUDED.last_winner,
 			last_amount = EXCLUDED.last_amount,
-			updated_at = NOW()`,
-		pool, lastWinner, lastAmount)
+			updated_at = EXCLUDED.updated_at`,
+		pool, lastWinner, lastAmount, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("save jackpot state: %w", err)
 	}

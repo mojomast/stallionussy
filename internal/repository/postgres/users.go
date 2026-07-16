@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/mojomast/stallionussy/internal/models"
 	"github.com/mojomast/stallionussy/internal/repository"
@@ -134,8 +135,10 @@ func (r *UserRepo) GetTokenVersion(ctx context.Context, userID string) (int, err
 // IncrementTokenVersion bumps the user's token_version by 1, invalidating
 // all previously issued JWTs.
 func (r *UserRepo) IncrementTokenVersion(ctx context.Context, userID string) error {
-	query := `UPDATE users SET token_version = token_version + 1, updated_at = NOW() WHERE id = $1`
-	result, err := r.db.db.ExecContext(ctx, query, userID)
+	// The timestamp is bound as a parameter instead of NOW() so the query is
+	// portable across PostgreSQL and SQLite (offline mode).
+	query := `UPDATE users SET token_version = token_version + 1, updated_at = $2 WHERE id = $1`
+	result, err := r.db.db.ExecContext(ctx, query, userID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("increment token version: %w", err)
 	}
