@@ -310,6 +310,9 @@ func NewServer(db *postgres.DB) *Server {
 	// Seed legendary horses only if no stables exist yet (fresh start).
 	if len(s.stables.ListStables()) == 0 {
 		houseOfUSSY := s.stables.CreateStable("House of USSY", "system")
+		// The house treasury funds quick-race/challenge purses and the CPU
+		// arena's side of bot wagers (C-3/H-5) — seed it accordingly.
+		houseOfUSSY.Cummies = houseTreasurySeed
 		s.stables.SeedLegendaries(houseOfUSSY.ID)
 
 		// Assign traits to each legendary horse.
@@ -330,6 +333,16 @@ func NewServer(db *postgres.DB) *Server {
 				s.persistHorse(ctx, h)
 			}
 		}
+	}
+
+	// Refill the house treasury on startup (covers stables persisted before
+	// the funded-house model existed, and treasuries drained by sponsored
+	// purses). This is an explicit, bounded design faucet — at most once per
+	// process start — replacing the old unbounded per-race minting (C-3).
+	if house := s.houseStable(); house != nil && house.Cummies < houseTreasurySeed {
+		log.Printf("server: topping up House of USSY treasury from %d to %d cummies", house.Cummies, houseTreasurySeed)
+		house.Cummies = houseTreasurySeed
+		s.persistStable(context.Background(), house)
 	}
 
 	// Backfill starter horses for any persisted user stables that are still empty.
@@ -1266,7 +1279,6 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var requestingClaims *authussy.Claims
-	var purseStable *models.Stable
 
 	// Ownership check: the requesting player must own at least one horse
 	// in the race. Other slots can be filled with AI / system horses or
@@ -1284,29 +1296,14 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "you must enter at least one of your own horses in the race", http.StatusForbidden)
 			return
 		}
-		if req.Purse > 0 {
-			purseStable = s.getStableForUser(claims.UserID)
-			if purseStable == nil {
-				writeError(w, http.StatusBadRequest, "you need a stable to fund a purse")
-				return
-			}
-			// Lock the stable for the balance check; the actual deduction
-			// happens below after validation, but we hold the lock over both.
-			mu := s.stableMu(purseStable.ID)
-			mu.Lock()
-			if purseStable.Cummies < req.Purse {
-				mu.Unlock()
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", purseStable.Cummies, req.Purse))
-				return
-			}
-			purseStable.Cummies -= req.Purse
-			s.persistStable(r.Context(), purseStable)
-			mu.Unlock()
-		}
 	} else if req.Purse > 0 {
 		writeError(w, http.StatusBadRequest, "custom purse races require authentication")
 		return
 	}
+
+	// BUG FIX (C-8): validate EVERYTHING before debiting the purse. The purse
+	// used to be deducted first, and failures below (bad track, unknown
+	// horse, daily race cap) returned without refunding it.
 
 	// Validate track type.
 	if models.TrackDistance(req.TrackType) == 0 {
@@ -1322,11 +1319,38 @@ func (s *Server) handleCreateRace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if requestingClaims != nil {
+		// Fund the purse now that all inputs are validated.
+		var purseStable *models.Stable
+		if req.Purse > 0 {
+			purseStable = s.getStableForUser(requestingClaims.UserID)
+			if purseStable == nil {
+				writeError(w, http.StatusBadRequest, "you need a stable to fund a purse")
+				return
+			}
+			mu := s.stableMu(purseStable.ID)
+			mu.Lock()
+			if purseStable.Cummies < req.Purse {
+				mu.Unlock()
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient cummies: have %d, need %d to fund this purse", purseStable.Cummies, req.Purse))
+				return
+			}
+			purseStable.Cummies -= req.Purse
+			s.persistStable(r.Context(), purseStable)
+			mu.Unlock()
+		}
+
 		if _, err := s.consumeDailyRace(requestingClaims.UserID); err != nil {
+			// Refund the purse — the race never happened (C-8).
+			if purseStable != nil && req.Purse > 0 {
+				mu := s.stableMu(purseStable.ID)
+				mu.Lock()
+				purseStable.Cummies += req.Purse
+				s.persistStable(r.Context(), purseStable)
+				mu.Unlock()
+			}
 			writeError(w, http.StatusTooManyRequests, err.Error())
 			return
 		}
-		// Purse deduction already happened above under the stable lock.
 
 		if len(horses) < 4 {
 			var playerHorse *models.Horse
@@ -1376,9 +1400,12 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 		trackType := tracks[rand.IntN(len(tracks))]
 		opponents := s.pickBotOpponents(playerHorse, 3+rand.IntN(3))
 		selected := append([]*models.Horse{playerHorse}, opponents...)
-		race := racussy.NewRace(selected, trackType, quickRacePurse)
+		// C-3: fund the purse from the house treasury instead of minting it.
+		// If the house can't cover the full purse, the race runs for less.
+		purse := s.debitHouseFunds(r.Context(), quickRacePurse)
+		race := racussy.NewRace(selected, trackType, purse)
 		s.openBettingPool(race.ID, selected)
-		result := s.runRace(selected, trackType, quickRacePurse, race.ID)
+		result := s.runRace(selected, trackType, purse, race.ID)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -1419,7 +1446,9 @@ func (s *Server) handleQuickRace(w http.ResponseWriter, r *http.Request) {
 	trackType := tracks[rand.IntN(len(tracks))]
 
 	// Guest quick races remain spectator-friendly and do not feed progression.
-	purse := quickRacePurse
+	// C-3: they carry no purse — the previous flat purse was minted from
+	// nothing and paid out to random stables' horses.
+	purse := int64(0)
 
 	race := racussy.NewRace(selected, trackType, purse)
 	s.openBettingPool(race.ID, selected)
@@ -1827,6 +1856,76 @@ func (s *Server) getStableForUser(userID string) *models.Stable {
 		return nil
 	}
 	return stables[0]
+}
+
+// ---------------------------------------------------------------------------
+// House treasury (C-3 / H-5)
+//
+// Quick-race, challenge and bot-wager payouts used to be minted from nothing:
+// finishers were credited but nobody was ever debited. All house-sponsored
+// purses are now funded from the "House of USSY" system stable, which is
+// seeded with a finite treasury and earns the betting house cut. If the house
+// runs dry, sponsored purses shrink to what it can afford (down to 0) instead
+// of printing cummies.
+// ---------------------------------------------------------------------------
+
+// houseTreasurySeed is the initial balance of the House of USSY stable. It
+// bounds the total amount of cummies the house can ever inject beyond what it
+// recoups from betting cuts and lost bot wagers.
+const houseTreasurySeed = int64(1_000_000)
+
+// houseStable returns the system-owned "House of USSY" stable, or nil if it
+// doesn't exist (e.g. bare test setups).
+func (s *Server) houseStable() *models.Stable {
+	for _, stable := range s.stables.ListStables() {
+		if stable.OwnerID == "system" {
+			return stable
+		}
+	}
+	return nil
+}
+
+// debitHouseFunds withdraws up to amount from the house treasury and returns
+// how much was actually funded (0..amount). Never lets the house go negative.
+func (s *Server) debitHouseFunds(ctx context.Context, amount int64) int64 {
+	if amount <= 0 {
+		return 0
+	}
+	house := s.houseStable()
+	if house == nil {
+		return 0
+	}
+	mu := s.stableMu(house.ID)
+	mu.Lock()
+	funded := amount
+	if house.Cummies < funded {
+		funded = house.Cummies
+	}
+	if funded <= 0 {
+		mu.Unlock()
+		return 0
+	}
+	house.Cummies -= funded
+	s.persistStable(ctx, house)
+	mu.Unlock()
+	return funded
+}
+
+// creditHouseFunds deposits amount into the house treasury (e.g. the betting
+// house cut, or a wager lost against the CPU arena).
+func (s *Server) creditHouseFunds(ctx context.Context, amount int64) {
+	if amount <= 0 {
+		return
+	}
+	house := s.houseStable()
+	if house == nil {
+		return
+	}
+	mu := s.stableMu(house.ID)
+	mu.Lock()
+	house.Cummies += amount
+	s.persistStable(ctx, house)
+	mu.Unlock()
 }
 
 func (s *Server) getStablesForUser(userID string) []*models.Stable {
@@ -4546,7 +4645,9 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 		models.TrackThunderussy, models.TrackFrostussy, models.TrackHauntedussy,
 	}
 	trackType := tracks[rand.IntN(len(tracks))]
-	result := s.runRace([]*models.Horse{challengerHorse, defenderHorse}, trackType, challengeBasePurse)
+	// C-3: fund the bot-challenge purse from the house treasury.
+	botPurse := s.debitHouseFunds(context.Background(), challengeBasePurse)
+	result := s.runRace([]*models.Horse{challengerHorse, defenderHorse}, trackType, botPurse)
 
 	winnerID := "bot"
 	winnerName := challenge.DefenderName
@@ -4564,15 +4665,28 @@ func (s *Server) runBotChallenge(challenge *models.Challenge) (map[string]interf
 	if wager > 0 {
 		challengerStable := s.getStableForUser(challengerID)
 		if challengerStable != nil {
-			mu := s.stableMu(challengerStable.ID)
-			mu.Lock()
 			if winnerID == challengerID {
-				payout := (wager * 2) - ((wager * 2) * 5 / 100)
+				// H-5: the CPU arena's half of the pot is funded by the house
+				// treasury — previously it was minted from nothing. If the
+				// house can't cover the full match, the pot shrinks.
+				houseShare := s.debitHouseFunds(context.Background(), wager)
+				pot := wager + houseShare
+				payout := pot - (pot * 5 / 100)
+				mu := s.stableMu(challengerStable.ID)
+				mu.Lock()
 				challengerStable.Cummies += payout
 				challengerStable.TotalEarnings += payout
+				s.persistStable(context.Background(), challengerStable)
+				mu.Unlock()
+			} else {
+				// The escrowed wager was lost to the CPU arena — bank it in
+				// the house treasury so bot wagers stay near zero-sum.
+				s.creditHouseFunds(context.Background(), wager)
+				mu := s.stableMu(challengerStable.ID)
+				mu.Lock()
+				s.persistStable(context.Background(), challengerStable)
+				mu.Unlock()
 			}
-			s.persistStable(context.Background(), challengerStable)
-			mu.Unlock()
 		}
 	}
 
@@ -4750,8 +4864,9 @@ func (s *Server) acceptChallenge(challengeID, defenderUserID, defenderHorseID st
 	}
 	trackType := tracks[rand.IntN(len(tracks))]
 
-	// Base purse for challenges (non-wager reward).
-	basePurse := int64(500)
+	// Base purse for challenges (non-wager reward), funded by the house
+	// treasury (C-3) — previously minted from nothing.
+	basePurse := s.debitHouseFunds(context.Background(), 500)
 	horses := []*models.Horse{challengerHorse, defenderHorse}
 	result := s.runRace(horses, trackType, basePurse)
 
@@ -6546,10 +6661,13 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 		return 0
 	}
 
-	// Calculate house cut and distributable pool.
+	// Calculate house cut and distributable pool. The cut is banked in the
+	// House of USSY treasury, which in turn sponsors quick-race and
+	// challenge purses (C-3) — keeping the loop closed instead of minting.
 	houseCut := int64(float64(pool.TotalPool) * bettingHouseCutPct)
 	pool.HouseCut = houseCut
 	distributable := pool.TotalPool - houseCut
+	s.creditHouseFunds(context.Background(), houseCut)
 
 	// Find total amount bet on the winning horse.
 	winnerTotalBet := int64(0)
@@ -6627,6 +6745,9 @@ func (s *Server) resolveBets(raceID, winnerHorseID string) int {
 			"ts":   time.Now().Unix(),
 		})
 	} else {
+		// Nobody backed the winner: the whole distributable pool goes to the
+		// house treasury too (the message below has always claimed it does).
+		s.creditHouseFunds(context.Background(), distributable)
 		s.hub.BroadcastJSON(map[string]interface{}{
 			"type": "chat_system",
 			"text": fmt.Sprintf("🎰 No one bet on the winner %s! The house keeps ₵%d.",

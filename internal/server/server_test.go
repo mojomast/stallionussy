@@ -1833,3 +1833,165 @@ func TestTournament_RaceRequiresOrganizer(t *testing.T) {
 		t.Fatalf("organizer race trigger: status = %d, want 201\nbody: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// ---------------------------------------------------------------------------
+// House-funded purses & purse refunds (C-3, H-5, C-8)
+// ---------------------------------------------------------------------------
+
+// totalCummies sums the cummies of every stable in the game (including the
+// House of USSY treasury). Sponsored races may burn money but must never
+// create it.
+func totalCummies(s *Server) int64 {
+	var sum int64
+	for _, st := range s.stables.ListStables() {
+		sum += st.Cummies
+	}
+	return sum
+}
+
+// TestQuickRace_PurseFundedByHouse is the C-3 regression: an authenticated
+// quick race must debit its purse from the House of USSY treasury instead of
+// minting it, so the total cummies in the economy can never increase.
+func TestQuickRace_PurseFundedByHouse(t *testing.T) {
+	s := NewServer(nil)
+	if _, err := s.createOwnedStable(context.Background(), "Speed Ranch", "user-1", true); err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	house := s.houseStable()
+	if house == nil {
+		t.Fatal("no House of USSY stable found")
+	}
+	houseBefore := house.Cummies
+	sumBefore := totalCummies(s)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/races/quick", nil)
+	req = injectAuth(req, "user-1", "speedy")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("quick race: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+
+	if got := house.Cummies; got != houseBefore-quickRacePurse {
+		t.Fatalf("house treasury = %d, want %d (purse must be debited from the house, not minted)",
+			got, houseBefore-quickRacePurse)
+	}
+	if sumAfter := totalCummies(s); sumAfter > sumBefore {
+		t.Fatalf("total cummies grew from %d to %d — quick race minted money (C-3)", sumBefore, sumAfter)
+	}
+}
+
+// TestGuestQuickRace_NoMinting: unauthenticated quick races carry no purse.
+func TestGuestQuickRace_NoMinting(t *testing.T) {
+	s := NewServer(nil)
+	sumBefore := totalCummies(s)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/races/quick", nil)
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("guest quick race: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if sumAfter := totalCummies(s); sumAfter != sumBefore {
+		t.Fatalf("total cummies changed from %d to %d on a guest quick race", sumBefore, sumAfter)
+	}
+}
+
+// TestBotChallenge_NeverMintsCummies is the H-5 regression: win or lose, a
+// wagered challenge against the CPU arena must never increase the total
+// amount of cummies in the economy (the bot's half of the pot comes from the
+// house treasury; lost wagers are banked by the house).
+func TestBotChallenge_NeverMintsCummies(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Gambler Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+
+	// Run several challenges so both win and lose outcomes are very likely
+	// to be exercised (the daily race cap allows 6; stay under it).
+	for i := 0; i < 5; i++ {
+		sumBefore := totalCummies(s)
+		body := jsonBody(map[string]interface{}{
+			"defenderName": "bot",
+			"horseID":      stable.Horses[0].ID,
+			"wager":        100,
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/challenges", body)
+		req = injectAuth(req, "user-1", "gambler")
+		rr := httptest.NewRecorder()
+		s.mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
+			t.Fatalf("bot challenge %d: status = %d\nbody: %s", i, rr.Code, rr.Body.String())
+		}
+		if sumAfter := totalCummies(s); sumAfter > sumBefore {
+			t.Fatalf("bot challenge %d minted cummies: total went from %d to %d (H-5)", i, sumBefore, sumAfter)
+		}
+	}
+}
+
+// TestCreateRace_NoPurseLossOnInvalidInput is the C-8 regression: a race
+// creation that fails validation (bad track, unknown horse) or hits the
+// daily cap must not eat the funding stable's purse.
+func TestCreateRace_NoPurseLossOnInvalidInput(t *testing.T) {
+	s := NewServer(nil)
+	stable, err := s.createOwnedStable(context.Background(), "Purse Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable: %v", err)
+	}
+	before := stable.Cummies
+
+	post := func(body interface{}) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/races", jsonBody(body))
+		req = injectAuth(req, "user-1", "owner")
+		rr := httptest.NewRecorder()
+		s.mux.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// Invalid track type.
+	rr := post(map[string]interface{}{
+		"horseIDs":  []string{stable.Horses[0].ID, stable.Horses[1].ID},
+		"trackType": "Nopeussy",
+		"purse":     500,
+	})
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid track: status = %d, want 400\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if stable.Cummies != before {
+		t.Fatalf("balance after invalid-track failure = %d, want %d (purse was eaten, C-8)", stable.Cummies, before)
+	}
+
+	// Unknown horse.
+	rr = post(map[string]interface{}{
+		"horseIDs":  []string{stable.Horses[0].ID, "ghost-horse"},
+		"trackType": "Sprintussy",
+		"purse":     500,
+	})
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("unknown horse: status = %d, want 404\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if stable.Cummies != before {
+		t.Fatalf("balance after unknown-horse failure = %d, want %d (purse was eaten, C-8)", stable.Cummies, before)
+	}
+
+	// Exhaust the daily race allowance, then verify the purse is refunded
+	// when the cap rejects the race.
+	for {
+		if _, err := s.consumeDailyRace("user-1"); err != nil {
+			break
+		}
+	}
+	rr = post(map[string]interface{}{
+		"horseIDs":  []string{stable.Horses[0].ID, stable.Horses[1].ID},
+		"trackType": "Sprintussy",
+		"purse":     500,
+	})
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("daily cap: status = %d, want 429\nbody: %s", rr.Code, rr.Body.String())
+	}
+	if stable.Cummies != before {
+		t.Fatalf("balance after daily-cap failure = %d, want %d (purse was eaten, C-8)", stable.Cummies, before)
+	}
+}
