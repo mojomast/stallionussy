@@ -10681,9 +10681,34 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// Compensation for the fee if breeding fails after payment (Phase 3
+	// wiring fix: these error paths used to eat the buyer's fee).
+	refundFee := func() {
+		if breeder.Fee <= 0 {
+			return
+		}
+		if ownerStable := s.getStableForUser(breeder.OwnerID); ownerStable != nil {
+			om := s.stableMu(ownerStable.ID)
+			om.Lock()
+			if ownerStable.Cummies >= breeder.Fee {
+				ownerStable.Cummies -= breeder.Fee
+			} else {
+				ownerStable.Cummies = 0
+			}
+			s.persistStable(ctx, ownerStable)
+			om.Unlock()
+		}
+		bm := s.stableMu(stable.ID)
+		bm.Lock()
+		stable.Cummies += breeder.Fee
+		s.persistStable(ctx, stable)
+		bm.Unlock()
+	}
+
 	// Breed the horses using genussy.
 	foal := genussy.Breed(stallion, mare)
 	if foal == nil {
+		refundFee()
 		writeError(w, http.StatusInternalServerError, "breeding failed — the genes refused to cooperate")
 		return
 	}
@@ -10693,6 +10718,7 @@ func (s *Server) handleBreedWithStallion(w http.ResponseWriter, r *http.Request)
 
 	// Add foal to buyer's stable.
 	if err := s.stables.AddHorseToStable(stable.ID, foal); err != nil {
+		refundFee()
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to add foal: %v", err))
 		return
 	}
