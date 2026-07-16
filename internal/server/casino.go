@@ -1659,6 +1659,22 @@ func (s *Server) handleHoldemAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// M-9: verify the caller is actually seated at this table BEFORE any
+	// state mutation. Previously the timeout auto-fold ran first, letting
+	// any authenticated user (not even at the table) force the waiting
+	// player's fold by poking the endpoint.
+	seatIdx := -1
+	for i := range table.Seats {
+		if table.Seats[i].UserID == claims.UserID {
+			seatIdx = i
+			break
+		}
+	}
+	if seatIdx < 0 {
+		writeError(w, http.StatusForbidden, "you are not seated at this table")
+		return
+	}
+
 	// Check for timeout on current action seat — auto-fold if expired.
 	if !table.ActionDeadline.IsZero() && time.Now().After(table.ActionDeadline) && table.ActionSeat >= 0 {
 		timedOutSeat := table.ActionSeat
@@ -1684,19 +1700,6 @@ func (s *Server) handleHoldemAction(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, redactPokerTableForUser(table, claims.UserID))
 			return
 		}
-	}
-
-	// Find the player's seat.
-	seatIdx := -1
-	for i := range table.Seats {
-		if table.Seats[i].UserID == claims.UserID {
-			seatIdx = i
-			break
-		}
-	}
-	if seatIdx < 0 {
-		writeError(w, http.StatusForbidden, "you are not seated at this table")
-		return
 	}
 
 	// Check it's their turn.

@@ -3491,6 +3491,13 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "horseID, fromStable, and toStable are required")
 		return
 	}
+	// M-7: validate the price like every other economic input. A price of 0
+	// is an explicit gift (the accept path skips the transfer); negatives
+	// are rejected outright.
+	if req.Price < 0 {
+		writeError(w, http.StatusBadRequest, "price must not be negative (use 0 for a gift)")
+		return
+	}
 	// Self-trade guard (C-6): trading a horse to the same stable is
 	// nonsensical and only exists to launder state.
 	if req.FromStable == req.ToStable {
@@ -3524,6 +3531,14 @@ func (s *Server) handleCreateTrade(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.stables.GetStable(req.ToStable); err != nil {
 		writeError(w, http.StatusNotFound, "destination stable not found: "+err.Error())
+		return
+	}
+
+	// Wiring fix: the horse must actually live in the source stable.
+	// Previously any horse ID was accepted, and acceptance then charged the
+	// buyer before MoveHorse failed — money gone, no horse delivered.
+	if horseStable := s.getStableForHorse(req.HorseID); horseStable == nil || horseStable.ID != req.FromStable {
+		writeError(w, http.StatusBadRequest, "horse does not belong to the source stable")
 		return
 	}
 
@@ -3579,15 +3594,42 @@ func (s *Server) handleAcceptTrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wiring fix: verify the horse is still in the source stable BEFORE any
+	// money moves. Previously the buyer was charged first and a failing
+	// MoveHorse left them paid-up with no horse and no refund.
+	if horseStable := s.getStableForHorse(offer.HorseID); horseStable == nil || horseStable.ID != offer.FromStableID {
+		_ = s.trades.ReopenOffer(tradeID)
+		if err := s.trades.CancelOffer(tradeID); err == nil {
+			if s.tradeRepo != nil {
+				if cancelled, gerr := s.trades.GetOffer(tradeID); gerr == nil {
+					if uerr := s.tradeRepo.UpdateTrade(r.Context(), cancelled); uerr != nil {
+						log.Printf("server: failed to persist trade cancel for %s: %v", tradeID, uerr)
+					}
+				}
+			}
+		}
+		writeError(w, http.StatusConflict, "the horse is no longer in the source stable — trade cancelled")
+		return
+	}
+
 	// Execute the transfer: move horse and transfer Cummies (in-memory).
 	if offer.Price > 0 {
 		if err := s.stables.TransferCummies(offer.ToStableID, offer.FromStableID, offer.Price); err != nil {
+			// Compensation: the offer must not stay consumed on a failed payment.
+			_ = s.trades.ReopenOffer(tradeID)
 			writeError(w, http.StatusBadRequest, "payment failed: "+err.Error())
 			return
 		}
 	}
 
 	if err := s.stables.MoveHorse(offer.HorseID, offer.FromStableID, offer.ToStableID); err != nil {
+		// Compensation: refund the payment and reopen the offer.
+		if offer.Price > 0 {
+			if rerr := s.stables.TransferCummies(offer.FromStableID, offer.ToStableID, offer.Price); rerr != nil {
+				log.Printf("server: CRITICAL — failed to refund trade payment for %s: %v", tradeID, rerr)
+			}
+		}
+		_ = s.trades.ReopenOffer(tradeID)
 		writeError(w, http.StatusInternalServerError, "transfer failed: "+err.Error())
 		return
 	}

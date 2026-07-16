@@ -481,6 +481,27 @@ func (tm *TradeManager) AcceptOffer(offerID string) (*TradeOffer, error) {
 	return offer, nil
 }
 
+// ReopenOffer reverts an accepted offer back to "Pending". It exists as a
+// compensation step for the server's accept flow: if the payment or the
+// horse move fails after the accept gate, the offer must not stay consumed.
+// Returns an error if the offer is not found or is not in "Accepted" status.
+func (tm *TradeManager) ReopenOffer(offerID string) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	offer, ok := tm.trades[offerID]
+	if !ok {
+		return fmt.Errorf("trade offer not found: %s", offerID)
+	}
+	if offer.Status != "Accepted" {
+		return fmt.Errorf("trade offer %s is not accepted (status: %s)", offerID, offer.Status)
+	}
+
+	offer.Status = "Pending"
+	offer.UpdatedAt = time.Now()
+	return nil
+}
+
 // RejectOffer marks a pending trade offer as rejected.
 // Returns an error if the offer is not found or is not in "Pending" status.
 func (tm *TradeManager) RejectOffer(offerID string) error {
