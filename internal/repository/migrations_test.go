@@ -54,3 +54,84 @@ func TestSchemaContainsPersistenceFixColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaRetrofitsEveryLegacyColumn guards the schema-convergence block.
+// CREATE TABLE IF NOT EXISTS is a no-op on databases where the table already
+// exists, so every column of every legacy table must also appear as an
+// ALTER TABLE ... ADD COLUMN IF NOT EXISTS retrofit or old production
+// databases never receive it (this took the site down when the C-9 balance
+// floor referenced stables.casino_chips, which production predated).
+func TestSchemaRetrofitsEveryLegacyColumn(t *testing.T) {
+	// Tables introduced by this improvement pass cannot predate their own
+	// CREATE statement, so they need no retrofit.
+	newTables := map[string]bool{
+		"casino_jackpot": true,
+		"sessions":       true,
+		"app_config":     true,
+		"challenges":     true,
+		"betting_pools":  true,
+		"rivalries":      true,
+	}
+
+	constraintKeywords := []string{"PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"}
+
+	// Anchor to line starts so prose mentioning CREATE TABLE in SQL comments
+	// is not parsed as a statement.
+	const createStmt = "\nCREATE TABLE IF NOT EXISTS "
+	rest := schemaSQL
+	checked := 0
+	for {
+		idx := strings.Index(rest, createStmt)
+		if idx < 0 {
+			break
+		}
+		rest = rest[idx+len(createStmt):]
+		open := strings.Index(rest, "(")
+		table := strings.TrimSpace(rest[:open])
+		end := strings.Index(rest, ");")
+		body := rest[open+1 : end]
+		rest = rest[end:]
+
+		if newTables[table] {
+			continue
+		}
+
+		// Columns named in a table-level PRIMARY KEY (...) are part of the
+		// table's identity and cannot be retrofitted.
+		compositePK := map[string]bool{}
+		if pk := strings.Index(body, "PRIMARY KEY ("); pk >= 0 {
+			inner := body[pk+len("PRIMARY KEY ("):]
+			inner = inner[:strings.Index(inner, ")")]
+			for _, col := range strings.Split(inner, ",") {
+				compositePK[strings.TrimSpace(col)] = true
+			}
+		}
+
+		for _, line := range strings.Split(body, "\n") {
+			line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ","))
+			if line == "" || strings.HasPrefix(line, "--") {
+				continue
+			}
+			fields := strings.Fields(line)
+			col := fields[0]
+			isConstraint := false
+			for _, kw := range constraintKeywords {
+				if col == kw {
+					isConstraint = true
+				}
+			}
+			if isConstraint || compositePK[col] || strings.Contains(line, "PRIMARY KEY") {
+				continue
+			}
+			retrofit := "ALTER TABLE IF EXISTS " + table + " ADD COLUMN IF NOT EXISTS " + col + " "
+			if !strings.Contains(schemaRetrofitSQL, retrofit) {
+				t.Errorf("legacy table %s: column %s has no ADD COLUMN IF NOT EXISTS retrofit", table, col)
+			}
+			checked++
+		}
+	}
+
+	if checked < 200 {
+		t.Fatalf("parsed only %d legacy columns from schemaSQL; the parser is likely broken", checked)
+	}
+}
