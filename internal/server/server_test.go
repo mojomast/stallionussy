@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1993,5 +1994,183 @@ func TestCreateRace_NoPurseLossOnInvalidInput(t *testing.T) {
 	}
 	if stable.Cummies != before {
 		t.Fatalf("balance after daily-cap failure = %d, want %d (purse was eaten, C-8)", stable.Cummies, before)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Poker table concurrency & settlement (C-1)
+// ---------------------------------------------------------------------------
+
+// totalCasinoChips sums the casino chips of every stable.
+func totalCasinoChips(s *Server) int64 {
+	var sum int64
+	for _, st := range s.stables.ListStables() {
+		sum += st.CasinoChips
+	}
+	return sum
+}
+
+// pokerTestTable creates a two-player hold'em table via the HTTP handlers and
+// returns the table ID plus both stables.
+func pokerTestTable(t *testing.T, s *Server, buyIn int64) (string, *models.Stable, *models.Stable) {
+	t.Helper()
+	st1, err := s.createOwnedStable(context.Background(), "Shark Ranch", "user-1", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable(user-1): %v", err)
+	}
+	st2, err := s.createOwnedStable(context.Background(), "Fish Ranch", "user-2", true)
+	if err != nil {
+		t.Fatalf("createOwnedStable(user-2): %v", err)
+	}
+	st1.CasinoChips = 1000
+	st2.CasinoChips = 1000
+
+	body := jsonBody(map[string]interface{}{
+		"name":     "Test Felt",
+		"buyIn":    buyIn,
+		"gameType": "holdem",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/casino/poker", body)
+	req = injectAuth(req, "user-1", "shark")
+	rr := httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create poker table: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	var table models.PokerTable
+	decodeJSON(t, rr, &table)
+
+	req = httptest.NewRequest(http.MethodPost, "/api/casino/poker/"+table.ID+"/join", jsonBody(map[string]string{}))
+	req = injectAuth(req, "user-2", "fish")
+	rr = httptest.NewRecorder()
+	s.mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("join poker table: status = %d\nbody: %s", rr.Code, rr.Body.String())
+	}
+	return table.ID, st1, st2
+}
+
+// TestHoldemConcurrentActions_NoDoubleSettlement is the C-1 regression: a
+// storm of concurrent actions on the same table must settle the pot exactly
+// once. Chips are conserved: the sum across all stables after settlement
+// equals the sum before the hand (poker is zero-sum between the players).
+func TestHoldemConcurrentActions_NoDoubleSettlement(t *testing.T) {
+	s := NewServer(nil)
+	tableID, _, _ := pokerTestTable(t, s, 100)
+
+	// Both players started with 1000 chips; the 200 in buy-ins currently sits
+	// on the table and is fully cashed out at settlement, so afterwards the
+	// stables must hold exactly 2000 in total again.
+	const expectedTotal = int64(2000)
+
+	// Fire concurrent fold requests from both players. Only the acting seat
+	// can fold; folding heads-up settles the hand. Every other request must
+	// fail without touching balances.
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		for _, u := range []struct{ id, name string }{{"user-1", "shark"}, {"user-2", "fish"}} {
+			wg.Add(1)
+			go func(id, name string) {
+				defer wg.Done()
+				req := httptest.NewRequest(http.MethodPost, "/api/casino/poker/"+tableID+"/action",
+					jsonBody(map[string]interface{}{"action": "fold"}))
+				req = injectAuth(req, id, name)
+				rr := httptest.NewRecorder()
+				s.mux.ServeHTTP(rr, req)
+			}(u.id, u.name)
+		}
+	}
+	wg.Wait()
+
+	table, err := s.getPokerTable(tableID)
+	if err != nil {
+		t.Fatalf("getPokerTable: %v", err)
+	}
+	if table.Status != models.PokerTableSettled {
+		t.Fatalf("table status = %q, want settled", table.Status)
+	}
+	if sumAfter := totalCasinoChips(s); sumAfter != expectedTotal {
+		t.Fatalf("total casino chips = %d after settlement, want %d — pot was settled more than once (C-1)", sumAfter, expectedTotal)
+	}
+}
+
+// TestSettleHoldemTable_Idempotent verifies the settlement guard: settling an
+// already-settled table (e.g. via a stale copy or repeated call) must not pay
+// out again.
+func TestSettleHoldemTable_Idempotent(t *testing.T) {
+	s := NewServer(nil)
+	st1, _ := s.createOwnedStable(context.Background(), "One Ranch", "user-1", true)
+	st2, _ := s.createOwnedStable(context.Background(), "Two Ranch", "user-2", true)
+
+	table := &models.PokerTable{
+		ID:            "table-idem",
+		GameType:      models.PokerGameHoldem,
+		StakeCurrency: "casino_chips",
+		BuyIn:         100,
+		Status:        models.PokerTableRiver,
+		Pot:           200,
+		CommunityCards: []models.PokerCard{
+			{Rank: "2", Suit: "S"}, {Rank: "7", Suit: "H"}, {Rank: "9", Suit: "D"},
+			{Rank: "J", Suit: "C"}, {Rank: "4", Suit: "S"},
+		},
+		Seats: []models.PokerSeat{
+			{
+				UserID: "user-1", Username: "one", StableID: st1.ID,
+				BuyIn: 100, ChipStack: 0, AllIn: true, Currency: "casino_chips",
+				Hand: []models.PokerCard{{Rank: "A", Suit: "S"}, {Rank: "A", Suit: "H"}},
+			},
+			{
+				UserID: "user-2", Username: "two", StableID: st2.ID,
+				BuyIn: 100, ChipStack: 0, AllIn: true, Currency: "casino_chips",
+				Hand: []models.PokerCard{{Rank: "K", Suit: "S"}, {Rank: "Q", Suit: "H"}},
+			},
+		},
+	}
+
+	s.settleHoldemTable(table)
+	afterFirst := st1.CasinoChips + st2.CasinoChips
+
+	// A second settlement attempt (stale copy replay) must be a no-op.
+	s.settleHoldemTable(table)
+	if got := st1.CasinoChips + st2.CasinoChips; got != afterFirst {
+		t.Fatalf("chips after double settlement = %d, want %d — pot paid twice (C-1)", got, afterFirst)
+	}
+	if table.Status != models.PokerTableSettled {
+		t.Fatalf("table status = %q, want settled", table.Status)
+	}
+}
+
+// TestClonePokerTable_DeepCopy: mutations on a table copy must not leak into
+// the stored table (the old shallow clone aliased Seats/Log).
+func TestClonePokerTable_DeepCopy(t *testing.T) {
+	orig := &models.PokerTable{
+		ID:     "t1",
+		Log:    []string{"opened"},
+		Seats:  []models.PokerSeat{{UserID: "u1", Hand: []models.PokerCard{{Rank: "A", Suit: "S"}}}},
+		SidePots: []models.SidePot{{Amount: 10, Eligible: []string{"u1"}}},
+		CommunityCards: []models.PokerCard{{Rank: "2", Suit: "H"}},
+	}
+	clone := clonePokerTable(orig)
+
+	clone.Log[0] = "tampered"
+	clone.Seats[0].UserID = "evil"
+	clone.Seats[0].Hand[0] = models.PokerCard{Rank: "3", Suit: "C"}
+	clone.SidePots[0].Eligible[0] = "evil"
+	clone.CommunityCards[0] = models.PokerCard{Rank: "9", Suit: "D"}
+
+	if orig.Log[0] != "opened" {
+		t.Fatal("Log aliased between clone and original")
+	}
+	if orig.Seats[0].UserID != "u1" {
+		t.Fatal("Seats aliased between clone and original")
+	}
+	if orig.Seats[0].Hand[0].Rank != "A" {
+		t.Fatal("Seat hands aliased between clone and original")
+	}
+	if orig.SidePots[0].Eligible[0] != "u1" {
+		t.Fatal("SidePots aliased between clone and original")
+	}
+	if orig.CommunityCards[0].Rank != "2" {
+		t.Fatal("CommunityCards aliased between clone and original")
 	}
 }

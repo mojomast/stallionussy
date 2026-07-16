@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -363,6 +364,11 @@ func (s *Server) handleJoinPokerTable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	// C-1: serialize the whole read->mutate->save sequence for this table.
+	tableMu := s.pokerTableMu(r.PathValue("id"))
+	tableMu.Lock()
+	defer tableMu.Unlock()
+
 	table, err := s.getPokerTable(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -430,6 +436,12 @@ func (s *Server) handleDrawPokerHand(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	// C-1: serialize the whole read->mutate->settle->save sequence for this
+	// table so two concurrent draws can't both trigger settlement.
+	tableMu := s.pokerTableMu(r.PathValue("id"))
+	tableMu.Lock()
+	defer tableMu.Unlock()
+
 	table, err := s.getPokerTable(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -993,6 +1005,47 @@ func renderCasinoCurrency(currency string) string {
 	return "casino chips"
 }
 
+// pokerTableMu returns the per-table mutex for the given table ID, creating
+// one lazily. Every handler that reads a table, mutates it, and saves it back
+// MUST hold this mutex for the whole sequence (C-1): getPokerTable returns a
+// copy and savePokerTable writes it back, so without the lock two concurrent
+// requests can both observe an unsettled table and each run settlement,
+// paying the pot / cashing out stacks twice.
+func (s *Server) pokerTableMu(id string) *sync.Mutex {
+	s.pokerTableMusMu.Lock()
+	defer s.pokerTableMusMu.Unlock()
+	mu, ok := s.pokerTableMus[id]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.pokerTableMus[id] = mu
+	}
+	return mu
+}
+
+// clonePokerTable returns a deep copy of the table. The previous shallow copy
+// aliased the Seats/Log/CommunityCards/SidePots slices, so mutations on the
+// "copy" leaked into shared state (and raced with concurrent readers).
+func clonePokerTable(table *models.PokerTable) *models.PokerTable {
+	if table == nil {
+		return nil
+	}
+	clone := *table
+	clone.Log = append([]string(nil), table.Log...)
+	clone.CommunityCards = append([]models.PokerCard(nil), table.CommunityCards...)
+	clone.SidePots = make([]models.SidePot, len(table.SidePots))
+	for i, sp := range table.SidePots {
+		clone.SidePots[i] = sp
+		clone.SidePots[i].Eligible = append([]string(nil), sp.Eligible...)
+	}
+	clone.Seats = make([]models.PokerSeat, len(table.Seats))
+	for i, seat := range table.Seats {
+		clone.Seats[i] = seat
+		clone.Seats[i].Hand = append([]models.PokerCard(nil), seat.Hand...)
+		clone.Seats[i].Discarded = append([]int(nil), seat.Discarded...)
+	}
+	return &clone
+}
+
 func (s *Server) getPokerTable(id string) (*models.PokerTable, error) {
 	if s.casinoRepo != nil {
 		if table, err := s.casinoRepo.GetPokerTable(context.Background(), id); err == nil {
@@ -1005,8 +1058,7 @@ func (s *Server) getPokerTable(id string) (*models.PokerTable, error) {
 	if !ok {
 		return nil, fmt.Errorf("poker table not found: %s", id)
 	}
-	clone := *table
-	return &clone, nil
+	return clonePokerTable(table), nil
 }
 
 func (s *Server) savePokerTable(ctx context.Context, table *models.PokerTable) {
@@ -1014,8 +1066,7 @@ func (s *Server) savePokerTable(ctx context.Context, table *models.PokerTable) {
 		return
 	}
 	s.pokerMu.Lock()
-	clone := *table
-	s.pokerTables[table.ID] = &clone
+	s.pokerTables[table.ID] = clonePokerTable(table)
 	s.pokerMu.Unlock()
 	if s.casinoRepo != nil {
 		if err := s.casinoRepo.CreatePokerTable(ctx, table); err != nil {
@@ -1066,14 +1117,14 @@ func (s *Server) cleanupPokerTables() {
 	)
 
 	s.pokerMu.Lock()
-	var toExpire []*models.PokerTable
+	var toExpire []string
 	var toDelete []string
 	for id, table := range s.pokerTables {
 		switch table.Status {
 		case models.PokerTableOpen:
 			// Expire open tables that have been waiting too long.
 			if now.Sub(table.CreatedAt) > openTableTimeout && len(table.Seats) < 2 {
-				toExpire = append(toExpire, table)
+				toExpire = append(toExpire, id)
 			}
 		case models.PokerTableSettled:
 			// GC settled tables older than the retention period.
@@ -1088,30 +1139,50 @@ func (s *Server) cleanupPokerTables() {
 	}
 	s.pokerMu.Unlock()
 
-	// Expire stale open tables: refund buy-ins and mark settled.
-	for _, table := range toExpire {
-		table.Status = models.PokerTableSettled
-		table.UpdatedAt = now
-		table.Log = append(table.Log, "Table expired — no one else showed up. Buy-ins refunded.")
-		for i := range table.Seats {
-			seat := &table.Seats[i]
-			seat.Payout = seat.BuyIn
-			refundStable := s.getStableForUser(seat.UserID)
-			if refundStable != nil {
-				mu := s.stableMu(refundStable.ID)
-				mu.Lock()
-				if table.StakeCurrency == "cummies" {
-					refundStable.Cummies += seat.BuyIn
-				} else {
-					refundStable.CasinoChips += seat.BuyIn
-				}
-				mu.Unlock()
-				s.persistStable(context.Background(), refundStable)
-			}
-		}
-		s.savePokerTable(context.Background(), table)
-		log.Printf("casino: expired stale poker table %s (created %s ago)", table.ID, now.Sub(table.CreatedAt).Round(time.Second))
+	// Expire stale open tables: refund buy-ins and mark settled. Each table
+	// is re-read and re-checked under its per-table lock (C-1) so the sweep
+	// can't race a concurrent join.
+	for _, id := range toExpire {
+		s.expireStalePokerTable(id, now, openTableTimeout)
 	}
+}
+
+// expireStalePokerTable refunds buy-ins and settles a stale open table.
+// It re-validates the expiry conditions under the per-table lock.
+func (s *Server) expireStalePokerTable(id string, now time.Time, openTableTimeout time.Duration) {
+	tableMu := s.pokerTableMu(id)
+	tableMu.Lock()
+	defer tableMu.Unlock()
+
+	table, err := s.getPokerTable(id)
+	if err != nil {
+		return
+	}
+	if table.Status != models.PokerTableOpen || len(table.Seats) >= 2 || now.Sub(table.CreatedAt) <= openTableTimeout {
+		return // state changed since the sweep collected this table
+	}
+
+	table.Status = models.PokerTableSettled
+	table.UpdatedAt = now
+	table.Log = append(table.Log, "Table expired — no one else showed up. Buy-ins refunded.")
+	for i := range table.Seats {
+		seat := &table.Seats[i]
+		seat.Payout = seat.BuyIn
+		refundStable := s.getStableForUser(seat.UserID)
+		if refundStable != nil {
+			mu := s.stableMu(refundStable.ID)
+			mu.Lock()
+			if table.StakeCurrency == "cummies" {
+				refundStable.Cummies += seat.BuyIn
+			} else {
+				refundStable.CasinoChips += seat.BuyIn
+			}
+			mu.Unlock()
+			s.persistStable(context.Background(), refundStable)
+		}
+	}
+	s.savePokerTable(context.Background(), table)
+	log.Printf("casino: expired stale poker table %s (created %s ago)", table.ID, now.Sub(table.CreatedAt).Round(time.Second))
 }
 
 func (s *Server) startPokerTable(table *models.PokerTable) {
@@ -1185,6 +1256,10 @@ func reseedPokerHand(table *models.PokerTable, seatIdx int, discard []int) {
 }
 
 func (s *Server) settlePokerTable(table *models.PokerTable) {
+	// Idempotency guard (C-1): never settle the same table twice.
+	if table.Status == models.PokerTableSettled {
+		return
+	}
 	bestIdx := 0
 	bestScore := -1
 	for i := range table.Seats {
@@ -1483,6 +1558,14 @@ func (s *Server) handleHoldemAction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
+	// C-1: hold the per-table lock across the entire read->validate->apply->
+	// settle->save sequence. Without it, two concurrent actions (or an
+	// action racing a draw/timeout) could each observe a not-yet-settled
+	// table and both run settlement — paying the pot twice.
+	tableMu := s.pokerTableMu(r.PathValue("id"))
+	tableMu.Lock()
+	defer tableMu.Unlock()
+
 	table, err := s.getPokerTable(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -1803,6 +1886,10 @@ func holdemResetBettingRound(table *models.PokerTable) {
 
 // settleHoldemSingleWinner awards the pot when all opponents have folded.
 func (s *Server) settleHoldemSingleWinner(table *models.PokerTable) {
+	// Idempotency guard (C-1): never settle the same table twice.
+	if table.Status == models.PokerTableSettled {
+		return
+	}
 	winnerIdx := -1
 	for i, seat := range table.Seats {
 		if !seat.Folded {
@@ -1828,6 +1915,10 @@ func (s *Server) settleHoldemSingleWinner(table *models.PokerTable) {
 
 // settleHoldemTable evaluates hands at showdown and distributes the pot.
 func (s *Server) settleHoldemTable(table *models.PokerTable) {
+	// Idempotency guard (C-1): never settle the same table twice.
+	if table.Status == models.PokerTableSettled {
+		return
+	}
 	type playerHand struct {
 		seatIdx int
 		score   int

@@ -125,6 +125,12 @@ type Server struct {
 	// Casino and departed-horse state.
 	pokerTables map[string]*models.PokerTable
 	pokerMu     sync.RWMutex
+
+	// Per-poker-table mutexes (C-1): serializes the whole
+	// read -> mutate -> settle -> save sequence for a table so concurrent
+	// requests can't both observe an unsettled table and double-pay the pot.
+	pokerTableMus   map[string]*sync.Mutex
+	pokerTableMusMu sync.Mutex
 	departures  map[string]*models.DepartureRecord
 	departMu    sync.RWMutex
 
@@ -193,6 +199,7 @@ func NewServer(db *postgres.DB) *Server {
 		alliances:     make(map[string]*models.Alliance),
 		pendingFights: make(map[string]*models.HorseFight),
 		pokerTables:   make(map[string]*models.PokerTable),
+		pokerTableMus: make(map[string]*sync.Mutex),
 		departures:    make(map[string]*models.DepartureRecord),
 		jackpotPool:   slotJackpotSeed,
 		stableMus:     make(map[string]*sync.Mutex),
