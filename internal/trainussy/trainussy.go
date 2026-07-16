@@ -182,6 +182,13 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*model
 	// Accumulate lifetime XP
 	horse.TrainingXP += xp
 
+	// ---- Accumulate discipline specialty (distinct per-mode stat effect) ----
+	// Each workout mode builds a different specialty the race simulator
+	// consumes: Sprint→SPD, Endurance→STM, MudRun→SZE, MentalRep→TMP,
+	// General→a sliver of all four, RestDay→none. Gains halve above 65
+	// fatigue so horse rotation beats spam training.
+	applySpecialtyGains(horse, workout)
+
 	// ---- Apply fatigue ----
 	delta, ok := fatigueDelta[workout]
 	if !ok {
@@ -239,6 +246,63 @@ func (t *Trainer) Train(horse *models.Horse, workout models.WorkoutType) (*model
 	t.sessions[horse.ID] = append(t.sessions[horse.ID], session)
 
 	return session, nil
+}
+
+// specialtyGainPerSession is the specialty added by one focused workout.
+// At 6 trains/day, a dedicated horse caps one discipline (0.06) in ~3 days.
+const specialtyGainPerSession = 0.004
+
+// specialtyKeyForWorkout maps a workout type to the specialty it builds.
+// Empty string means the workout builds no single specialty.
+func specialtyKeyForWorkout(workout models.WorkoutType) string {
+	switch workout {
+	case models.WorkoutSprint:
+		return "SPD"
+	case models.WorkoutEndurance:
+		return "STM"
+	case models.WorkoutMudRun:
+		return "SZE"
+	case models.WorkoutMentalRep:
+		return "TMP"
+	default:
+		return ""
+	}
+}
+
+// applySpecialtyGains mutates the horse's TrainingSpecialty for one session.
+func applySpecialtyGains(horse *models.Horse, workout models.WorkoutType) {
+	gain := specialtyGainPerSession
+	if horse.Fatigue > 65 {
+		gain /= 2 // exhausted horses barely internalize the drills
+	}
+
+	add := func(key string, amount float64) {
+		if amount <= 0 {
+			return
+		}
+		if horse.TrainingSpecialty == nil {
+			horse.TrainingSpecialty = make(map[string]float64, 4)
+		}
+		v := horse.TrainingSpecialty[key] + amount
+		if v > models.TrainingSpecialtyCap {
+			v = models.TrainingSpecialtyCap
+		}
+		horse.TrainingSpecialty[key] = v
+	}
+
+	switch workout {
+	case models.WorkoutGeneral:
+		// A little bit of everything, at a fraction of the focused rate.
+		for _, key := range []string{"SPD", "STM", "SZE", "TMP"} {
+			add(key, gain*0.35)
+		}
+	case models.WorkoutRecovery:
+		// RestDay builds nothing — it heals fatigue.
+	default:
+		if key := specialtyKeyForWorkout(workout); key != "" {
+			add(key, gain)
+		}
+	}
 }
 
 // calcXP computes XP gained for a workout, factoring in INT gene and fatigue.
@@ -1550,19 +1614,26 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		return ""
 	}
 
-	// BUG FIX: clampCeiling ensures FitnessCeiling never drifts above 1.0
-	// after seasonal bonus application. Without this, repeated seasonal
-	// events could push the ceiling arbitrarily high, breaking race balance.
-	clampCeiling := func() {
-		if horse.FitnessCeiling > 1.0 {
+	// M-5: seasonal ceiling boosts used to multiply the ceiling directly
+	// (clamped at 1.0), so repeated favorable events ratcheted every horse
+	// toward a 1.0 ceiling in a handful of seasons, flattening the genetic
+	// variance that breeding exists to create. Boosts now scale with the
+	// horse's remaining HEADROOM (1.0 - ceiling): a 0.80-ceiling horse
+	// getting a "+3%" event gains 0.006 instead of 0.024, gains shrink
+	// asymptotically, and the ceiling can approach but never reach 1.0.
+	// Relative genetic ordering between horses is preserved.
+	boostCeiling := func(pct float64) {
+		headroom := 1.0 - horse.FitnessCeiling
+		if headroom <= 0 {
 			horse.FitnessCeiling = 1.0
+			return
 		}
+		horse.FitnessCeiling += headroom * pct
 	}
 
 	switch event.Effect {
 	case "all_horses_chaos_boost":
-		horse.FitnessCeiling *= 1.03
-		clampCeiling()
+		boostCeiling(0.03)
 		return fmt.Sprintf("%s gained +3%% fitness ceiling from yogurt energy", horse.Name)
 
 	case "tmp_penalty":
@@ -1574,8 +1645,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 
 	case "int_bonus":
 		if geneExpress(horse.Genome, models.GeneINT) == "AA" {
-			horse.FitnessCeiling *= 1.02
-			clampCeiling()
+			boostCeiling(0.02)
 			return fmt.Sprintf("%s (INT AA) gained Dr. Mittens' blessing: +2%% ceiling", horse.Name)
 		}
 		return ""
@@ -1610,8 +1680,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 
 	case "haunted_boost", "haunted_buff":
 		if has, _ := hasTraitEffect(horse, "haunted_boost"); has {
-			horse.FitnessCeiling *= 1.02
-			clampCeiling()
+			boostCeiling(0.02)
 			return fmt.Sprintf("%s (haunted trait) gained +2%% ceiling from spectral energy", horse.Name)
 		}
 		return ""
@@ -1622,8 +1691,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		// not just "Sapphic Power".
 		for _, t := range horse.Traits {
 			if t.Name == "Sapphic Power" {
-				horse.FitnessCeiling *= 1.05
-				clampCeiling()
+				boostCeiling(0.05)
 				return fmt.Sprintf("%s gained +5%% ceiling from Sappho Poetry Festival inspiration", horse.Name)
 			}
 		}
@@ -1631,8 +1699,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 
 	case "gen0_boost":
 		if horse.Generation == 0 {
-			horse.FitnessCeiling *= 1.03
-			clampCeiling()
+			boostCeiling(0.03)
 			return fmt.Sprintf("%s (Gen 0) gained +3%% ceiling — Margaret Chen approved", horse.Name)
 		}
 		return ""
@@ -1662,8 +1729,7 @@ func ApplySeasonalEffect(event *SeasonalEvent, horse *models.Horse) string {
 		// as an approximation of Lot 11 lineage proximity. A full lineage trace
 		// would require ancestor graph traversal which isn't available here.
 		if horse.Generation > 0 && horse.Generation <= 3 {
-			horse.FitnessCeiling *= 1.05
-			clampCeiling()
+			boostCeiling(0.05)
 			return fmt.Sprintf("%s gained +5%% ceiling from STARDUSTUSSY transmission", horse.Name)
 		}
 		return ""

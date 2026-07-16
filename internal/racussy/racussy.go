@@ -149,9 +149,12 @@ const speedScale = 18.0
 // The returned value is in metres-per-tick (before track modifier and fatigue).
 func CalcBaseSpeed(horse *models.Horse, trackType models.TrackType) float64 {
 	w := weightsFor(trackType)
-	spdScore := geneScore(horse.Genome, models.GeneSPD)
-	stmScore := geneScore(horse.Genome, models.GeneSTM)
-	tmpScore := geneScore(horse.Genome, models.GeneTMP)
+	// Training specialties (Sprint→SPD, Endurance→STM, MentalRep→TMP) add a
+	// small, capped bonus on top of the genetic score — this is what makes
+	// the training modes produce DISTINCT effects on race performance.
+	spdScore := min(1.0, geneScore(horse.Genome, models.GeneSPD)+horse.SpecialtyOf("SPD"))
+	stmScore := min(1.0, geneScore(horse.Genome, models.GeneSTM)+horse.SpecialtyOf("STM"))
+	tmpScore := min(1.0, geneScore(horse.Genome, models.GeneTMP)+horse.SpecialtyOf("TMP"))
 
 	geneticFactor := spdScore*w.SPD + stmScore*w.STM + tmpScore*w.TMP
 
@@ -365,7 +368,9 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			isWeatherImmune := hasTraitEffect(horse, "weather_immune")
 
 			// ------ Gene scores ------
-			stmScore := geneScore(horse.Genome, models.GeneSTM)
+			// Endurance training (STM specialty) also slows in-race fatigue
+			// accumulation below.
+			stmScore := min(1.0, geneScore(horse.Genome, models.GeneSTM)+horse.SpecialtyOf("STM"))
 			szeExpr := geneExpress(horse.Genome, models.GeneSZE)
 			tmpExpr := geneExpress(horse.Genome, models.GeneTMP)
 			intExpr := geneExpress(horse.Genome, models.GeneINT)
@@ -393,6 +398,8 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 					effectiveTmod *= 0.95
 					// "AB" is neutral — no adjustment
 				}
+				// MudRun training (SZE specialty) pays off on Mudussy only.
+				effectiveTmod *= 1.0 + horse.SpecialtyOf("SZE")
 			}
 
 			// ------ Fatigue (increases every tick, penalised by low STM) ------
@@ -507,6 +514,12 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// Apply weather panic modifier (unless immune).
 			if !isWeatherImmune {
 				panicChance *= wMods.panicMod
+			}
+
+			// MentalRep training (TMP specialty) steadies the nerves: up to a
+			// ~18% panic-chance reduction at the specialty cap.
+			if tmpSpec := horse.SpecialtyOf("TMP"); tmpSpec > 0 {
+				panicChance *= max(0.0, 1.0-tmpSpec*3.0)
 			}
 
 			// Apply panic_resist traits.

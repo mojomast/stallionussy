@@ -30,20 +30,22 @@ const horseCols = `
 	fitness_ceiling, current_fitness, wins, losses, races,
 	elo, owner_id, is_legendary, lot_number, created_at,
 	lore, traits, fatigue, retired, total_earnings,
-	training_xp, peak_elo, injury, retired_champion, last_bred_at`
+	training_xp, peak_elo, injury, retired_champion, last_bred_at,
+	training_specialty`
 
 // scanHorse scans a single horse row from the given scanner. Genome and Traits
 // are stored as JSONB and unmarshalled here.
 func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 	h := &models.Horse{}
 	var (
-		genomeJSON []byte
-		traitsJSON []byte
-		injuryJSON []byte
-		sireID     sql.NullString
-		mareID     sql.NullString
-		lore       sql.NullString
-		lastBredAt sql.NullTime
+		genomeJSON    []byte
+		traitsJSON    []byte
+		injuryJSON    []byte
+		specialtyJSON []byte
+		sireID        sql.NullString
+		mareID        sql.NullString
+		lore          sql.NullString
+		lastBredAt    sql.NullTime
 	)
 
 	err := sc.Scan(
@@ -74,6 +76,7 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 		&injuryJSON,
 		&h.RetiredChampion,
 		&lastBredAt,
+		&specialtyJSON,
 	)
 	if err != nil {
 		return nil, err
@@ -101,6 +104,13 @@ func scanHorse(sc interface{ Scan(dest ...any) error }) (*models.Horse, error) {
 		h.Injury = &models.Injury{}
 		if err := json.Unmarshal(injuryJSON, h.Injury); err != nil {
 			return nil, fmt.Errorf("unmarshal injury: %w", err)
+		}
+	}
+
+	// Unmarshal JSONB training specialty (nullable — nil means untrained).
+	if len(specialtyJSON) > 0 {
+		if err := json.Unmarshal(specialtyJSON, &h.TrainingSpecialty); err != nil {
+			return nil, fmt.Errorf("unmarshal training specialty: %w", err)
 		}
 	}
 
@@ -157,6 +167,13 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 			return fmt.Errorf("marshal injury: %w", err)
 		}
 	}
+	var specialtyJSON []byte
+	if len(horse.TrainingSpecialty) > 0 {
+		specialtyJSON, err = json.Marshal(horse.TrainingSpecialty)
+		if err != nil {
+			return fmt.Errorf("marshal training specialty: %w", err)
+		}
+	}
 
 	query := `
 		INSERT INTO horses (
@@ -164,13 +181,15 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 			fitness_ceiling, current_fitness, wins, losses, races,
 			elo, owner_id, is_legendary, lot_number, created_at,
 			lore, traits, fatigue, retired, total_earnings,
-			training_xp, peak_elo, injury, retired_champion, last_bred_at
+			training_xp, peak_elo, injury, retired_champion, last_bred_at,
+			training_specialty
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7,
 			$8, $9, $10, $11, $12,
 			$13, $14, $15, $16, $17,
 			$18, $19, $20, $21, $22,
-			$23, $24, $25, $26, $27
+			$23, $24, $25, $26, $27,
+			$28
 		)`
 	_, err = r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -200,6 +219,7 @@ func (r *HorseRepo) CreateHorse(ctx context.Context, horse *models.Horse) error 
 		injuryJSON,
 		horse.RetiredChampion,
 		nullableHorseTime(horse.LastBredAt),
+		specialtyJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("create horse: %w", err)
@@ -283,6 +303,13 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 			return fmt.Errorf("marshal injury: %w", err)
 		}
 	}
+	var specialtyJSON []byte
+	if len(horse.TrainingSpecialty) > 0 {
+		specialtyJSON, err = json.Marshal(horse.TrainingSpecialty)
+		if err != nil {
+			return fmt.Errorf("marshal training specialty: %w", err)
+		}
+	}
 
 	query := `
 		UPDATE horses SET
@@ -292,7 +319,8 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 			elo = $13, owner_id = $14, is_legendary = $15, lot_number = $16,
 			lore = $17, traits = $18, fatigue = $19, retired = $20,
 			total_earnings = $21, training_xp = $22, peak_elo = $23,
-			injury = $24, retired_champion = $25, last_bred_at = $26
+			injury = $24, retired_champion = $25, last_bred_at = $26,
+			training_specialty = $27
 		WHERE id = $1`
 	result, err := r.db.db.ExecContext(ctx, query,
 		horse.ID,
@@ -321,6 +349,7 @@ func (r *HorseRepo) UpdateHorse(ctx context.Context, horse *models.Horse) error 
 		injuryJSON,
 		horse.RetiredChampion,
 		nullableHorseTime(horse.LastBredAt),
+		specialtyJSON,
 	)
 	if err != nil {
 		return fmt.Errorf("update horse: %w", err)

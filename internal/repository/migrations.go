@@ -468,6 +468,13 @@ ALTER TABLE horses ADD COLUMN IF NOT EXISTS retired_champion BOOLEAN NOT NULL DE
 ALTER TABLE horses ADD COLUMN IF NOT EXISTS last_bred_at TIMESTAMPTZ;
 
 -- ===========================================================================
+-- Training specialties (Phase 3)
+-- Per-discipline bonuses accumulated by distinct workout modes
+-- (Sprint/Endurance/MudRun/MentalRep), consumed by the race simulator.
+-- ===========================================================================
+ALTER TABLE horses ADD COLUMN IF NOT EXISTS training_specialty JSONB;
+
+-- ===========================================================================
 -- Stud listing use limits (H-8)
 -- Previously RAM-only: a maxed-out stud came back active with 0 uses after
 -- every restart.

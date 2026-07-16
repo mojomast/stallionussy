@@ -137,6 +137,25 @@ type Horse struct {
 	PeakELO         float64   `json:"peak_elo"`
 	LastBredAt      time.Time `json:"lastBredAt,omitempty"` // Breeding cooldown tracker
 	Injury          *Injury   `json:"injury,omitempty"`     // Current injury (nil = healthy)
+
+	// TrainingSpecialty accumulates per-discipline bonuses from workouts so
+	// each training mode has a DISTINCT effect: Sprint builds "SPD",
+	// Endurance "STM", MudRun "SZE", MentalRep "TMP" (General adds a sliver
+	// of everything). Values are additive gene-score bonuses, each capped at
+	// TrainingSpecialtyCap, consumed by the race simulator.
+	TrainingSpecialty map[string]float64 `json:"trainingSpecialty,omitempty"`
+}
+
+// TrainingSpecialtyCap is the maximum per-discipline specialty bonus a horse
+// can accumulate through training.
+const TrainingSpecialtyCap = 0.06
+
+// SpecialtyOf safely reads a training-specialty bonus (0 when absent).
+func (h *Horse) SpecialtyOf(key string) float64 {
+	if h == nil || h.TrainingSpecialty == nil {
+		return 0
+	}
+	return h.TrainingSpecialty[key]
 }
 
 // ---------------------------------------------------------------------------
