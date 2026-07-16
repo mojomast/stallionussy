@@ -883,3 +883,70 @@ func TestWeatherImmuneTraitIgnoresWeather(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — race-day form variance
+// ---------------------------------------------------------------------------
+
+// winRateOver runs n seeded head-to-head races between two elite-genome
+// horses with the given fitness values and returns how often horse A wins.
+func winRateOver(t *testing.T, fitA, fitB float64, n int) float64 {
+	t.Helper()
+	winsA := 0
+	for i := 0; i < n; i++ {
+		a := makeEliteHorse("A", fitA)
+		b := makeEliteHorse("B", fitB)
+		horses := []*models.Horse{a, b}
+		race := NewRace(horses, models.TrackSprintussy, 0)
+		race = SimulateRace(race, horses, uint64(i)*7919+13)
+		for _, e := range race.Entries {
+			if e.HorseID == a.ID && e.FinishPlace == 1 {
+				winsA++
+			}
+		}
+	}
+	return float64(winsA) / float64(n)
+}
+
+// TestRaceDayFormGivesUnderdogsAChance: a moderately weaker horse (about 6%
+// lower fitness) must win a meaningful share of races — upsets should be
+// possible without outcomes becoming a coin flip.
+func TestRaceDayFormGivesUnderdogsAChance(t *testing.T) {
+	underdogRate := winRateOver(t, 0.85, 0.90, 400)
+	if underdogRate < 0.08 {
+		t.Fatalf("6%% underdog win rate = %.3f — outcomes are still near-deterministic (want >= 0.08)", underdogRate)
+	}
+	if underdogRate > 0.45 {
+		t.Fatalf("6%% underdog win rate = %.3f — races have degraded into coin flips (want <= 0.45)", underdogRate)
+	}
+}
+
+// TestRaceDayFormKeepsBigGapsDecisive: a massively weaker horse should still
+// almost always lose — variance must not swamp the stats.
+func TestRaceDayFormKeepsBigGapsDecisive(t *testing.T) {
+	underdogRate := winRateOver(t, 0.55, 0.95, 400)
+	if underdogRate > 0.10 {
+		t.Fatalf("42%% underdog win rate = %.3f — stat gaps no longer matter (want <= 0.10)", underdogRate)
+	}
+}
+
+// TestRaceDayFormDeterministicUnderSeed: the same seed must produce the same
+// outcome, so replays and bet settlement stay deterministic.
+func TestRaceDayFormDeterministicUnderSeed(t *testing.T) {
+	build := func() ([]*models.Horse, *models.Race) {
+		a := makeEliteHorse("A", 0.80)
+		b := makeEliteHorse("B", 0.85)
+		horses := []*models.Horse{a, b}
+		return horses, NewRace(horses, models.TrackGrindussy, 0)
+	}
+	h1, r1 := build()
+	h2, r2 := build()
+	r1 = SimulateRace(r1, h1, 42424242)
+	r2 = SimulateRace(r2, h2, 42424242)
+	for i := range r1.Entries {
+		if r1.Entries[i].FinishPlace != r2.Entries[i].FinishPlace {
+			t.Fatalf("same seed produced different finish orders: %v vs %v",
+				r1.Entries[i].FinishPlace, r2.Entries[i].FinishPlace)
+		}
+	}
+}

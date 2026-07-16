@@ -275,6 +275,31 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 		horseMap[h.ID] = h
 	}
 
+	// ------------------------------------------------------------------
+	// Race-day form — per-horse, per-race variance (Phase 3 balance).
+	//
+	// Per-tick chaos is N(0, ~0.3) and averages out over a race (~sqrt(N)
+	// growth) while stat gaps compound linearly (~N), so outcomes were a
+	// foregone conclusion: a horse 5% weaker on paper essentially never
+	// won. Every horse now rolls a whole-race form multiplier
+	// N(1.0, 0.055) clamped to [0.85, 1.15] — some days the oats hit
+	// different. A 5% stat underdog now wins roughly a quarter of the
+	// time; a 15% underdog still only sneaks one in ~3% of races. Upsets
+	// are possible, coin-flips are not, and the roll is deterministic
+	// under a seed.
+	// ------------------------------------------------------------------
+	raceDayForm := make(map[string]float64, len(race.Entries))
+	for i := range race.Entries {
+		form := 1.0 + rng.NormFloat64()*0.055
+		if form < 0.85 {
+			form = 0.85
+		}
+		if form > 1.15 {
+			form = 1.15
+		}
+		raceDayForm[race.Entries[i].HorseID] = form
+	}
+
 	race.Status = models.RaceStatusRunning
 	trackType := race.TrackType
 	distance := float64(race.Distance)
@@ -348,6 +373,11 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// ------ Base speed (metres-per-tick before modifiers) ------
 			baseSpeed := CalcBaseSpeed(horse, trackType)
 
+			// Apply the whole-race race-day form multiplier.
+			if form, ok := raceDayForm[entry.HorseID]; ok {
+				baseSpeed *= form
+			}
+
 			// Apply weather speed modifier (unless immune).
 			if !isWeatherImmune {
 				baseSpeed *= wMods.speedMod
@@ -391,6 +421,18 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 				}
 			}
 
+			// Apply stamina_boost traits (reduce fatigue growth). M-4: this
+			// used to run AFTER deltaP was computed and "add back" the
+			// fatigue savings — arithmetically the same multiplier, but
+			// order-dependent and fragile against the modifiers above. All
+			// fatigue modifiers now compose multiplicatively in one place.
+			// Magnitude is ~1.04-1.06, so (2.0 - m) = 0.94-0.96x fatigue.
+			for _, trait := range horse.Traits {
+				if trait.Effect == "stamina_boost" {
+					fatigue *= (2.0 - trait.Magnitude)
+				}
+			}
+
 			// ------ Chaos (random jitter per tick) ------
 			var chaosSigma float64
 			if trackType == models.TrackMudussy {
@@ -429,20 +471,18 @@ func SimulateRaceWithWeather(race *models.Race, horses []*models.Horse, weather 
 			// ------ Compute raw delta-position ------
 			deltaP := (baseSpeed * effectiveTmod) - fatigue + chaos
 
-			// ------ Apply stamina_boost trait (reduces fatigue growth) ------
-			// This retroactively adjusts deltaP by modifying the fatigue component.
-			for _, trait := range horse.Traits {
-				if trait.Effect == "stamina_boost" {
-					// Recalculate: reduce fatigue by trait magnitude factor.
-					// fatigue *= (2 - magnitude), so we need to adjust deltaP.
-					oldFatigue := fatigue
-					adjustedFatigue := fatigue * (2 - trait.Magnitude)
-					deltaP += (oldFatigue - adjustedFatigue) // add back the fatigue savings
-				}
-			}
-
 			// ------ Event tracking ------
 			var eventTexts []string
+
+			// Announce extreme race-day form on the first tick, for flavor.
+			if tick == 1 {
+				switch form := raceDayForm[entry.HorseID]; {
+				case form >= 1.08:
+					eventTexts = append(eventTexts, "GOOD OATS DAY")
+				case form <= 0.92:
+					eventTexts = append(eventTexts, "WOKE UP HAUNTED BY MONDAYS")
+				}
+			}
 
 			// ------ Event: PANIC (TMP-dependent, modified by weather) ------
 			panicChance := 0.0
